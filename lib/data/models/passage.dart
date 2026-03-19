@@ -1,7 +1,7 @@
 import 'package:hive/hive.dart';
 import 'source_platform.dart';
 
-class Passage extends HiveObject {
+class Article extends HiveObject {
   static const int typeId = 0;
 
   String id;
@@ -14,7 +14,7 @@ class Passage extends HiveObject {
   DateTime updatedAt;
   bool isFavorite;
 
-  Passage({
+  Article({
     required this.id,
     required this.url,
     required this.title,
@@ -24,10 +24,10 @@ class Passage extends HiveObject {
     DateTime? createdAt,
     DateTime? updatedAt,
     this.isFavorite = false,
-  })  : createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now();
+  }) : createdAt = createdAt ?? DateTime.now(),
+       updatedAt = updatedAt ?? DateTime.now();
 
-  Passage copyWith({
+  Article copyWith({
     String? id,
     String? url,
     String? title,
@@ -38,7 +38,7 @@ class Passage extends HiveObject {
     DateTime? updatedAt,
     bool? isFavorite,
   }) {
-    return Passage(
+    return Article(
       id: id ?? this.id,
       url: url ?? this.url,
       title: title ?? this.title,
@@ -52,22 +52,22 @@ class Passage extends HiveObject {
   }
 }
 
-class PassageAdapter extends TypeAdapter<Passage> {
+class ArticleAdapter extends TypeAdapter<Article> {
   @override
-  final int typeId = Passage.typeId;
+  final int typeId = Article.typeId;
 
   @override
-  Passage read(BinaryReader reader) {
+  Article read(BinaryReader reader) {
     final numOfFields = reader.readByte();
     final fields = <int, dynamic>{};
     for (int i = 0; i < numOfFields; i++) {
       fields[reader.readByte()] = reader.read();
     }
-    return Passage(
+    return Article(
       id: fields[0] as String,
       url: fields[1] as String,
       title: fields[2] as String,
-      source: SourcePlatform.values[fields[3] as int],
+      source: SourcePlatformAdapter.fromStoredValue(fields[3] as int),
       tags: (fields[4] as List).cast<String>(),
       notes: fields[5] as String,
       createdAt: fields[6] as DateTime,
@@ -77,7 +77,7 @@ class PassageAdapter extends TypeAdapter<Passage> {
   }
 
   @override
-  void write(BinaryWriter writer, Passage obj) {
+  void write(BinaryWriter writer, Article obj) {
     writer
       ..writeByte(9)
       ..writeByte(0)
@@ -87,7 +87,7 @@ class PassageAdapter extends TypeAdapter<Passage> {
       ..writeByte(2)
       ..write(obj.title)
       ..writeByte(3)
-      ..write(obj.source.index)
+      ..write(SourcePlatformAdapter.toStoredValue(obj.source))
       ..writeByte(4)
       ..write(obj.tags)
       ..writeByte(5)
@@ -107,11 +107,67 @@ class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {
 
   @override
   SourcePlatform read(BinaryReader reader) {
-    return SourcePlatform.values[reader.readByte()];
+    return fromStoredValue(reader.readByte());
   }
 
   @override
   void write(BinaryWriter writer, SourcePlatform obj) {
-    writer.writeByte(obj.index);
+    writer.writeByte(toStoredValue(obj));
+  }
+
+  static SourcePlatform fromStoredValue(int value) {
+    switch (value) {
+      case 0:
+        return SourcePlatform.wechat;
+      case 1:
+        return SourcePlatform.zhihu;
+      case 2:
+        return SourcePlatform.web;
+      case 3:
+        return SourcePlatform.x;
+      case 4:
+        return SourcePlatform.bilibili;
+      case 5:
+        return SourcePlatform.xiaohongshu;
+      case 6:
+        return SourcePlatform.chatgpt;
+      case 7:
+        return SourcePlatform.youtube;
+      case 8:
+        return SourcePlatform.medium;
+      case 9:
+        return SourcePlatform.substack;
+      case 10:
+        return SourcePlatform.reddit;
+      default:
+        return SourcePlatform.web;
+    }
+  }
+
+  static int toStoredValue(SourcePlatform platform) {
+    switch (platform) {
+      case SourcePlatform.wechat:
+        return 0;
+      case SourcePlatform.zhihu:
+        return 1;
+      case SourcePlatform.web:
+        return 2;
+      case SourcePlatform.x:
+        return 3;
+      case SourcePlatform.bilibili:
+        return 4;
+      case SourcePlatform.xiaohongshu:
+        return 5;
+      case SourcePlatform.chatgpt:
+        return 6;
+      case SourcePlatform.youtube:
+        return 7;
+      case SourcePlatform.medium:
+        return 8;
+      case SourcePlatform.substack:
+        return 9;
+      case SourcePlatform.reddit:
+        return 10;
+    }
   }
 }

@@ -5,54 +5,54 @@ import '../../data/repositories/passage_repository.dart';
 
 final hiveInitProvider = FutureProvider<void>((ref) async {
   await Hive.initFlutter();
-  if (!Hive.isAdapterRegistered(Passage.typeId)) {
-    Hive.registerAdapter(PassageAdapter());
+  if (!Hive.isAdapterRegistered(Article.typeId)) {
+    Hive.registerAdapter(ArticleAdapter());
   }
   if (!Hive.isAdapterRegistered(1)) {
     Hive.registerAdapter(SourcePlatformAdapter());
   }
 });
 
-final passageRepositoryProvider =
-    FutureProvider<PassageRepository>((ref) async {
+final articleRepositoryProvider = FutureProvider<ArticleRepository>((
+  ref,
+) async {
   await ref.watch(hiveInitProvider.future);
-  final repo = PassageRepository();
+  final repo = ArticleRepository();
   await repo.init();
   return repo;
 });
 
-final passagesProvider =
-    StateNotifierProvider<PassagesNotifier, AsyncValue<List<Passage>>>((ref) {
-  return PassagesNotifier(ref);
-});
+final articlesProvider =
+    StateNotifierProvider<ArticlesNotifier, AsyncValue<List<Article>>>((ref) {
+      return ArticlesNotifier(ref);
+    });
 
-class PassagesNotifier
-    extends StateNotifier<AsyncValue<List<Passage>>> {
+class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   final Ref _ref;
 
-  PassagesNotifier(this._ref) : super(const AsyncValue.loading()) {
+  ArticlesNotifier(this._ref) : super(const AsyncValue.loading()) {
     _load();
   }
 
   Future<void> _load() async {
-    final repo = await _ref.read(passageRepositoryProvider.future);
+    final repo = await _ref.read(articleRepositoryProvider.future);
     state = AsyncValue.data(repo.getAll());
   }
 
-  Future<void> add(Passage passage) async {
-    final repo = await _ref.read(passageRepositoryProvider.future);
-    await repo.add(passage);
+  Future<void> add(Article article) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    await repo.add(article);
     state = AsyncValue.data(repo.getAll());
   }
 
-  Future<void> update(Passage passage) async {
-    final repo = await _ref.read(passageRepositoryProvider.future);
-    await repo.update(passage);
+  Future<void> update(Article article) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    await repo.update(article);
     state = AsyncValue.data(repo.getAll());
   }
 
   Future<void> delete(String id) async {
-    final repo = await _ref.read(passageRepositoryProvider.future);
+    final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.delete(id);
     state = AsyncValue.data(repo.getAll());
   }
@@ -64,29 +64,30 @@ class PassagesNotifier
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
-final selectedPlatformProvider = StateProvider<String>((ref) => '');
+final selectedSourceProvider = StateProvider<String>((ref) => '');
 
-final filteredPassagesProvider =
-    Provider<AsyncValue<List<Passage>>>((ref) {
-  final passagesAsync = ref.watch(passagesProvider);
+final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
+  final articlesAsync = ref.watch(articlesProvider);
   final query = ref.watch(searchQueryProvider);
-  final platform = ref.watch(selectedPlatformProvider);
+  final sourceName = ref.watch(selectedSourceProvider);
 
-  return passagesAsync.whenData((passages) {
-    var filtered = passages;
+  return articlesAsync.whenData((articles) {
+    var filtered = articles;
 
     if (query.isNotEmpty) {
       final lower = query.toLowerCase();
-      filtered = filtered.where((p) {
-        return p.title.toLowerCase().contains(lower) ||
-            p.url.toLowerCase().contains(lower) ||
-            p.tags.any((t) => t.toLowerCase().contains(lower));
+      filtered = filtered.where((article) {
+        return article.title.toLowerCase().contains(lower) ||
+            article.url.toLowerCase().contains(lower) ||
+            article.notes.toLowerCase().contains(lower) ||
+            article.tags.any((tag) => tag.toLowerCase().contains(lower));
       }).toList();
     }
 
-    if (platform.isNotEmpty) {
-      filtered =
-          filtered.where((p) => p.source.name == platform).toList();
+    if (sourceName.isNotEmpty) {
+      filtered = filtered
+          .where((article) => article.source.name == sourceName)
+          .toList();
     }
 
     return filtered;

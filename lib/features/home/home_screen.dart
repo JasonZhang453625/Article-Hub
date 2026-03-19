@@ -6,70 +6,103 @@ import '../../config/routes.dart';
 import 'widgets/passage_card.dart';
 import 'widgets/search_filter_bar.dart';
 import 'widgets/empty_state.dart';
+import 'widgets/home_header.dart';
+import '../../shared/widgets/delayed_reveal.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final filteredPassages = ref.watch(filteredPassagesProvider);
+    final articlesAsync = ref.watch(articlesProvider);
+    final filteredArticles = ref.watch(filteredArticlesProvider);
+    final allArticles = articlesAsync.maybeWhen(
+      data: (articles) => articles,
+      orElse: () => const [],
+    );
+    final favoriteCount = allArticles
+        .where((article) => article.isFavorite)
+        .length;
+    final sourceCount = allArticles
+        .map((article) => article.source)
+        .toSet()
+        .length;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Passages'),
+      floatingActionButton: DelayedReveal(
+        delayMs: 220,
+        beginOffset: const Offset(0, 0.18),
+        child: FloatingActionButton.extended(
+          onPressed: () {
+            context.push(AppRoutes.addArticle);
+          },
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add article'),
+        ),
       ),
-      body: Column(
-        children: [
-          const SearchFilterBar(),
-          Expanded(
-            child: filteredPassages.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, stack) => Center(
-                child: Text('Error: $error'),
+      body: SafeArea(
+        child: Column(
+          children: [
+            DelayedReveal(
+              child: HomeHeader(
+                totalArticles: allArticles.length,
+                favoriteArticles: favoriteCount,
+                sourceCount: sourceCount,
               ),
-              data: (passages) {
-                if (passages.isEmpty) {
-                  return const EmptyState(
-                    message: 'No passages found',
-                  );
-                }
-                return RefreshIndicator(
-                  onRefresh: () async {
-                    ref.read(passagesProvider.notifier).refresh();
-                  },
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(top: 8, bottom: 80),
-                    itemCount: passages.length,
-                    itemBuilder: (context, index) {
-                      final passage = passages[index];
-                      return PassageCard(
-                        passage: passage,
-                        onTap: () {
-                          context.push(
-                            AppRoutes.readerWithId(passage.id),
-                            extra: passage,
-                          );
-                        },
-                        onInfoTap: () {
-                          context.push(
-                            AppRoutes.detailWithId(passage.id),
-                            extra: passage,
-                          );
-                        },
-                      );
-                    },
-                  ),
-                );
-              },
             ),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          context.push(AppRoutes.addPassage);
-        },
-        child: const Icon(Icons.add),
+            const DelayedReveal(delayMs: 80, child: SearchFilterBar()),
+            Expanded(
+              child: filteredArticles.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, stack) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text('Failed to load articles: $error'),
+                  ),
+                ),
+                data: (articles) {
+                  if (articles.isEmpty) {
+                    return const EmptyState(
+                      message: 'No articles match the current filters',
+                    );
+                  }
+                  return RefreshIndicator(
+                    onRefresh: () async {
+                      ref.read(articlesProvider.notifier).refresh();
+                    },
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.only(top: 8, bottom: 104),
+                      itemCount: articles.length,
+                      itemBuilder: (context, index) {
+                        final article = articles[index];
+                        return DelayedReveal(
+                          delayMs: 110 + (index * 42).clamp(0, 260),
+                          beginOffset: const Offset(0, 0.08),
+                          child: ArticleCard(
+                            article: article,
+                            onTap: () {
+                              context.push(
+                                AppRoutes.readerWithId(article.id),
+                                extra: article,
+                              );
+                            },
+                            onInfoTap: () {
+                              context.push(
+                                AppRoutes.detailWithId(article.id),
+                                extra: article,
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

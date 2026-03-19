@@ -8,14 +8,14 @@ import '../../shared/utils/url_helpers.dart';
 import 'widgets/url_input_field.dart';
 import 'widgets/tag_input.dart';
 
-class AddPassageScreen extends ConsumerStatefulWidget {
-  const AddPassageScreen({super.key});
+class AddArticleScreen extends ConsumerStatefulWidget {
+  const AddArticleScreen({super.key});
 
   @override
-  ConsumerState<AddPassageScreen> createState() => _AddPassageScreenState();
+  ConsumerState<AddArticleScreen> createState() => _AddArticleScreenState();
 }
 
-class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
+class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   final _formKey = GlobalKey<FormState>();
   final _urlController = TextEditingController();
   final _titleController = TextEditingController();
@@ -23,7 +23,7 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
   final _tagController = TextEditingController();
 
   List<String> _tags = [];
-  SourcePlatform _detectedPlatform = SourcePlatform.generic;
+  SourcePlatform _detectedPlatform = SourcePlatform.web;
 
   @override
   void dispose() {
@@ -48,7 +48,7 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
         ? extractDomain(cleanedUrl)
         : _titleController.text.trim();
 
-    final passage = Passage(
+    final article = Article(
       id: const Uuid().v4(),
       url: cleanedUrl,
       title: title,
@@ -57,7 +57,7 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
       notes: _notesController.text.trim(),
     );
 
-    await ref.read(passagesProvider.notifier).add(passage);
+    await ref.read(articlesProvider.notifier).add(article);
 
     if (mounted) {
       Navigator.of(context).pop();
@@ -68,13 +68,8 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add Passage'),
-        actions: [
-          TextButton(
-            onPressed: _save,
-            child: const Text('Save'),
-          ),
-        ],
+        title: const Text('Add Article'),
+        actions: [TextButton(onPressed: _save, child: const Text('Save'))],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -83,6 +78,73 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F6FD),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Supported sources',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Paste links from X, Bilibili, Xiaohongshu, ChatGPT, WeChat, Zhihu and more. The app will detect the source automatically.',
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final platform in [
+                          SourcePlatform.x,
+                          SourcePlatform.bilibili,
+                          SourcePlatform.xiaohongshu,
+                          SourcePlatform.chatgpt,
+                          SourcePlatform.wechat,
+                          SourcePlatform.zhihu,
+                        ])
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  platform.icon,
+                                  size: 16,
+                                  color: platform.accentColor,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  platform.displayName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
               UrlInputField(
                 controller: _urlController,
                 onChanged: _onUrlChanged,
@@ -93,7 +155,7 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
                 controller: _titleController,
                 decoration: const InputDecoration(
                   labelText: 'Title (optional)',
-                  hintText: 'Enter a title for this passage',
+                  hintText: 'Enter a title for this article',
                   prefixIcon: Icon(Icons.title),
                 ),
               ),
@@ -119,7 +181,7 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
                 controller: _notesController,
                 decoration: const InputDecoration(
                   labelText: 'Notes (optional)',
-                  hintText: 'Add any notes about this passage',
+                  hintText: 'Add any notes about this article',
                   prefixIcon: Icon(Icons.notes),
                 ),
                 maxLines: 3,
@@ -127,11 +189,12 @@ class _AddPassageScreenState extends ConsumerState<AddPassageScreen> {
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
+                child: FilledButton.icon(
                   onPressed: _save,
-                  child: const Padding(
+                  icon: const Icon(Icons.save_rounded),
+                  label: const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text('Save Passage'),
+                    child: Text('Save article'),
                   ),
                 ),
               ),

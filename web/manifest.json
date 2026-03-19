@@ -1,11 +1,11 @@
 {
-    "name": "passages_aggregation_app",
-    "short_name": "passages_aggregation_app",
+    "name": "Article-Hub",
+    "short_name": "Article-Hub",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Collect and revisit articles from modern content platforms.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

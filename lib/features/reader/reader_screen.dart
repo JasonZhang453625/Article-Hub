@@ -4,9 +4,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/passage.dart';
 
 class ReaderScreen extends StatefulWidget {
-  final Passage passage;
+  final Article article;
 
-  const ReaderScreen({super.key, required this.passage});
+  const ReaderScreen({super.key, required this.article});
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -20,11 +20,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void initState() {
     super.initState();
-    _currentUrl = widget.passage.url;
+    _currentUrl = widget.article.url;
   }
 
   Future<void> _openInBrowser() async {
-    final uri = Uri.parse(_currentUrl ?? widget.passage.url);
+    final uri = Uri.parse(_currentUrl ?? widget.article.url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
@@ -35,7 +35,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.passage.title,
+          widget.article.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -60,12 +60,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
             LinearProgressIndicator(
               value: _progress,
               backgroundColor: Colors.grey[200],
+              color: widget.article.source.accentColor,
             ),
           Expanded(
             child: InAppWebView(
-              initialUrlRequest: URLRequest(
-                url: WebUri(widget.passage.url),
-              ),
+              initialUrlRequest: URLRequest(url: WebUri(widget.article.url)),
               initialSettings: InAppWebViewSettings(
                 userAgent:
                     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
@@ -104,8 +103,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 }
 
                 // Block other app deep links (tel:, mailto:, etc.)
-                if (!['http', 'https', 'about', 'javascript', 'data']
-                    .contains(scheme)) {
+                if (![
+                  'http',
+                  'https',
+                  'about',
+                  'javascript',
+                  'data',
+                ].contains(scheme)) {
                   return NavigationActionPolicy.CANCEL;
                 }
 

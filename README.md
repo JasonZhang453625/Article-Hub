@@ -1,17 +1,17 @@
-# passages_aggregation_app
+# Article-Hub
 
-A new Flutter project.
+Article-Hub is a Flutter app for collecting and revisiting articles from X, Bilibili, Xiaohongshu, ChatGPT, WeChat, Zhihu, and the wider web.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- Detects common article sources automatically from pasted URLs
+- Saves title, tags, notes, favorites, and timestamps locally with Hive
+- Filters by source and searches across titles, tags, and notes
+- Opens saved links in an in-app reader with fallback to the system browser
 
-A few resources to get you started if this is your first Flutter project:
+## Run
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter pub get
+flutter run
+```

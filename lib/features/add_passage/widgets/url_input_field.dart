@@ -23,7 +23,7 @@ class UrlInputField extends StatelessWidget {
           controller: controller,
           decoration: InputDecoration(
             labelText: 'URL',
-            hintText: 'https://...',
+            hintText: 'https://x.com/... or https://www.bilibili.com/...',
             prefixIcon: const Icon(Icons.link),
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
@@ -57,23 +57,48 @@ class UrlInputField extends StatelessWidget {
             return null;
           },
         ),
-        if (detectedPlatform != SourcePlatform.generic)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              children: [
-                Icon(Icons.check_circle, size: 16, color: Colors.green[600]),
-                const SizedBox(width: 4),
-                Text(
-                  'Detected: ${detectedPlatform.displayName}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.green[700],
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeOutCubic,
+          child: detectedPlatform == SourcePlatform.web
+              ? const SizedBox.shrink()
+              : Padding(
+                  key: ValueKey(detectedPlatform),
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: detectedPlatform.accentColor.withValues(
+                        alpha: 0.1,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          detectedPlatform.icon,
+                          size: 18,
+                          color: detectedPlatform.accentColor,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Detected: ${detectedPlatform.displayName}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: detectedPlatform.accentColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
+        ),
       ],
     );
   }

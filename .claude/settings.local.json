@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp -r passages_aggregation_app/* passages-aggregation-app/)",
+      "Bash(cp -r passages_aggregation_app/.* passages-aggregation-app/)",
+      "Bash(flutter pub:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(cd:*)",
+      "Bash(flutter test:*)",
+      "Bash(flutter run:*)",
+      "Bash(flutter devices:*)",
+      "Bash(flutter emulators:*)",
+      "Bash(flutter doctor:*)"
+    ]
+  }
+}

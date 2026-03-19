@@ -5,9 +5,9 @@ import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/date_formatter.dart';
 
 class DetailScreen extends ConsumerStatefulWidget {
-  final Passage passage;
+  final Article article;
 
-  const DetailScreen({super.key, required this.passage});
+  const DetailScreen({super.key, required this.article});
 
   @override
   ConsumerState<DetailScreen> createState() => _DetailScreenState();
@@ -24,11 +24,11 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   @override
   void initState() {
     super.initState();
-    _titleController = TextEditingController(text: widget.passage.title);
-    _notesController = TextEditingController(text: widget.passage.notes);
+    _titleController = TextEditingController(text: widget.article.title);
+    _notesController = TextEditingController(text: widget.article.notes);
     _tagController = TextEditingController();
-    _tags = List.from(widget.passage.tags);
-    _isFavorite = widget.passage.isFavorite;
+    _tags = List.from(widget.article.tags);
+    _isFavorite = widget.article.isFavorite;
 
     _titleController.addListener(_markChanged);
     _notesController.addListener(_markChanged);
@@ -52,13 +52,13 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
   Future<void> _saveAndPop() async {
     if (_hasChanges) {
-      final updated = widget.passage.copyWith(
+      final updated = widget.article.copyWith(
         title: _titleController.text.trim(),
         notes: _notesController.text.trim(),
         tags: _tags,
         isFavorite: _isFavorite,
       );
-      await ref.read(passagesProvider.notifier).update(updated);
+      await ref.read(articlesProvider.notifier).update(updated);
     }
     if (mounted) {
       Navigator.of(context).pop();
@@ -69,9 +69,10 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Passage'),
+        title: const Text('Delete Article'),
         content: const Text(
-            'Are you sure you want to delete this passage? This action cannot be undone.'),
+          'Are you sure you want to delete this article? This action cannot be undone.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -79,9 +80,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Delete'),
           ),
         ],
@@ -89,7 +88,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     );
 
     if (confirmed == true) {
-      await ref.read(passagesProvider.notifier).delete(widget.passage.id);
+      await ref.read(articlesProvider.notifier).delete(widget.article.id);
       if (mounted) {
         Navigator.of(context).pop();
       }
@@ -107,7 +106,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Passage Details'),
+          title: const Text('Article Details'),
           actions: [
             IconButton(
               icon: Icon(
@@ -120,7 +119,9 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   _hasChanges = true;
                 });
               },
-              tooltip: _isFavorite ? 'Remove from favorites' : 'Add to favorites',
+              tooltip: _isFavorite
+                  ? 'Remove from favorites'
+                  : 'Add to favorites',
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline, color: Colors.red),
@@ -134,65 +135,53 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // URL display
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(8),
+                  color: widget.article.source.accentColor.withValues(
+                    alpha: 0.08,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.link, size: 16, color: Colors.grey[600]),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: SelectableText(
-                        widget.passage.url,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey[700],
+                    Row(
+                      children: [
+                        Icon(
+                          widget.article.source.icon,
+                          size: 18,
+                          color: widget.article.source.accentColor,
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Text(
+                          widget.article.source.displayName,
+                          style: TextStyle(
+                            color: widget.article.source.accentColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'Added ${formatRelative(widget.article.createdAt)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    SelectableText(
+                      widget.article.url,
+                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
 
-              // Platform chip
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      widget.passage.source.displayName,
-                      style: TextStyle(
-                        color: Colors.blue[700],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Added ${formatRelative(widget.passage.createdAt)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[500],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Title
               TextFormField(
                 controller: _titleController,
                 decoration: const InputDecoration(
@@ -202,7 +191,6 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Tags
               TextFormField(
                 controller: _tagController,
                 decoration: InputDecoration(
@@ -255,7 +243,6 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 ),
               const SizedBox(height: 16),
 
-              // Notes
               TextFormField(
                 controller: _notesController,
                 decoration: const InputDecoration(
@@ -266,7 +253,6 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Dates
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
@@ -279,12 +265,12 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Created: ${formatDateTime(widget.passage.createdAt)}',
+                      'Created: ${formatDateTime(widget.article.createdAt)}',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Updated: ${formatDateTime(widget.passage.updatedAt)}',
+                      'Updated: ${formatDateTime(widget.article.updatedAt)}',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                     ),
                   ],
