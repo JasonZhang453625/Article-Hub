@@ -5,9 +5,9 @@ import 'package:article_hub/app.dart';
 void main() {
   testWidgets('App renders home screen', (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: App()));
-    // Don't use pumpAndSettle as async providers can take time
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Article-Hub'), findsOneWidget);
+    expect(find.text('Add'), findsOneWidget);
+    expect(find.text('All articles'), findsOneWidget);
   });
 }

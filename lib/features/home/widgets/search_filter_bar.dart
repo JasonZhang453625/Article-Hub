@@ -10,7 +10,6 @@ class SearchFilterBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedSource = ref.watch(selectedSourceProvider);
-    final theme = Theme.of(context);
 
     return Column(
       children: [
@@ -73,20 +72,6 @@ class SearchFilterBar extends ConsumerWidget {
                 );
               }),
             ],
-          ),
-        ),
-        const SizedBox(height: 6),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Curated feeds with lightweight filtering',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF6C8594),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
           ),
         ),
       ],

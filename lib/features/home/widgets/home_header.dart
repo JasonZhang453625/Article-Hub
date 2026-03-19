@@ -5,12 +5,14 @@ class HomeHeader extends StatelessWidget {
   final int totalArticles;
   final int favoriteArticles;
   final int sourceCount;
+  final VoidCallback onClose;
 
   const HomeHeader({
     super.key,
     required this.totalArticles,
     required this.favoriteArticles,
     required this.sourceCount,
+    required this.onClose,
   });
 
   @override
@@ -37,6 +39,19 @@ class HomeHeader extends StatelessWidget {
       ),
       child: Stack(
         children: [
+          Positioned(
+            top: 0,
+            right: 0,
+            child: IconButton(
+              onPressed: onClose,
+              icon: const Icon(Icons.close_rounded),
+              tooltip: 'Close',
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: 0.14),
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
           Positioned(
             right: -18,
             top: -28,

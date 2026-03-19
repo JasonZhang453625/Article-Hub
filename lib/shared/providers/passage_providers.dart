@@ -66,6 +66,38 @@ final searchQueryProvider = StateProvider<String>((ref) => '');
 
 final selectedSourceProvider = StateProvider<String>((ref) => '');
 
+final homeHeaderVisibilityProvider =
+    StateNotifierProvider<HomeHeaderVisibilityNotifier, AsyncValue<bool>>((
+      ref,
+    ) {
+      return HomeHeaderVisibilityNotifier(ref);
+    });
+
+class HomeHeaderVisibilityNotifier extends StateNotifier<AsyncValue<bool>> {
+  static const String _boxName = 'ui_preferences';
+  static const String _key = 'show_home_header';
+
+  final Ref _ref;
+  Box<dynamic>? _box;
+
+  HomeHeaderVisibilityNotifier(this._ref) : super(const AsyncValue.loading()) {
+    _load();
+  }
+
+  Future<void> _load() async {
+    await _ref.read(hiveInitProvider.future);
+    _box ??= await Hive.openBox(_boxName);
+    final isVisible = _box!.get(_key, defaultValue: true) as bool;
+    state = AsyncValue.data(isVisible);
+  }
+
+  Future<void> dismiss() async {
+    _box ??= await Hive.openBox(_boxName);
+    await _box!.put(_key, false);
+    state = const AsyncValue.data(false);
+  }
+}
+
 final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final articlesAsync = ref.watch(articlesProvider);
   final query = ref.watch(searchQueryProvider);

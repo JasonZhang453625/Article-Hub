@@ -16,6 +16,7 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final articlesAsync = ref.watch(articlesProvider);
     final filteredArticles = ref.watch(filteredArticlesProvider);
+    final headerVisibilityAsync = ref.watch(homeHeaderVisibilityProvider);
     final allArticles = articlesAsync.maybeWhen(
       data: (articles) => articles,
       orElse: () => const [],
@@ -27,6 +28,10 @@ class HomeScreen extends ConsumerWidget {
         .map((article) => article.source)
         .toSet()
         .length;
+    final showHeader = headerVisibilityAsync.maybeWhen(
+      data: (isVisible) => isVisible,
+      orElse: () => false,
+    );
 
     return Scaffold(
       floatingActionButton: DelayedReveal(
@@ -37,18 +42,31 @@ class HomeScreen extends ConsumerWidget {
             context.push(AppRoutes.addArticle);
           },
           icon: const Icon(Icons.add_rounded),
-          label: const Text('Add article'),
+          label: const Text('Add'),
         ),
       ),
       body: SafeArea(
         child: Column(
           children: [
-            DelayedReveal(
-              child: HomeHeader(
-                totalArticles: allArticles.length,
-                favoriteArticles: favoriteCount,
-                sourceCount: sourceCount,
-              ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeOutCubic,
+              child: showHeader
+                  ? DelayedReveal(
+                      key: const ValueKey('home-header'),
+                      child: HomeHeader(
+                        totalArticles: allArticles.length,
+                        favoriteArticles: favoriteCount,
+                        sourceCount: sourceCount,
+                        onClose: () {
+                          ref
+                              .read(homeHeaderVisibilityProvider.notifier)
+                              .dismiss();
+                        },
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
             const DelayedReveal(delayMs: 80, child: SearchFilterBar()),
             Expanded(
