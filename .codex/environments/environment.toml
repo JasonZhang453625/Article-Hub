@@ -10,3 +10,8 @@ name = "flutter run edge"
 icon = "run"
 command = "flutter run -d edge"
 platform = "win32"
+
+[[actions]]
+name = "打包apk"
+icon = "debug"
+command = "flutter build apk --release"

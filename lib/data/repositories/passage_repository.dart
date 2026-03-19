@@ -28,7 +28,7 @@ class ArticleRepository {
 
   Future<void> update(Article article) async {
     article.updatedAt = DateTime.now();
-    await article.save();
+    await _box.put(article.id, article);
   }
 
   Future<void> delete(String id) async {
