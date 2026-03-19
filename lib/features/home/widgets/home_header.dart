@@ -37,135 +37,85 @@ class HomeHeader extends StatelessWidget {
           ),
         ],
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Positioned(
-            top: 0,
-            right: 0,
-            child: IconButton(
-              onPressed: onClose,
-              icon: const Icon(Icons.close_rounded),
-              tooltip: 'Close',
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.white.withValues(alpha: 0.14),
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-          Positioned(
-            right: -18,
-            top: -28,
-            child: Container(
-              width: 120,
-              height: 120,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Positioned(
-            left: 120,
-            bottom: -42,
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Column(
+          Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Icon(
-                      Icons.explore_rounded,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Article-Hub',
-                          style: theme.textTheme.headlineMedium?.copyWith(
-                            color: Colors.white,
-                            fontSize: 30,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Version 1.1.0',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.8),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      'Calm reading queue',
-                      style: theme.textTheme.bodySmall?.copyWith(
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.explore_rounded, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Article-Hub',
+                      style: theme.textTheme.headlineMedium?.copyWith(
                         color: Colors.white,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 30,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Save articles from X, Bilibili, Xiaohongshu, ChatGPT, WeChat and the wider web in one clean place.',
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.9),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Version 1.1.0',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: _StatChip(
-                      label: 'Saved',
-                      value: totalArticles.toString(),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _StatChip(
-                      label: 'Favorites',
-                      value: favoriteArticles.toString(),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _StatChip(
-                      label: 'Sources',
-                      value: sourceCount.toString(),
-                    ),
-                  ),
-                ],
+              IconButton(
+                onPressed: onClose,
+                icon: const Icon(Icons.close_rounded),
+                tooltip: 'Close',
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(40, 40),
+                  backgroundColor: Colors.white.withValues(alpha: 0.14),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Save articles from X, Bilibili, Xiaohongshu, ChatGPT, WeChat and the wider web in one clean place.',
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _StatChip(
+                  label: 'Saved',
+                  value: totalArticles.toString(),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _StatChip(
+                  label: 'Favorites',
+                  value: favoriteArticles.toString(),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _StatChip(
+                  label: 'Sources',
+                  value: sourceCount.toString(),
+                ),
               ),
             ],
           ),

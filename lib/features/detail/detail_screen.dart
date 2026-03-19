@@ -51,6 +51,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   }
 
   Future<void> _saveAndPop() async {
+    FocusScope.of(context).unfocus();
     if (_hasChanges) {
       final updated = widget.article.copyWith(
         title: _titleController.text.trim(),
@@ -63,6 +64,11 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     if (mounted) {
       Navigator.of(context).pop();
     }
+  }
+
+  Future<void> _handleBack() async {
+    if (!mounted) return;
+    await _saveAndPop();
   }
 
   Future<void> _confirmDelete() async {
@@ -101,11 +107,16 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (!didPop) {
-          await _saveAndPop();
+          await _handleBack();
         }
       },
       child: Scaffold(
         appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: _handleBack,
+            tooltip: 'Back',
+          ),
           title: const Text('Article Details'),
           actions: [
             IconButton(
