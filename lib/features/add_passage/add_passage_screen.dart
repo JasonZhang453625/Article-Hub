@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
 import 'widgets/url_input_field.dart';
 import 'widgets/tag_input.dart';
@@ -66,6 +67,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Add Article'),
@@ -97,21 +100,14 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Paste links from X, Bilibili, Xiaohongshu, ChatGPT, WeChat, Zhihu and more. The app will detect the source automatically.',
+                      'Paste links from your enabled platforms and the app will detect the source automatically.',
                     ),
                     const SizedBox(height: 14),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        for (final platform in [
-                          SourcePlatform.x,
-                          SourcePlatform.bilibili,
-                          SourcePlatform.xiaohongshu,
-                          SourcePlatform.chatgpt,
-                          SourcePlatform.wechat,
-                          SourcePlatform.zhihu,
-                        ])
+                        for (final platform in visiblePlatforms.take(6))
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,

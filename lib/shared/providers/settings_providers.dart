@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/models/settings.dart';
+import '../../data/models/source_platform.dart';
 import 'passage_providers.dart';
 
 final settingsProvider =
@@ -47,6 +48,56 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(themeModeIndex: index));
   }
+
+  Future<void> updateSourcePlatformOrder(List<String> order) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(sourcePlatformOrder: order));
+  }
+
+  Future<void> moveSourcePlatformBefore(
+    String draggedName,
+    String targetName,
+  ) async {
+    if (draggedName == targetName) return;
+
+    final current = state.valueOrNull ?? AppSettings();
+    final order = List<String>.from(current.sourcePlatformOrder)
+      ..remove(draggedName);
+    final targetIndex = order.indexOf(targetName);
+    if (targetIndex == -1) return;
+
+    order.insert(targetIndex, draggedName);
+    await _save(current.copyWith(sourcePlatformOrder: order));
+  }
+
+  Future<void> moveSourcePlatformToEnd(String platformName) async {
+    final current = state.valueOrNull ?? AppSettings();
+    final order = List<String>.from(current.sourcePlatformOrder)
+      ..remove(platformName)
+      ..add(platformName);
+    await _save(current.copyWith(sourcePlatformOrder: order));
+  }
+
+  Future<void> setSourcePlatformVisibility(
+    String platformName,
+    bool isVisible,
+  ) async {
+    final current = state.valueOrNull ?? AppSettings();
+    final hidden = List<String>.from(current.hiddenSourcePlatforms);
+
+    if (isVisible) {
+      hidden.remove(platformName);
+    } else if (!hidden.contains(platformName)) {
+      hidden.add(platformName);
+    }
+
+    await _save(current.copyWith(hiddenSourcePlatforms: hidden));
+
+    if (!isVisible &&
+        _ref.read(selectedSourceProvider.notifier).state == platformName) {
+      _ref.read(selectedSourceProvider.notifier).state = '';
+    }
+  }
 }
 
 /// Derived providers for convenience.
@@ -68,5 +119,19 @@ final webZoomProvider = Provider<int>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
     data: (s) => s.webZoomPercent,
     orElse: () => 100,
+  );
+});
+
+final orderedSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (settings) => settings.orderedSourcePlatforms,
+    orElse: () => SourcePlatform.values,
+  );
+});
+
+final visibleSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (settings) => settings.visibleSourcePlatforms,
+    orElse: () => SourcePlatform.values,
   );
 });

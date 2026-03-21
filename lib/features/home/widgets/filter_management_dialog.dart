@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../../data/models/filter_group.dart';
-import '../../../data/models/source_platform.dart';
 import '../../../shared/providers/filter_providers.dart';
+import '../../../shared/providers/settings_providers.dart';
 
 /// A full-screen dialog for creating or editing a filter group.
 class FilterEditDialog extends ConsumerStatefulWidget {
@@ -79,6 +79,7 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -164,7 +165,7 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: SourcePlatform.values.map((platform) {
+              children: visiblePlatforms.map((platform) {
                 final selected = _selectedSources.contains(platform.name);
                 return FilterChip(
                   avatar: Icon(platform.icon,

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../data/models/source_platform.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/widgets/delayed_reveal.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -36,11 +38,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
         data: (settings) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          return DelayedReveal(
+            delayMs: 40,
+            beginOffset: const Offset(0, 0.035),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 // ── Appearance Section ──
                 _SectionLabel(label: 'Appearance', theme: theme),
                 const SizedBox(height: 8),
@@ -248,6 +253,98 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
 
+                const SizedBox(height: 20),
+
+                _SectionLabel(label: 'Source Platforms', theme: theme),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: outlineColor.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Reorder And Hide',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Drag to change the chip order. Turn off platforms you do not want to see in filters.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isDark
+                              ? Colors.white54
+                              : const Color(0xFF6C8594),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      ReorderableListView.builder(
+                        shrinkWrap: true,
+                        buildDefaultDragHandles: false,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: settings.orderedSourcePlatforms.length,
+                        onReorder: (oldIndex, newIndex) async {
+                          final reordered = settings.orderedSourcePlatforms
+                              .map((platform) => platform.name)
+                              .toList();
+                          if (newIndex > oldIndex) {
+                            newIndex -= 1;
+                          }
+                          final moved = reordered.removeAt(oldIndex);
+                          reordered.insert(newIndex, moved);
+                          await ref
+                              .read(settingsProvider.notifier)
+                              .updateSourcePlatformOrder(reordered);
+                        },
+                        itemBuilder: (context, index) {
+                          final platform = settings.orderedSourcePlatforms[index];
+                          final isVisible = !settings
+                              .hiddenSourcePlatformNameSet
+                              .contains(platform.name);
+
+                          return Padding(
+                            key: ValueKey(platform.name),
+                            padding: EdgeInsets.only(
+                              bottom: index ==
+                                      settings.orderedSourcePlatforms.length - 1
+                                  ? 0
+                                  : 10,
+                            ),
+                            child: _SourcePlatformSettingRow(
+                              platform: platform,
+                              isVisible: isVisible,
+                              theme: theme,
+                              onVisibilityChanged: (value) {
+                                ref
+                                    .read(settingsProvider.notifier)
+                                    .setSourcePlatformVisibility(
+                                      platform.name,
+                                      value,
+                                    );
+                              },
+                              dragHandle: ReorderableDragStartListener(
+                                index: index,
+                                child: Icon(
+                                  Icons.drag_indicator_rounded,
+                                  color: isDark
+                                      ? Colors.white38
+                                      : const Color(0xFF8AA1AF),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: 32),
 
                 // ── About Section ──
@@ -271,7 +368,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   },
                 ),
                 const SizedBox(height: 24),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -379,6 +477,89 @@ class _ThemeModeButton extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SourcePlatformSettingRow extends StatelessWidget {
+  final SourcePlatform platform;
+  final bool isVisible;
+  final ThemeData theme;
+  final ValueChanged<bool> onVisibilityChanged;
+  final Widget dragHandle;
+
+  const _SourcePlatformSettingRow({
+    required this.platform,
+    required this.isVisible,
+    required this.theme,
+    required this.onVisibilityChanged,
+    required this.dragHandle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor.withValues(
+          alpha: isDark ? 0.5 : 0.9,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 10),
+          dragHandle,
+          const SizedBox(width: 8),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: platform.accentColor.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              platform.icon,
+              size: 18,
+              color: platform.accentColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  platform.displayName,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isVisible
+                        ? theme.colorScheme.onSurface
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  ),
+                ),
+                Text(
+                  isVisible ? 'Visible in filters' : 'Hidden from filters',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: isDark
+                        ? Colors.white54
+                        : const Color(0xFF6C8594),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: isVisible,
+            onChanged: onVisibilityChanged,
+          ),
+          const SizedBox(width: 6),
+        ],
       ),
     );
   }
