@@ -1,19 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+
 import '../../../config/theme.dart';
 
-class HomeHeader extends StatelessWidget {
-  final int totalArticles;
-  final int favoriteArticles;
-  final int sourceCount;
+class HomeHeader extends StatefulWidget {
   final VoidCallback onClose;
 
   const HomeHeader({
     super.key,
-    required this.totalArticles,
-    required this.favoriteArticles,
-    required this.sourceCount,
     required this.onClose,
   });
+
+  @override
+  State<HomeHeader> createState() => _HomeHeaderState();
+}
+
+class _HomeHeaderState extends State<HomeHeader> {
+  late final Future<PackageInfo> _packageInfoFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _packageInfoFuture = PackageInfo.fromPlatform();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,18 +74,28 @@ class HomeHeader extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'Version 1.1.0',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        fontWeight: FontWeight.w600,
-                      ),
+                    FutureBuilder<PackageInfo>(
+                      future: _packageInfoFuture,
+                      builder: (context, snapshot) {
+                        final packageInfo = snapshot.data;
+                        final versionText = packageInfo == null
+                            ? 'Version'
+                            : _buildVersionLabel(packageInfo);
+
+                        return Text(
+                          versionText,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: Colors.white.withValues(alpha: 0.8),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
               ),
               IconButton(
-                onPressed: onClose,
+                onPressed: widget.onClose,
                 icon: const Icon(Icons.close_rounded),
                 tooltip: 'Close',
                 style: IconButton.styleFrom(
@@ -89,78 +108,21 @@ class HomeHeader extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           Text(
-            'Save articles from X, Bilibili, Xiaohongshu, ChatGPT, WeChat and the wider web in one clean place.',
+            'Save articles from X, Bilibili, Rednote, ChatGPT, WeChat and the wider web in one clean place.',
             style: theme.textTheme.bodyLarge?.copyWith(
               color: Colors.white.withValues(alpha: 0.9),
             ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _StatChip(
-                  label: 'Saved',
-                  value: totalArticles.toString(),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _StatChip(
-                  label: 'Favorites',
-                  value: favoriteArticles.toString(),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _StatChip(
-                  label: 'Sources',
-                  value: sourceCount.toString(),
-                ),
-              ),
-            ],
           ),
         ],
       ),
     );
   }
-}
 
-class _StatChip extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _StatChip({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            style: theme.textTheme.titleLarge?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.white.withValues(alpha: 0.76),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
+  String _buildVersionLabel(PackageInfo packageInfo) {
+    final buildNumber = packageInfo.buildNumber.trim();
+    final versionSuffix = buildNumber.isEmpty
+        ? packageInfo.version
+        : '${packageInfo.version}+$buildNumber';
+    return 'Version $versionSuffix';
   }
 }

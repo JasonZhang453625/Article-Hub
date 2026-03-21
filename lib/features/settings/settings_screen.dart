@@ -1,12 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+
 import '../../shared/providers/settings_providers.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  late final Future<PackageInfo> _packageInfoFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _packageInfoFuture = PackageInfo.fromPlatform();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settingsAsync = ref.watch(settingsProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -236,13 +251,24 @@ class SettingsScreen extends ConsumerWidget {
                 const SizedBox(height: 32),
 
                 // ── About Section ──
-                Center(
-                  child: Text(
-                    'Article-Hub  v1.1.0',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: isDark ? Colors.white38 : const Color(0xFF98ADB8),
-                    ),
-                  ),
+                FutureBuilder<PackageInfo>(
+                  future: _packageInfoFuture,
+                  builder: (context, snapshot) {
+                    final packageInfo = snapshot.data;
+                    final versionText = packageInfo == null
+                        ? 'Article-Hub'
+                        : _buildVersionLabel(packageInfo);
+
+                    return Center(
+                      child: Text(
+                        versionText,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color:
+                              isDark ? Colors.white38 : const Color(0xFF98ADB8),
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 24),
               ],
@@ -251,6 +277,14 @@ class SettingsScreen extends ConsumerWidget {
         },
       ),
     );
+  }
+
+  String _buildVersionLabel(PackageInfo packageInfo) {
+    final buildNumber = packageInfo.buildNumber.trim();
+    final versionSuffix = buildNumber.isEmpty
+        ? packageInfo.version
+        : '${packageInfo.version}+$buildNumber';
+    return 'Article-Hub v$versionSuffix';
   }
 }
 

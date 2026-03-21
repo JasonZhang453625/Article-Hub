@@ -189,6 +189,15 @@ class _SourceChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final selectedFillColor = isSelected
+        ? _selectedFillColor(theme, isDark)
+        : chipBg;
+    final unselectedTextColor = isDark
+        ? theme.colorScheme.onSurface.withValues(alpha: 0.9)
+        : theme.colorScheme.onSurface;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
@@ -201,7 +210,7 @@ class _SourceChip extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: isSelected ? color : chipBg,
+              color: selectedFillColor,
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
                 color:
@@ -219,7 +228,7 @@ class _SourceChip extends StatelessWidget {
                   style: TextStyle(
                     color: isSelected
                         ? Colors.white
-                        : Theme.of(context).colorScheme.onSurface,
+                        : unselectedTextColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -229,5 +238,14 @@ class _SourceChip extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Color _selectedFillColor(ThemeData theme, bool isDark) {
+    final isAllChip = label.toLowerCase() == 'all';
+    if (isDark && isAllChip) {
+      return const Color(0xFF384654);
+    }
+
+    return color;
   }
 }

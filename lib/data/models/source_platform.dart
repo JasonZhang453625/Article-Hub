@@ -26,7 +26,7 @@ enum SourcePlatform {
       case SourcePlatform.bilibili:
         return 'Bilibili';
       case SourcePlatform.xiaohongshu:
-        return 'Xiaohongshu';
+        return 'Rednote';
       case SourcePlatform.chatgpt:
         return 'ChatGPT';
       case SourcePlatform.youtube:

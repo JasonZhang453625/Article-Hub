@@ -14,20 +14,8 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final articlesAsync = ref.watch(articlesProvider);
     final filteredArticles = ref.watch(filteredArticlesProvider);
     final headerVisibilityAsync = ref.watch(homeHeaderVisibilityProvider);
-    final allArticles = articlesAsync.maybeWhen(
-      data: (articles) => articles,
-      orElse: () => const [],
-    );
-    final favoriteCount = allArticles
-        .where((article) => article.isFavorite)
-        .length;
-    final sourceCount = allArticles
-        .map((article) => article.source)
-        .toSet()
-        .length;
     final showHeader = headerVisibilityAsync.maybeWhen(
       data: (isVisible) => isVisible,
       orElse: () => false,
@@ -58,9 +46,6 @@ class HomeScreen extends ConsumerWidget {
                       ? DelayedReveal(
                           key: const ValueKey('home-header'),
                           child: HomeHeader(
-                            totalArticles: allArticles.length,
-                            favoriteArticles: favoriteCount,
-                            sourceCount: sourceCount,
                             onClose: () {
                               ref
                                   .read(homeHeaderVisibilityProvider.notifier)
