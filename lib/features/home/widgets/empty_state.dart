@@ -22,16 +22,11 @@ class EmptyState extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: theme.colorScheme.surface,
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: const Color(0xFFD7E3EA)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x120C3554),
-                blurRadius: 24,
-                offset: Offset(0, 14),
-              ),
-            ],
+            border: Border.all(
+              color: theme.colorScheme.outline.withValues(alpha: 0.3),
+            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

@@ -103,6 +103,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
@@ -176,17 +177,14 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                         const Spacer(),
                         Text(
                           'Added ${formatRelative(widget.article.createdAt)}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
+                          style: theme.textTheme.bodySmall,
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     SelectableText(
                       widget.article.url,
-                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                      style: theme.textTheme.bodySmall?.copyWith(fontSize: 13),
                     ),
                   ],
                 ),
@@ -268,21 +266,23 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.grey[50],
+                  color: theme.colorScheme.surface,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey[200]!),
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Created: ${formatDateTime(widget.article.createdAt)}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Updated: ${formatDateTime(widget.article.updatedAt)}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
                     ),
                   ],
                 ),

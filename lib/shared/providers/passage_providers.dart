@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/models/passage.dart';
+import '../../data/models/settings.dart';
+import '../../data/models/filter_group.dart';
 import '../../data/repositories/passage_repository.dart';
+import 'filter_providers.dart';
 
 final hiveInitProvider = FutureProvider<void>((ref) async {
   await Hive.initFlutter();
@@ -10,6 +13,12 @@ final hiveInitProvider = FutureProvider<void>((ref) async {
   }
   if (!Hive.isAdapterRegistered(1)) {
     Hive.registerAdapter(SourcePlatformAdapter());
+  }
+  if (!Hive.isAdapterRegistered(AppSettings.typeId)) {
+    Hive.registerAdapter(AppSettingsAdapter());
+  }
+  if (!Hive.isAdapterRegistered(FilterGroup.typeId)) {
+    Hive.registerAdapter(FilterGroupAdapter());
   }
 });
 
@@ -102,6 +111,8 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final articlesAsync = ref.watch(articlesProvider);
   final query = ref.watch(searchQueryProvider);
   final sourceName = ref.watch(selectedSourceProvider);
+  final selectedFilterId = ref.watch(selectedFilterGroupProvider);
+  final filterGroupsAsync = ref.watch(filterGroupsProvider);
 
   return articlesAsync.whenData((articles) {
     var filtered = articles;
@@ -120,6 +131,25 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
       filtered = filtered
           .where((article) => article.source.name == sourceName)
           .toList();
+    }
+
+    // Apply custom filter group
+    if (selectedFilterId.isNotEmpty) {
+      final groups = filterGroupsAsync.valueOrNull ?? [];
+      final group = groups.where((g) => g.id == selectedFilterId).firstOrNull;
+      if (group != null) {
+        filtered = filtered.where((article) {
+          bool matchesTags = group.tagPatterns.isEmpty ||
+              group.tagPatterns.any((pattern) {
+                final lower = pattern.toLowerCase();
+                return article.tags
+                    .any((tag) => tag.toLowerCase().contains(lower));
+              });
+          bool matchesSource = group.sourcePlatforms.isEmpty ||
+              group.sourcePlatforms.contains(article.source.name);
+          return matchesTags && matchesSource;
+        }).toList();
+      }
     }
 
     return filtered;

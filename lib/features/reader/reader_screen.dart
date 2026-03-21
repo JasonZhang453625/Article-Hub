@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/passage.dart';
+import '../../shared/providers/settings_providers.dart';
 
-class ReaderScreen extends StatefulWidget {
+class ReaderScreen extends ConsumerStatefulWidget {
   final Article article;
 
   const ReaderScreen({super.key, required this.article});
 
   @override
-  State<ReaderScreen> createState() => _ReaderScreenState();
+  ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-class _ReaderScreenState extends State<ReaderScreen> {
+class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   double _progress = 0;
   InAppWebViewController? _webViewController;
   String? _currentUrl;
@@ -32,6 +34,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final webZoom = ref.watch(webZoomProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -75,6 +79,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 displayZoomControls: false,
                 allowsInlineMediaPlayback: true,
                 mediaPlaybackRequiresUserGesture: false,
+                textZoom: webZoom,
               ),
               onWebViewCreated: (controller) {
                 _webViewController = controller;

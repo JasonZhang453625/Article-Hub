@@ -19,6 +19,8 @@ class ArticleCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final accentColor = article.source.accentColor;
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final cardBg = theme.colorScheme.surface;
     final metadata = [
       article.source.displayName,
       formatRelative(article.updatedAt),
@@ -34,16 +36,9 @@ class ArticleCard extends StatelessWidget {
           onTap: onTap,
           child: Ink(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: cardBg,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: accentColor.withValues(alpha: 0.18)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x0E0C3554),
-                  blurRadius: 12,
-                  offset: Offset(0, 6),
-                ),
-              ],
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -97,7 +92,9 @@ class ArticleCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFF6C8594),
+                            color: isDark
+                                ? Colors.white54
+                                : const Color(0xFF6C8594),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -114,8 +111,12 @@ class ArticleCard extends StatelessWidget {
                       minimumSize: const Size(34, 34),
                       maximumSize: const Size(34, 34),
                       padding: EdgeInsets.zero,
-                      backgroundColor: const Color(0xFFF2F6F9),
-                      foregroundColor: const Color(0xFF284457),
+                      backgroundColor: isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : const Color(0xFFF2F6F9),
+                      foregroundColor: isDark
+                          ? Colors.white70
+                          : const Color(0xFF284457),
                     ),
                   ),
                 ],
