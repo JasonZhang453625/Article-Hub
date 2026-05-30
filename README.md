@@ -1,6 +1,6 @@
 # Article-Hub
 
-Article-Hub is a Flutter app for collecting and revisiting articles from X, Bilibili, Xiaohongshu, ChatGPT, WeChat, Zhihu, and the wider web.
+Article-Hub is a Flutter app for collecting and revisiting articles from X, Bilibili, Rednote, ChatGPT, WeChat, Zhihu, and the wider web.
 
 ## Features
 
