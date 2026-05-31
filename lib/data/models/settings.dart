@@ -107,6 +107,29 @@ class AppSettings {
           hiddenSourcePlatforms ?? this.hiddenSourcePlatforms,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'fontSize': fontSize,
+      'webZoomPercent': webZoomPercent,
+      'themeModeIndex': themeModeIndex,
+      'sourcePlatformOrder': sourcePlatformOrder,
+      'hiddenSourcePlatforms': hiddenSourcePlatforms,
+    };
+  }
+
+  factory AppSettings.fromJson(Map<String, dynamic> json) {
+    return AppSettings(
+      fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14.0,
+      webZoomPercent: (json['webZoomPercent'] as num?)?.toInt() ?? 100,
+      themeModeIndex: (json['themeModeIndex'] as num?)?.toInt() ?? 1,
+      sourcePlatformOrder:
+          (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
+      hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
+          ?.whereType<String>()
+          .toList(),
+    );
+  }
 }
 
 class AppSettingsAdapter extends TypeAdapter<AppSettings> {

@@ -50,6 +50,53 @@ class Article extends HiveObject {
       isFavorite: isFavorite ?? this.isFavorite,
     );
   }
+
+  /// Serializes the article to a JSON-compatible map. The source platform is
+  /// stored as its stable integer value so the format stays robust against
+  /// enum reordering (same mapping used by the Hive adapter).
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'url': url,
+      'title': title,
+      'source': SourcePlatformAdapter.toStoredValue(source),
+      'tags': tags,
+      'notes': notes,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+      'isFavorite': isFavorite,
+    };
+  }
+
+  /// Rebuilds an article from a [toJson] map. Throws [FormatException] if the
+  /// required fields are missing or malformed.
+  factory Article.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final url = json['url'];
+    if (id is! String || url is! String) {
+      throw const FormatException('Article is missing required fields');
+    }
+    return Article(
+      id: id,
+      url: url,
+      title: json['title'] is String ? json['title'] as String : url,
+      source: SourcePlatformAdapter.fromStoredValue(
+        json['source'] is int ? json['source'] as int : 2,
+      ),
+      tags: (json['tags'] as List?)?.whereType<String>().toList() ?? const [],
+      notes: json['notes'] is String ? json['notes'] as String : '',
+      createdAt: _parseDate(json['createdAt']),
+      updatedAt: _parseDate(json['updatedAt']),
+      isFavorite: json['isFavorite'] == true,
+    );
+  }
+
+  static DateTime _parseDate(dynamic value) {
+    if (value is String) {
+      return DateTime.tryParse(value) ?? DateTime.now();
+    }
+    return DateTime.now();
+  }
 }
 
 class ArticleAdapter extends TypeAdapter<Article> {

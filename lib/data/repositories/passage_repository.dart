@@ -16,14 +16,24 @@ class ArticleRepository {
   }
 
   Article? getById(String id) {
-    return _box.values.firstWhere(
-      (article) => article.id == id,
-      orElse: () => throw StateError('Article not found'),
-    );
+    for (final article in _box.values) {
+      if (article.id == id) return article;
+    }
+    return null;
   }
 
   Future<void> add(Article article) async {
     await _box.put(article.id, article);
+  }
+
+  /// Merges a batch of articles into the box, keyed by id. Existing articles
+  /// with the same id are overwritten; others are left untouched. Returns the
+  /// number of articles written.
+  Future<int> importAll(Iterable<Article> articles) async {
+    final entries = {for (final a in articles) a.id: a};
+    if (entries.isEmpty) return 0;
+    await _box.putAll(entries);
+    return entries.length;
   }
 
   Future<void> update(Article article) async {

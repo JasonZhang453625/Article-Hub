@@ -66,6 +66,15 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     state = AsyncValue.data(repo.getAll());
   }
 
+  /// Imports a batch of articles (merge by id) and refreshes state.
+  /// Returns the number of articles written.
+  Future<int> importAll(Iterable<Article> articles) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    final count = await repo.importAll(articles);
+    state = AsyncValue.data(repo.getAll());
+    return count;
+  }
+
   void refresh() {
     _load();
   }

@@ -49,6 +49,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(themeModeIndex: index));
   }
 
+  /// Replaces all settings at once (used when importing a backup).
+  Future<void> replaceWith(AppSettings settings) async {
+    await _save(settings);
+  }
+
   Future<void> updateSourcePlatformOrder(List<String> order) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(sourcePlatformOrder: order));

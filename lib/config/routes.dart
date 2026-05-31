@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../data/models/passage.dart';
+import '../features/article_resolver.dart';
 import '../features/home/home_screen.dart';
 import '../features/add_passage/add_passage_screen.dart';
 import '../features/reader/reader_screen.dart';
@@ -86,20 +87,28 @@ final appRouter = GoRouter(
     GoRoute(
       path: '${AppRoutes.reader}/:id',
       pageBuilder: (context, state) {
-        final article = state.extra as Article;
+        final article = state.extra as Article?;
         return _buildPage(
           state: state,
-          child: ReaderScreen(article: article),
+          child: ArticleResolver(
+            article: article,
+            id: state.pathParameters['id'],
+            builder: (resolved) => ReaderScreen(article: resolved),
+          ),
         );
       },
     ),
     GoRoute(
       path: '${AppRoutes.detail}/:id',
       pageBuilder: (context, state) {
-        final article = state.extra as Article;
+        final article = state.extra as Article?;
         return _buildPage(
           state: state,
-          child: DetailScreen(article: article),
+          child: ArticleResolver(
+            article: article,
+            id: state.pathParameters['id'],
+            builder: (resolved) => DetailScreen(article: resolved),
+          ),
         );
       },
     ),

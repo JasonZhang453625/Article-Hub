@@ -126,17 +126,17 @@ enum SourcePlatform {
     if (uri == null) return SourcePlatform.web;
 
     final host = uri.host.toLowerCase();
+    if (host.isEmpty) return SourcePlatform.web;
 
     if (_matchesAny(host, const [
-      'weixin',
-      'mp.weixin',
-      'wechat',
-      'weixin.qq',
+      'weixin.qq.com',
+      'wechat.com',
+      'weixin.com',
     ])) {
       return SourcePlatform.wechat;
     }
 
-    if (_matchesAny(host, const ['zhihu', 'zhuanlan.zhihu'])) {
+    if (_matchesAny(host, const ['zhihu.com'])) {
       return SourcePlatform.zhihu;
     }
 
@@ -152,7 +152,7 @@ enum SourcePlatform {
       return SourcePlatform.xiaohongshu;
     }
 
-    if (_matchesAny(host, const ['chatgpt.com', 'chat.openai.com'])) {
+    if (_matchesAny(host, const ['chatgpt.com', 'openai.com'])) {
       return SourcePlatform.chatgpt;
     }
 
@@ -175,9 +175,13 @@ enum SourcePlatform {
     return SourcePlatform.web;
   }
 
-  static bool _matchesAny(String host, List<String> patterns) {
-    for (final pattern in patterns) {
-      if (host.contains(pattern)) {
+  // Matches a host against registrable-domain patterns. A pattern matches when
+  // the host equals it exactly or is a subdomain of it (e.g. 'zhuanlan.zhihu.com'
+  // matches 'zhihu.com'). This avoids substring false positives such as
+  // 'netflix.com' matching 'x.com'.
+  static bool _matchesAny(String host, List<String> domains) {
+    for (final domain in domains) {
+      if (host == domain || host.endsWith('.$domain')) {
         return true;
       }
     }

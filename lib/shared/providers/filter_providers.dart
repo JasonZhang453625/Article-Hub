@@ -23,27 +23,63 @@ class FilterGroupsNotifier
   }
 
   Future<void> _load() async {
+    try {
+      await _ref.read(hiveInitProvider.future);
+      _box ??= await Hive.openBox<FilterGroup>(_boxName);
+      state = AsyncValue.data(_box!.values.toList());
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<Box<FilterGroup>> _ensureBox() async {
     await _ref.read(hiveInitProvider.future);
-    _box ??= await Hive.openBox<FilterGroup>(_boxName);
-    state = AsyncValue.data(_box!.values.toList());
+    return _box ??= await Hive.openBox<FilterGroup>(_boxName);
   }
 
   Future<void> add(FilterGroup group) async {
-    _box ??= await Hive.openBox<FilterGroup>(_boxName);
-    await _box!.put(group.id, group);
-    state = AsyncValue.data(_box!.values.toList());
+    try {
+      final box = await _ensureBox();
+      await box.put(group.id, group);
+      state = AsyncValue.data(box.values.toList());
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
   }
 
   Future<void> update(FilterGroup group) async {
-    _box ??= await Hive.openBox<FilterGroup>(_boxName);
-    await _box!.put(group.id, group);
-    state = AsyncValue.data(_box!.values.toList());
+    try {
+      final box = await _ensureBox();
+      await box.put(group.id, group);
+      state = AsyncValue.data(box.values.toList());
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
   }
 
   Future<void> delete(String id) async {
-    _box ??= await Hive.openBox<FilterGroup>(_boxName);
-    await _box!.delete(id);
-    state = AsyncValue.data(_box!.values.toList());
+    try {
+      final box = await _ensureBox();
+      await box.delete(id);
+      state = AsyncValue.data(box.values.toList());
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  /// Merges imported filter groups (by id) into the box.
+  Future<int> importAll(Iterable<FilterGroup> groups) async {
+    try {
+      final entries = {for (final g in groups) g.id: g};
+      if (entries.isEmpty) return 0;
+      final box = await _ensureBox();
+      await box.putAll(entries);
+      state = AsyncValue.data(box.values.toList());
+      return entries.length;
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+      return 0;
+    }
   }
 
   String generateId() => const Uuid().v4();

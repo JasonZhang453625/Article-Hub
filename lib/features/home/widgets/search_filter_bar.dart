@@ -16,6 +16,22 @@ class SearchFilterBar extends ConsumerStatefulWidget {
 
 class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
   String? _draggingPlatformName;
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialise from the current query so the text survives navigating away
+    // and back to the home screen.
+    _searchController =
+        TextEditingController(text: ref.read(searchQueryProvider));
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,13 +43,24 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
     final isDark = theme.brightness == Brightness.dark;
     final chipBg = isDark ? theme.colorScheme.surface : Colors.white;
 
-    if (selectedSource.isNotEmpty &&
-        !visiblePlatforms.any((platform) => platform.name == selectedSource)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+    // If the currently selected source becomes hidden, clear the selection.
+    // Done via listen (not inside build) to avoid mutating provider state
+    // during a build pass.
+    ref.listen<List<SourcePlatform>>(visibleSourcePlatformsProvider,
+        (previous, next) {
+      final current = ref.read(selectedSourceProvider);
+      if (current.isNotEmpty &&
+          !next.any((platform) => platform.name == current)) {
         ref.read(selectedSourceProvider.notifier).state = '';
-      });
-    }
+      }
+    });
+
+    // Keep the text field in sync if the query is cleared elsewhere.
+    ref.listen<String>(searchQueryProvider, (previous, next) {
+      if (next != _searchController.text) {
+        _searchController.text = next;
+      }
+    });
 
     return Column(
       children: [
@@ -45,6 +72,7 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
               borderRadius: BorderRadius.circular(24),
             ),
             child: TextField(
+              controller: _searchController,
               decoration: const InputDecoration(
                 hintText: 'Search articles, tags or notes...',
                 prefixIcon: Icon(Icons.search_rounded),

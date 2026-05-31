@@ -7,7 +7,9 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: App()));
     await tester.pump(const Duration(milliseconds: 400));
 
+    // The "Add" FAB and the search field are stable elements of the home screen.
     expect(find.text('Add'), findsOneWidget);
-    expect(find.text('All articles'), findsOneWidget);
+    expect(find.text('Search articles, tags or notes...'), findsOneWidget);
+    expect(find.text('All'), findsOneWidget);
   });
 }

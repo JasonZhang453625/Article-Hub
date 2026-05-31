@@ -33,6 +33,33 @@ class FilterGroup {
       sourcePlatforms: sourcePlatforms ?? this.sourcePlatforms,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'tagPatterns': tagPatterns,
+      'sourcePlatforms': sourcePlatforms,
+    };
+  }
+
+  factory FilterGroup.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final name = json['name'];
+    if (id is! String || name is! String) {
+      throw const FormatException('FilterGroup is missing required fields');
+    }
+    return FilterGroup(
+      id: id,
+      name: name,
+      tagPatterns:
+          (json['tagPatterns'] as List?)?.whereType<String>().toList() ??
+              const [],
+      sourcePlatforms:
+          (json['sourcePlatforms'] as List?)?.whereType<String>().toList() ??
+              const [],
+    );
+  }
 }
 
 class FilterGroupAdapter extends TypeAdapter<FilterGroup> {

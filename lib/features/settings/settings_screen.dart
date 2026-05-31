@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../data/models/source_platform.dart';
+import '../../data/services/backup_service.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 
@@ -15,6 +16,14 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late final Future<PackageInfo> _packageInfoFuture;
+
+  // Transient slider values while dragging, so we only persist to Hive once
+  // the gesture ends (onChangeEnd) instead of on every division (onChanged).
+  double? _draggingFontSize;
+  double? _draggingWebZoom;
+
+  bool _isExporting = false;
+  bool _isImporting = false;
 
   @override
   void initState() {
@@ -138,7 +147,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              '${settings.fontSize.round()}',
+                              '${(_draggingFontSize ?? settings.fontSize).round()}',
                               style: TextStyle(
                                 color: theme.colorScheme.primary,
                                 fontWeight: FontWeight.w700,
@@ -155,15 +164,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   fontSize: 12, fontWeight: FontWeight.w600)),
                           Expanded(
                             child: Slider(
-                              value: settings.fontSize,
+                              value: _draggingFontSize ?? settings.fontSize,
                               min: 10,
                               max: 24,
                               divisions: 14,
-                              label: settings.fontSize.round().toString(),
+                              label: (_draggingFontSize ?? settings.fontSize)
+                                  .round()
+                                  .toString(),
                               onChanged: (v) {
+                                setState(() => _draggingFontSize = v);
+                              },
+                              onChangeEnd: (v) {
                                 ref
                                     .read(settingsProvider.notifier)
                                     .setFontSize(v);
+                                setState(() => _draggingFontSize = null);
                               },
                             ),
                           ),
@@ -219,7 +234,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              '${settings.webZoomPercent}%',
+                              '${(_draggingWebZoom ?? settings.webZoomPercent.toDouble()).round()}%',
                               style: TextStyle(
                                 color: theme.colorScheme.primary,
                                 fontWeight: FontWeight.w700,
@@ -230,15 +245,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                       const SizedBox(height: 8),
                       Slider(
-                        value: settings.webZoomPercent.toDouble(),
+                        value: _draggingWebZoom ??
+                            settings.webZoomPercent.toDouble(),
                         min: 50,
                         max: 200,
                         divisions: 30,
-                        label: '${settings.webZoomPercent}%',
+                        label:
+                            '${(_draggingWebZoom ?? settings.webZoomPercent.toDouble()).round()}%',
                         onChanged: (v) {
+                          setState(() => _draggingWebZoom = v);
+                        },
+                        onChangeEnd: (v) {
                           ref
                               .read(settingsProvider.notifier)
                               .setWebZoom(v.round());
+                          setState(() => _draggingWebZoom = null);
                         },
                       ),
                       Text(
@@ -345,6 +366,75 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
 
+                const SizedBox(height: 20),
+
+                // ── Data / Backup Section ──
+                _SectionLabel(label: 'Data', theme: theme),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(24),
+                    border:
+                        Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Backup & Restore', style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Export all your articles, filters and settings to a '
+                        'JSON file, or import a backup. Importing merges into '
+                        'your current data.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isDark
+                              ? Colors.white54
+                              : const Color(0xFF6C8594),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _isExporting ? null : _handleExport,
+                              icon: _isExporting
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.ios_share_rounded,
+                                      size: 18),
+                              label: const Text('Export'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _isImporting ? null : _handleImport,
+                              icon: _isImporting
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.file_download_rounded,
+                                      size: 18),
+                              label: const Text('Import'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: 32),
 
                 // ── About Section ──
@@ -383,6 +473,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ? packageInfo.version
         : '${packageInfo.version}+$buildNumber';
     return 'Article-Hub v$versionSuffix';
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _handleExport() async {
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      await ref.read(backupServiceProvider).exportBackup();
+    } catch (e) {
+      _showSnack('Export failed: $e');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Future<void> _handleImport() async {
+    if (_isImporting) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Import backup'),
+        content: const Text(
+          'Articles and filters from the backup will be merged into your '
+          'current data (entries with the same id are updated). App settings '
+          'will be replaced. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isImporting = true);
+    try {
+      final result = await ref.read(backupServiceProvider).importBackup();
+      if (result == null) return; // cancelled at file picker
+      _showSnack(
+        'Imported ${result.articles} articles, '
+        '${result.filterGroups} filters'
+        '${result.settingsImported ? ', settings' : ''}.',
+      );
+    } on FormatException catch (e) {
+      _showSnack('Invalid backup file: ${e.message}');
+    } catch (e) {
+      _showSnack('Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _isImporting = false);
+    }
   }
 }
 

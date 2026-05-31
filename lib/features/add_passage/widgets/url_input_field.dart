@@ -7,11 +7,16 @@ class UrlInputField extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final SourcePlatform detectedPlatform;
 
+  /// Called when reading the clipboard fails (e.g. permission denied), so the
+  /// parent can surface a message. Optional.
+  final VoidCallback? onPasteError;
+
   const UrlInputField({
     super.key,
     required this.controller,
     required this.onChanged,
     required this.detectedPlatform,
+    this.onPasteError,
   });
 
   @override
@@ -32,10 +37,18 @@ class UrlInputField extends StatelessWidget {
                   icon: const Icon(Icons.content_paste),
                   tooltip: 'Paste from clipboard',
                   onPressed: () async {
-                    final data = await Clipboard.getData('text/plain');
-                    if (data?.text != null) {
-                      controller.text = data!.text!;
-                      onChanged(data.text!);
+                    try {
+                      final data = await Clipboard.getData('text/plain');
+                      final text = data?.text;
+                      if (text != null && text.isNotEmpty) {
+                        controller.text = text;
+                        onChanged(text);
+                      }
+                    } catch (_) {
+                      // Clipboard access can throw (e.g. PlatformException when
+                      // permission is denied). Surface it via the callback
+                      // instead of crashing.
+                      onPasteError?.call();
                     }
                   },
                 ),

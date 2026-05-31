@@ -106,11 +106,13 @@ class ArticleCard extends StatelessWidget {
                     icon: const Icon(Icons.arrow_outward_rounded, size: 18),
                     onPressed: onInfoTap,
                     tooltip: 'View details',
-                    visualDensity: VisualDensity.compact,
+                    // Visual button stays 34x34, but `padded` keeps the
+                    // interactive tap target at the 48x48 accessibility minimum.
                     style: IconButton.styleFrom(
                       minimumSize: const Size(34, 34),
                       maximumSize: const Size(34, 34),
                       padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.padded,
                       backgroundColor: isDark
                           ? Colors.white.withValues(alpha: 0.08)
                           : const Color(0xFFF2F6F9),

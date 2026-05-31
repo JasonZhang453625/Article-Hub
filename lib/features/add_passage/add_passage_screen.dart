@@ -145,6 +145,14 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 controller: _urlController,
                 onChanged: _onUrlChanged,
                 detectedPlatform: _detectedPlatform,
+                onPasteError: () {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Could not read from clipboard'),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 16),
               TextFormField(
