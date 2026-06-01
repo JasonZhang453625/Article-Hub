@@ -65,6 +65,23 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     }
   }
 
+  Future<void> _openBulkImport() async {
+    final urls = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _BulkImportSheet(),
+    );
+    if (urls == null || urls.isEmpty) return;
+
+    final count = await ref.read(articlesProvider.notifier).addMany(urls);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Added $count article${count == 1 ? '' : 's'}')),
+    );
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
@@ -72,7 +89,14 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Add Article'),
-        actions: [TextButton(onPressed: _save, child: const Text('Save'))],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.playlist_add_rounded),
+            tooltip: 'Add multiple URLs',
+            onPressed: _openBulkImport,
+          ),
+          TextButton(onPressed: _save, child: const Text('Save')),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -209,3 +233,99 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     );
   }
 }
+
+/// Bottom sheet for pasting multiple URLs at once. Pops with the parsed,
+/// validated, de-duplicated URL list (or null if cancelled).
+class _BulkImportSheet extends StatefulWidget {
+  const _BulkImportSheet();
+
+  @override
+  State<_BulkImportSheet> createState() => _BulkImportSheetState();
+}
+
+class _BulkImportSheetState extends State<_BulkImportSheet> {
+  final _controller = TextEditingController();
+  int _validCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_recount);
+  }
+
+  void _recount() {
+    final count = parseUrlList(_controller.text).length;
+    if (count != _validCount) {
+      setState(() => _validCount = count);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_recount);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(parseUrlList(_controller.text));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Add multiple URLs',
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'Paste one URL per line (or separated by spaces/commas). '
+              'Sources are detected automatically.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _controller,
+              maxLines: 6,
+              minLines: 4,
+              autofocus: true,
+              keyboardType: TextInputType.multiline,
+              decoration: const InputDecoration(
+                hintText: 'https://x.com/...\nhttps://bilibili.com/...',
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _validCount == 0 ? null : _submit,
+                icon: const Icon(Icons.playlist_add_check_rounded),
+                label: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    _validCount == 0
+                        ? 'Add'
+                        : 'Add $_validCount URL${_validCount == 1 ? '' : 's'}',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

@@ -1,9 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/filter_group.dart';
+import '../../data/models/source_platform.dart';
 import '../../data/repositories/passage_repository.dart';
+import '../utils/url_helpers.dart';
 import 'filter_providers.dart';
 
 final hiveInitProvider = FutureProvider<void>((ref) async {
@@ -73,6 +76,28 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     final count = await repo.importAll(articles);
     state = AsyncValue.data(repo.getAll());
     return count;
+  }
+
+  /// Creates and saves an article for each URL, auto-detecting the source
+  /// platform and using the domain as a placeholder title. Returns the number
+  /// of articles created.
+  Future<int> addMany(Iterable<String> urls) async {
+    final uuid = const Uuid();
+    final articles = <Article>[];
+    for (final url in urls) {
+      final cleaned = cleanUrl(url);
+      if (!isValidUrl(cleaned)) continue;
+      articles.add(
+        Article(
+          id: uuid.v4(),
+          url: cleaned,
+          title: extractDomain(cleaned),
+          source: SourcePlatform.fromUrl(cleaned),
+        ),
+      );
+    }
+    if (articles.isEmpty) return 0;
+    return importAll(articles);
   }
 
   void refresh() {

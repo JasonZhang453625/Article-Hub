@@ -43,7 +43,7 @@
 **目标**：降低保存成本、提升每条收藏的信息密度，并为 AI 摘要铺好正文提取的前置依赖。
 
 - [ ] IMP-1：注册系统分享目标，从其他 App 分享链接直接保存（移动端核心入口，Android `intent-filter` + iOS Share Extension）
-- [ ] IMP-2：批量粘贴多条 URL（换行分隔）一次保存
+- [x] IMP-2：批量粘贴多条 URL（换行/空格/逗号/分号分隔）一次保存（`parseUrlList` + `addMany` + 添加页批量 sheet）
 - [ ] READ-5：保存时抓取 `og:title` / `og:image`，自动填充标题与封面缩略图
 - [ ] AI-1：正文提取服务（去广告/导航留正文），失败回退 WebView——**Phase 2 的前置依赖**
 - [ ] 列表卡片支持封面缩略图展示
