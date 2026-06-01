@@ -52,11 +52,20 @@ void main() {
         fontSize: 18,
         webZoomPercent: 120,
         themeModeIndex: 2,
+        clipboardDetectionEnabled: false,
       );
       final restored = AppSettings.fromJson(original.toJson());
       expect(restored.fontSize, 18);
       expect(restored.webZoomPercent, 120);
       expect(restored.themeModeIndex, 2);
+      expect(restored.clipboardDetectionEnabled, isFalse);
+    });
+
+    test('AppSettings defaults clipboardDetectionEnabled to true when absent',
+        () {
+      // Older backups won't have the field; it should default to enabled.
+      final restored = AppSettings.fromJson({'fontSize': 14});
+      expect(restored.clipboardDetectionEnabled, isTrue);
     });
 
     test('Article.fromJson throws on missing required fields', () {

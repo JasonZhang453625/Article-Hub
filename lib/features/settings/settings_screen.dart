@@ -368,6 +368,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
                 const SizedBox(height: 20),
 
+                // ── Behavior Section ──
+                _SectionLabel(label: 'Behavior', theme: theme),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(24),
+                    border:
+                        Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  ),
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Detect links from clipboard'),
+                    subtitle: Text(
+                      'When you open the app, offer to save a link you have '
+                      'copied.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
+                    ),
+                    value: settings.clipboardDetectionEnabled,
+                    onChanged: (value) {
+                      ref
+                          .read(settingsProvider.notifier)
+                          .setClipboardDetectionEnabled(value);
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
                 // ── Data / Backup Section ──
                 _SectionLabel(label: 'Data', theme: theme),
                 const SizedBox(height: 8),

@@ -14,10 +14,15 @@ class AppSettings {
   List<String> sourcePlatformOrder;
   List<String> hiddenSourcePlatforms;
 
+  /// When true, the app checks the clipboard on launch/resume and offers to
+  /// save a detected URL.
+  bool clipboardDetectionEnabled;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
     this.themeModeIndex = 1,
+    this.clipboardDetectionEnabled = true,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -94,6 +99,7 @@ class AppSettings {
     double? fontSize,
     int? webZoomPercent,
     int? themeModeIndex,
+    bool? clipboardDetectionEnabled,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -101,6 +107,8 @@ class AppSettings {
       fontSize: fontSize ?? this.fontSize,
       webZoomPercent: webZoomPercent ?? this.webZoomPercent,
       themeModeIndex: themeModeIndex ?? this.themeModeIndex,
+      clipboardDetectionEnabled:
+          clipboardDetectionEnabled ?? this.clipboardDetectionEnabled,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
@@ -113,6 +121,7 @@ class AppSettings {
       'fontSize': fontSize,
       'webZoomPercent': webZoomPercent,
       'themeModeIndex': themeModeIndex,
+      'clipboardDetectionEnabled': clipboardDetectionEnabled,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -123,6 +132,10 @@ class AppSettings {
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14.0,
       webZoomPercent: (json['webZoomPercent'] as num?)?.toInt() ?? 100,
       themeModeIndex: (json['themeModeIndex'] as num?)?.toInt() ?? 1,
+      clipboardDetectionEnabled:
+          json['clipboardDetectionEnabled'] is bool
+              ? json['clipboardDetectionEnabled'] as bool
+              : true,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
@@ -151,13 +164,16 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
           (fields[3] as List?)?.cast<String>(),
       hiddenSourcePlatforms:
           (fields[4] as List?)?.cast<String>(),
+      // Field 5 added later; default to enabled for backups/data written
+      // before this field existed.
+      clipboardDetectionEnabled: (fields[5] as bool?) ?? true,
     );
   }
 
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(6)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -167,6 +183,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(3)
       ..write(obj.sourcePlatformOrder)
       ..writeByte(4)
-      ..write(obj.hiddenSourcePlatforms);
+      ..write(obj.hiddenSourcePlatforms)
+      ..writeByte(5)
+      ..write(obj.clipboardDetectionEnabled);
   }
 }

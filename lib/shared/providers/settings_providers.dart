@@ -54,6 +54,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(settings);
   }
 
+  Future<void> setClipboardDetectionEnabled(bool enabled) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(clipboardDetectionEnabled: enabled));
+  }
+
   Future<void> updateSourcePlatformOrder(List<String> order) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(sourcePlatformOrder: order));
@@ -124,6 +129,13 @@ final webZoomProvider = Provider<int>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
     data: (s) => s.webZoomPercent,
     orElse: () => 100,
+  );
+});
+
+final clipboardDetectionEnabledProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.clipboardDetectionEnabled,
+    orElse: () => false,
   );
 });
 

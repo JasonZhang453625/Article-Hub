@@ -10,7 +10,10 @@ import 'widgets/url_input_field.dart';
 import 'widgets/tag_input.dart';
 
 class AddArticleScreen extends ConsumerStatefulWidget {
-  const AddArticleScreen({super.key});
+  /// Optional URL to pre-fill (e.g. detected from the clipboard).
+  final String? initialUrl;
+
+  const AddArticleScreen({super.key, this.initialUrl});
 
   @override
   ConsumerState<AddArticleScreen> createState() => _AddArticleScreenState();
@@ -25,6 +28,16 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
   List<String> _tags = [];
   SourcePlatform _detectedPlatform = SourcePlatform.web;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialUrl;
+    if (initial != null && initial.isNotEmpty) {
+      _urlController.text = initial;
+      _detectedPlatform = SourcePlatform.fromUrl(initial);
+    }
+  }
 
   @override
   void dispose() {

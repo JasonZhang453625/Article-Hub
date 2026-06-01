@@ -44,6 +44,7 @@
 
 - [ ] IMP-1：注册系统分享目标，从其他 App 分享链接直接保存（移动端核心入口，Android `intent-filter` + iOS Share Extension）
 - [x] IMP-2：批量粘贴多条 URL（换行/空格/逗号/分号分隔）一次保存（`parseUrlList` + `addMany` + 添加页批量 sheet）
+- [x] IMP-6：进入/回到前台时自动检测剪贴板链接，弹 SnackBar 提示一键添加（设置可关，默认开；HomeScreen 生命周期监听 + `clipboardDetectionEnabled`）
 - [ ] READ-5：保存时抓取 `og:title` / `og:image`，自动填充标题与封面缩略图
 - [ ] AI-1：正文提取服务（去广告/导航留正文），失败回退 WebView——**Phase 2 的前置依赖**
 - [ ] 列表卡片支持封面缩略图展示

@@ -81,8 +81,12 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: AppRoutes.addArticle,
-      pageBuilder: (context, state) =>
-          _buildPage(state: state, child: const AddArticleScreen()),
+      pageBuilder: (context, state) => _buildPage(
+        state: state,
+        child: AddArticleScreen(
+          initialUrl: state.extra is String ? state.extra as String : null,
+        ),
+      ),
     ),
     GoRoute(
       path: '${AppRoutes.reader}/:id',
