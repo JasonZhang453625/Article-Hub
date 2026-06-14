@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -16,11 +17,13 @@ import '../../shared/providers/settings_providers.dart';
 class ImportResult {
   final int articles;
   final int filterGroups;
+  final int folders;
   final bool settingsImported;
 
   const ImportResult({
     required this.articles,
     required this.filterGroups,
+    required this.folders,
     required this.settingsImported,
   });
 }
@@ -39,11 +42,13 @@ class BackupService {
     final repo = await _ref.read(articleRepositoryProvider.future);
     final articles = repo.getAll();
     final filterGroups = _ref.read(filterGroupsProvider).valueOrNull ?? [];
+    final folders = _ref.read(foldersProvider).valueOrNull ?? [];
     final settings = _ref.read(settingsProvider).valueOrNull;
 
     final backup = BackupData.create(
       articles: articles,
       filterGroups: filterGroups,
+      folders: folders,
       settings: settings,
     );
 
@@ -78,7 +83,7 @@ class BackupService {
     String contents;
     final bytes = file.bytes;
     if (bytes != null) {
-      contents = String.fromCharCodes(bytes);
+      contents = utf8.decode(bytes);
     } else if (file.path != null) {
       contents = await File(file.path!).readAsString();
     } else {
@@ -93,6 +98,14 @@ class BackupService {
         .read(filterGroupsProvider.notifier)
         .importAll(backup.filterGroups);
 
+    int folderCount = 0;
+    if (backup.folders.isNotEmpty) {
+      for (final folder in backup.folders) {
+        await _ref.read(foldersProvider.notifier).add(folder);
+        folderCount++;
+      }
+    }
+
     final AppSettings? settings = backup.settings;
     if (settings != null) {
       await _ref.read(settingsProvider.notifier).replaceWith(settings);
@@ -101,6 +114,7 @@ class BackupService {
     return ImportResult(
       articles: articleCount,
       filterGroups: groupCount,
+      folders: folderCount,
       settingsImported: settings != null,
     );
   }

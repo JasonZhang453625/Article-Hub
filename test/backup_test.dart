@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:article_hub/data/models/passage.dart';
 import 'package:article_hub/data/models/filter_group.dart';
@@ -68,6 +70,23 @@ void main() {
       expect(restored.clipboardDetectionEnabled, isTrue);
     });
 
+    test('AppSettings.toJson never leaks an API key (security regression)',
+        () {
+      // The API key lives in the platform secure store, never on AppSettings.
+      // Its JSON must never contain an `aiApiKey` field, or a plaintext key
+      // could escape via an exported backup. See ROADMAP AI-8.
+      final settings = AppSettings(
+        fontSize: 16,
+        aiBaseUrl: 'https://api.openai.com/v1',
+        aiModel: 'gpt-4o-mini',
+      );
+      final json = settings.toJson();
+      expect(json.containsKey('aiApiKey'), isFalse,
+          reason: 'API key must not appear in AppSettings JSON (export path)');
+      expect(json['aiBaseUrl'], 'https://api.openai.com/v1');
+      expect(json['aiModel'], 'gpt-4o-mini');
+    });
+
     test('Article.fromJson throws on missing required fields', () {
       expect(() => Article.fromJson({'title': 'x'}), throwsFormatException);
     });
@@ -88,6 +107,7 @@ void main() {
         filterGroups: [
           FilterGroup(id: 'f1', name: 'G', sourcePlatforms: ['medium']),
         ],
+        folders: const [],
         settings: AppSettings(fontSize: 16),
       );
 
@@ -129,6 +149,77 @@ void main() {
         () => BackupData.fromJsonString('{"schemaVersion": 1}'),
         throwsFormatException,
       );
+    });
+  });
+
+  group('UTF-8 byte round-trip (import path regression)', () {
+    // The import path reads the picked file as raw bytes and must decode them
+    // as UTF-8. A previous bug used String.fromCharCodes, which mangles every
+    // multibyte character (Chinese, emoji). This guards that the bytes the
+    // export writes survive a utf8.decode the way the importer does it.
+    test('non-ASCII content survives utf8 encode/decode round-trip', () {
+      final original = Article(
+        id: 'cn1',
+        url: 'https://zhihu.com/p/1',
+        title: '深度学习入门 🚀',
+        source: SourcePlatform.zhihu,
+        tags: ['机器学习', '笔记'],
+        notes: '这是一条中文备注，含 emoji 😀 和符号 ——。',
+        createdAt: DateTime(2025, 1, 2, 3, 4, 5),
+        updatedAt: DateTime(2025, 6, 7, 8, 9, 10),
+      );
+      final backup = BackupData.create(
+        articles: [original],
+        filterGroups: const [],
+        folders: const [],
+        settings: null,
+      );
+
+      // Simulate export (UTF-8 bytes) → import (utf8.decode of those bytes).
+      final bytes = utf8.encode(backup.toJsonString());
+      final decoded = utf8.decode(bytes);
+      final restored = BackupData.fromJsonString(decoded);
+
+      expect(restored.articles, hasLength(1));
+      final a = restored.articles.first;
+      expect(a.title, '深度学习入门 🚀');
+      expect(a.tags, ['机器学习', '笔记']);
+      expect(a.notes, '这是一条中文备注，含 emoji 😀 和符号 ——。');
+    });
+  });
+
+  group('Article.copyWith nullable clearing', () {
+    final base = Article(
+      id: 'x',
+      url: 'https://example.com',
+      title: 'T',
+      source: SourcePlatform.web,
+      coverImageUrl: 'https://img/cover.png',
+      summary: 'a summary',
+      folderId: 'folder-1',
+    );
+
+    test('omitting a nullable field leaves it unchanged', () {
+      final copy = base.copyWith(title: 'New title');
+      expect(copy.coverImageUrl, 'https://img/cover.png');
+      expect(copy.summary, 'a summary');
+      expect(copy.folderId, 'folder-1');
+    });
+
+    test('clearValue resets nullable fields to null', () {
+      final copy = base.copyWith(
+        coverImageUrl: Article.clearValue,
+        summary: Article.clearValue,
+        folderId: Article.clearValue,
+      );
+      expect(copy.coverImageUrl, isNull);
+      expect(copy.summary, isNull);
+      expect(copy.folderId, isNull);
+    });
+
+    test('passing a new value replaces a nullable field', () {
+      final copy = base.copyWith(folderId: 'folder-2');
+      expect(copy.folderId, 'folder-2');
     });
   });
 }

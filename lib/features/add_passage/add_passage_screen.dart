@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
+import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
+import '../../data/services/ai_service.dart';
+import '../../data/services/content_extractor.dart';
+import '../../data/services/metadata_service.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
@@ -25,9 +31,15 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   final _titleController = TextEditingController();
   final _notesController = TextEditingController();
   final _tagController = TextEditingController();
+  final _metadataService = MetadataService();
 
   List<String> _tags = [];
   SourcePlatform _detectedPlatform = SourcePlatform.web;
+  String? _fetchedCoverUrl;
+  bool _fetchingMetadata = false;
+  Timer? _fetchDebounce;
+  String _lastFetchedUrl = '';
+  String? _selectedFolderId;
 
   @override
   void initState() {
@@ -36,15 +48,18 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     if (initial != null && initial.isNotEmpty) {
       _urlController.text = initial;
       _detectedPlatform = SourcePlatform.fromUrl(initial);
+      _fetchMetadata(initial);
     }
   }
 
   @override
   void dispose() {
+    _fetchDebounce?.cancel();
     _urlController.dispose();
     _titleController.dispose();
     _notesController.dispose();
     _tagController.dispose();
+    _metadataService.dispose();
     super.dispose();
   }
 
@@ -52,6 +67,30 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     setState(() {
       _detectedPlatform = SourcePlatform.fromUrl(url);
     });
+    _fetchDebounce?.cancel();
+    final cleaned = cleanUrl(url.trim());
+    if (isValidUrl(cleaned) && cleaned != _lastFetchedUrl) {
+      _fetchDebounce = Timer(const Duration(milliseconds: 600), () {
+        _fetchMetadata(cleaned);
+      });
+    }
+  }
+
+  Future<void> _fetchMetadata(String url) async {
+    _lastFetchedUrl = url;
+    setState(() => _fetchingMetadata = true);
+    try {
+      final meta = await _metadataService.fetch(url);
+      if (!mounted) return;
+      if (meta.title != null && _titleController.text.trim().isEmpty) {
+        _titleController.text = meta.title!;
+      }
+      if (meta.imageUrl != null) {
+        setState(() => _fetchedCoverUrl = meta.imageUrl);
+      }
+    } finally {
+      if (mounted) setState(() => _fetchingMetadata = false);
+    }
   }
 
   Future<void> _save() async {
@@ -69,13 +108,91 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       source: _detectedPlatform,
       tags: _tags,
       notes: _notesController.text.trim(),
+      coverImageUrl: _fetchedCoverUrl,
+      folderId: _selectedFolderId,
     );
 
-    await ref.read(articlesProvider.notifier).add(article);
+    final notifier = ref.read(articlesProvider.notifier);
+    await notifier.add(article);
+
+    // Capture provider-derived objects BEFORE popping. The StateNotifier
+    // outlives this widget, but `ref` does not — touching `ref` after the
+    // screen is popped throws (and was previously swallowed, silently
+    // dropping the summary).
+    final settings = ref.read(settingsProvider).valueOrNull;
 
     if (mounted) {
       Navigator.of(context).pop();
     }
+
+    // Fire-and-forget: summarize in background if AI is configured.
+    _summarizeInBackground(article, notifier, settings);
+  }
+
+  void _summarizeInBackground(
+    Article article,
+    ArticlesNotifier notifier,
+    AppSettings? settings,
+  ) {
+    if (settings == null) return;
+    if (settings.aiBaseUrl.trim().isEmpty ||
+        settings.aiApiKey.trim().isEmpty) {
+      developer.log(
+        'skipping summary: AI not fully configured',
+        name: 'article_hub.ai',
+      );
+      return;
+    }
+
+    final ai = AiService(
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
+    );
+    final extractor = ContentExtractor();
+    final langHint = aiLanguagePrompt(settings.languageIndex);
+
+    () async {
+      try {
+        String? summary;
+
+        // Try content extraction first (works on native, may fail on web due to CORS).
+        final content = await extractor.extract(article.url);
+        if (content != null && content.isNotEmpty) {
+          developer.log(
+            'extracted ${content.length} chars, calling AI',
+            name: 'article_hub.ai',
+          );
+          summary = await ai.summarize(article.title, content, languageHint: langHint);
+        } else {
+          developer.log(
+            'content extraction failed, falling back to URL-based summary',
+            name: 'article_hub.ai',
+          );
+          summary = await ai.summarizeFromUrl(article.title, article.url, languageHint: langHint);
+        }
+
+        if (summary == null || summary.isEmpty) {
+          developer.log('AI returned null/empty summary', name: 'article_hub.ai');
+          return;
+        }
+        developer.log(
+          'got summary (${summary.length} chars), saving',
+          name: 'article_hub.ai',
+        );
+        final updated = article.copyWith(summary: summary);
+        await notifier.update(updated);
+      } catch (e, st) {
+        developer.log(
+          'background summarize failed',
+          name: 'article_hub.ai',
+          error: e,
+          stackTrace: st,
+        );
+      } finally {
+        extractor.dispose();
+      }
+    }();
   }
 
   Future<void> _openBulkImport() async {
@@ -194,10 +311,22 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _titleController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Title (optional)',
-                  hintText: 'Enter a title for this article',
-                  prefixIcon: Icon(Icons.title),
+                  hintText: _fetchingMetadata
+                      ? 'Fetching title...'
+                      : 'Enter a title for this article',
+                  prefixIcon: const Icon(Icons.title),
+                  suffixIcon: _fetchingMetadata
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : null,
                 ),
               ),
               const SizedBox(height: 16),
@@ -227,6 +356,11 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 ),
                 maxLines: 3,
               ),
+              const SizedBox(height: 16),
+              _FolderDropdown(
+                selectedFolderId: _selectedFolderId,
+                onChanged: (id) => setState(() => _selectedFolderId = id),
+              ),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -243,6 +377,44 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FolderDropdown extends ConsumerWidget {
+  final String? selectedFolderId;
+  final ValueChanged<String?> onChanged;
+
+  const _FolderDropdown({required this.selectedFolderId, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final foldersAsync = ref.watch(foldersProvider);
+
+    return foldersAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, e) => const SizedBox.shrink(),
+      data: (folders) {
+        return DropdownButtonFormField<String?>(
+          initialValue: selectedFolderId,
+          decoration: const InputDecoration(
+            labelText: 'Folder (optional)',
+            prefixIcon: Icon(Icons.folder_rounded),
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('No folder'),
+            ),
+            for (final folder in folders)
+              DropdownMenuItem<String?>(
+                value: folder.id,
+                child: Text(folder.name),
+              ),
+          ],
+          onChanged: onChanged,
+        );
+      },
     );
   }
 }

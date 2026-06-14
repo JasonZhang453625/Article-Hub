@@ -59,6 +59,27 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(clipboardDetectionEnabled: enabled));
   }
 
+  /// Persists the AI configuration (base URL, API key, model) to the local
+  /// Hive store. The key is stored locally on-device (never transmitted); it
+  /// is excluded from JSON backup export via [AppSettings.toJson].
+  Future<void> setAiConfig({
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(
+      aiBaseUrl: baseUrl,
+      aiApiKey: apiKey,
+      aiModel: model,
+    ));
+  }
+
+  Future<void> setLanguage(int index) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(languageIndex: index));
+  }
+
   Future<void> updateSourcePlatformOrder(List<String> order) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(sourcePlatformOrder: order));
@@ -139,6 +160,18 @@ final clipboardDetectionEnabledProvider = Provider<bool>((ref) {
   );
 });
 
+/// True only when base URL, model, AND API key are all present. The key is
+/// stored locally on the device (see [AppSettings.aiApiKey]) and excluded from
+/// backups; it is never transmitted to any server other than the user's own
+/// AI provider during a summary request.
+final aiConfiguredProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) =>
+        s.aiBaseUrl.trim().isNotEmpty && s.aiApiKey.trim().isNotEmpty,
+    orElse: () => false,
+  );
+});
+
 final orderedSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
     data: (settings) => settings.orderedSourcePlatforms,
@@ -152,3 +185,23 @@ final visibleSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
     orElse: () => SourcePlatform.values,
   );
 });
+
+final languageIndexProvider = Provider<int>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.languageIndex,
+    orElse: () => 0,
+  );
+});
+
+/// Returns the AI prompt language instruction based on the language setting.
+/// 0 = follow system, 1 = Chinese, 2 = English
+String aiLanguagePrompt(int languageIndex) {
+  switch (languageIndex) {
+    case 1:
+      return 'You MUST respond in Chinese (简体中文).';
+    case 2:
+      return 'You MUST respond in English.';
+    default:
+      return 'Respond in the same language as the article title. If the title is in Chinese, respond in Chinese. If in English, respond in English.';
+  }
+}

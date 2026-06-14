@@ -101,6 +101,19 @@ class ArticleCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (article.coverImageUrl != null) ...[
+                    const SizedBox(width: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        article.coverImageUrl!,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, e, s) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   IconButton(
                     icon: const Icon(Icons.arrow_outward_rounded, size: 18),

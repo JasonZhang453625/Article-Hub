@@ -5,16 +5,21 @@ import '../features/article_resolver.dart';
 import '../features/home/home_screen.dart';
 import '../features/add_passage/add_passage_screen.dart';
 import '../features/reader/reader_screen.dart';
+import '../features/reader/summary_screen.dart';
 import '../features/detail/detail_screen.dart';
+import '../features/folders/folders_screen.dart';
 import '../features/settings/settings_screen.dart';
 
 class AppRoutes {
   static const String home = '/';
   static const String addArticle = '/add';
+  static const String summary = '/summary';
   static const String reader = '/reader';
   static const String detail = '/detail';
+  static const String folders = '/folders';
   static const String settings = '/settings';
 
+  static String summaryWithId(String id) => '/summary/$id';
   static String readerWithId(String id) => '/reader/$id';
   static String detailWithId(String id) => '/detail/$id';
 }
@@ -89,6 +94,20 @@ final appRouter = GoRouter(
       ),
     ),
     GoRoute(
+      path: '${AppRoutes.summary}/:id',
+      pageBuilder: (context, state) {
+        final article = state.extra as Article?;
+        return _buildPage(
+          state: state,
+          child: ArticleResolver(
+            article: article,
+            id: state.pathParameters['id'],
+            builder: (resolved) => SummaryScreen(article: resolved),
+          ),
+        );
+      },
+    ),
+    GoRoute(
       path: '${AppRoutes.reader}/:id',
       pageBuilder: (context, state) {
         final article = state.extra as Article?;
@@ -120,6 +139,11 @@ final appRouter = GoRouter(
       path: AppRoutes.settings,
       pageBuilder: (context, state) =>
           _buildPage(state: state, child: const SettingsScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.folders,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const FoldersScreen()),
     ),
   ],
 );

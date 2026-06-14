@@ -14,6 +14,15 @@ class Article extends HiveObject {
   DateTime updatedAt;
   bool isFavorite;
 
+  /// Optional cover image URL (e.g. from og:image). Null when unavailable.
+  String? coverImageUrl;
+
+  /// AI-generated summary of the article content. Null when not yet summarized.
+  String? summary;
+
+  /// ID of the folder this article belongs to. Null means unfiled.
+  String? folderId;
+
   Article({
     required this.id,
     required this.url,
@@ -24,8 +33,23 @@ class Article extends HiveObject {
     DateTime? createdAt,
     DateTime? updatedAt,
     this.isFavorite = false,
+    this.coverImageUrl,
+    this.summary,
+    this.folderId,
   }) : createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
+
+  /// Sentinel used to distinguish "argument omitted" from "explicitly set to
+  /// null" in [copyWith] for nullable fields. Passing [clearValue] for a
+  /// nullable parameter clears it; omitting it leaves the field unchanged.
+  ///
+  /// Note: these must be instances of a dedicated type, not bare
+  /// `const Object()` — Dart canonicalizes all `const Object()` literals to a
+  /// single instance, which would make the two sentinels `identical`.
+  static const Object _unset = _Sentinel('unset');
+
+  /// Pass this for a nullable [copyWith] parameter to clear it to null.
+  static const Object clearValue = _Sentinel('clear');
 
   Article copyWith({
     String? id,
@@ -37,6 +61,9 @@ class Article extends HiveObject {
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? isFavorite,
+    Object? coverImageUrl = _unset,
+    Object? summary = _unset,
+    Object? folderId = _unset,
   }) {
     return Article(
       id: id ?? this.id,
@@ -48,6 +75,17 @@ class Article extends HiveObject {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isFavorite: isFavorite ?? this.isFavorite,
+      coverImageUrl: identical(coverImageUrl, _unset)
+          ? this.coverImageUrl
+          : (identical(coverImageUrl, clearValue)
+              ? null
+              : coverImageUrl as String?),
+      summary: identical(summary, _unset)
+          ? this.summary
+          : (identical(summary, clearValue) ? null : summary as String?),
+      folderId: identical(folderId, _unset)
+          ? this.folderId
+          : (identical(folderId, clearValue) ? null : folderId as String?),
     );
   }
 
@@ -65,6 +103,9 @@ class Article extends HiveObject {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'isFavorite': isFavorite,
+      'coverImageUrl': coverImageUrl,
+      'summary': summary,
+      'folderId': folderId,
     };
   }
 
@@ -88,6 +129,10 @@ class Article extends HiveObject {
       createdAt: _parseDate(json['createdAt']),
       updatedAt: _parseDate(json['updatedAt']),
       isFavorite: json['isFavorite'] == true,
+      coverImageUrl:
+          json['coverImageUrl'] is String ? json['coverImageUrl'] as String : null,
+      summary: json['summary'] is String ? json['summary'] as String : null,
+      folderId: json['folderId'] is String ? json['folderId'] as String : null,
     );
   }
 
@@ -120,13 +165,16 @@ class ArticleAdapter extends TypeAdapter<Article> {
       createdAt: fields[6] as DateTime,
       updatedAt: fields[7] as DateTime,
       isFavorite: fields[8] as bool,
+      coverImageUrl: fields[9] as String?,
+      summary: fields[10] as String?,
+      folderId: fields[11] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(9)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -144,7 +192,13 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(7)
       ..write(obj.updatedAt)
       ..writeByte(8)
-      ..write(obj.isFavorite);
+      ..write(obj.isFavorite)
+      ..writeByte(9)
+      ..write(obj.coverImageUrl)
+      ..writeByte(10)
+      ..write(obj.summary)
+      ..writeByte(11)
+      ..write(obj.folderId);
   }
 }
 
@@ -217,4 +271,14 @@ class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {
         return 10;
     }
   }
+}
+
+/// Distinct sentinel type for [Article.copyWith]. A dedicated class guarantees
+/// each `const _Sentinel(...)` is a unique instance, unlike bare
+/// `const Object()` which Dart canonicalizes to a single shared instance.
+class _Sentinel {
+  final String _name;
+  const _Sentinel(this._name);
+  @override
+  String toString() => '_Sentinel($_name)';
 }

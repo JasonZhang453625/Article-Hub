@@ -19,6 +19,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   late TextEditingController _tagController;
   late List<String> _tags;
   late bool _isFavorite;
+  late String? _selectedFolderId;
   bool _hasChanges = false;
 
   @override
@@ -29,6 +30,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     _tagController = TextEditingController();
     _tags = List.from(widget.article.tags);
     _isFavorite = widget.article.isFavorite;
+    _selectedFolderId = widget.article.folderId;
 
     _titleController.addListener(_markChanged);
     _notesController.addListener(_markChanged);
@@ -58,6 +60,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         notes: _notesController.text.trim(),
         tags: _tags,
         isFavorite: _isFavorite,
+        folderId: _selectedFolderId,
       );
       await ref.read(articlesProvider.notifier).update(updated);
     }
@@ -260,6 +263,17 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 ),
                 maxLines: 4,
               ),
+              const SizedBox(height: 16),
+
+              _FolderDropdown(
+                selectedFolderId: _selectedFolderId,
+                onChanged: (id) {
+                  setState(() {
+                    _selectedFolderId = id;
+                    _hasChanges = true;
+                  });
+                },
+              ),
               const SizedBox(height: 24),
 
               Container(
@@ -291,6 +305,44 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FolderDropdown extends ConsumerWidget {
+  final String? selectedFolderId;
+  final ValueChanged<String?> onChanged;
+
+  const _FolderDropdown({required this.selectedFolderId, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final foldersAsync = ref.watch(foldersProvider);
+
+    return foldersAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, e) => const SizedBox.shrink(),
+      data: (folders) {
+        return DropdownButtonFormField<String?>(
+          initialValue: selectedFolderId,
+          decoration: const InputDecoration(
+            labelText: 'Folder',
+            prefixIcon: Icon(Icons.folder_rounded),
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('No folder'),
+            ),
+            for (final folder in folders)
+              DropdownMenuItem<String?>(
+                value: folder.id,
+                child: Text(folder.name),
+              ),
+          ],
+          onChanged: onChanged,
+        );
+      },
     );
   }
 }

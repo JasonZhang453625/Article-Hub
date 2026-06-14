@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/backup_service.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -103,6 +104,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             onTap: () => ref
                                 .read(settingsProvider.notifier)
                                 .setThemeMode(2),
+                            theme: theme,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Language',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          _ThemeModeButton(
+                            icon: Icons.language_rounded,
+                            label: 'System',
+                            isSelected: settings.languageIndex == 0,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setLanguage(0),
+                            theme: theme,
+                          ),
+                          const SizedBox(width: 10),
+                          _ThemeModeButton(
+                            icon: Icons.translate_rounded,
+                            label: '中文',
+                            isSelected: settings.languageIndex == 1,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setLanguage(1),
+                            theme: theme,
+                          ),
+                          const SizedBox(width: 10),
+                          _ThemeModeButton(
+                            icon: Icons.translate_rounded,
+                            label: 'English',
+                            isSelected: settings.languageIndex == 2,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setLanguage(2),
                             theme: theme,
                           ),
                         ],
@@ -404,6 +444,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
                 const SizedBox(height: 20),
 
+                // ── AI Section ──
+                _SectionLabel(label: 'AI Summary', theme: theme),
+                const SizedBox(height: 8),
+                _AiSettingsCard(settings: settings, theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark),
+
+                const SizedBox(height: 20),
+
                 // ── Data / Backup Section ──
                 _SectionLabel(label: 'Data', theme: theme),
                 const SizedBox(height: 8),
@@ -563,6 +610,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _showSnack(
         'Imported ${result.articles} articles, '
         '${result.filterGroups} filters'
+        '${result.folders > 0 ? ', ${result.folders} folders' : ''}'
         '${result.settingsImported ? ', settings' : ''}.',
       );
     } on FormatException catch (e) {
@@ -748,6 +796,146 @@ class _SourcePlatformSettingRow extends StatelessWidget {
             onChanged: onVisibilityChanged,
           ),
           const SizedBox(width: 6),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiSettingsCard extends ConsumerStatefulWidget {
+  final AppSettings settings;
+  final ThemeData theme;
+  final Color cardColor;
+  final Color outlineColor;
+  final bool isDark;
+
+  const _AiSettingsCard({
+    required this.settings,
+    required this.theme,
+    required this.cardColor,
+    required this.outlineColor,
+    required this.isDark,
+  });
+
+  @override
+  ConsumerState<_AiSettingsCard> createState() => _AiSettingsCardState();
+}
+
+class _AiSettingsCardState extends ConsumerState<_AiSettingsCard> {
+  late final TextEditingController _baseUrlController;
+  late final TextEditingController _apiKeyController;
+  late final TextEditingController _modelController;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlController = TextEditingController(text: widget.settings.aiBaseUrl);
+    _apiKeyController = TextEditingController(text: widget.settings.aiApiKey);
+    _modelController = TextEditingController(text: widget.settings.aiModel);
+  }
+
+  @override
+  void didUpdateWidget(_AiSettingsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reseed controllers when the underlying settings change (e.g. after a
+    // backup import replaces settings), so the fields don't show stale values.
+    final s = widget.settings;
+    if (s.aiBaseUrl != oldWidget.settings.aiBaseUrl) {
+      _baseUrlController.text = s.aiBaseUrl;
+    }
+    if (s.aiApiKey != oldWidget.settings.aiApiKey) {
+      _apiKeyController.text = s.aiApiKey;
+    }
+    if (s.aiModel != oldWidget.settings.aiModel) {
+      _modelController.text = s.aiModel;
+    }
+  }
+
+  @override
+  void dispose() {
+    _baseUrlController.dispose();
+    _apiKeyController.dispose();
+    _modelController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    // Key + config all go to local Hive. The key is never included in JSON
+    // backup export (see AppSettings.toJson), and is never sent anywhere
+    // except the user's own AI provider during a summary request.
+    ref.read(settingsProvider.notifier).setAiConfig(
+      baseUrl: _baseUrlController.text.trim(),
+      apiKey: _apiKeyController.text.trim(),
+      model: _modelController.text.trim(),
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('AI settings saved')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: widget.cardColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: widget.outlineColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('API Configuration', style: widget.theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            'Enter your OpenAI-compatible API credentials. Your key is stored '
+            'on this device only and is never included in exported backups. '
+            'It is sent only to your own AI provider when generating summaries.',
+            style: widget.theme.textTheme.bodySmall?.copyWith(
+              color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _baseUrlController,
+            decoration: const InputDecoration(
+              labelText: 'Base URL',
+              hintText: 'https://api.openai.com/v1',
+              prefixIcon: Icon(Icons.link_rounded),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _apiKeyController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'API Key',
+              hintText: 'sk-...',
+              prefixIcon: Icon(Icons.key_rounded),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _modelController,
+            decoration: const InputDecoration(
+              labelText: 'Model',
+              hintText: 'gpt-4o-mini',
+              prefixIcon: Icon(Icons.smart_toy_rounded),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.save_rounded),
+              label: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Save AI Settings'),
+              ),
+            ),
+          ),
         ],
       ),
     );

@@ -18,11 +18,32 @@ class AppSettings {
   /// save a detected URL.
   bool clipboardDetectionEnabled;
 
+  /// AI configuration for auto-summarization (BYOK).
+  ///
+  /// The API key is stored locally on the device (never transmitted — the app
+  /// calls the user's own AI provider directly). We deliberately do NOT
+  /// additionally encrypt it: the threat model is "attacker has the unlocked
+  /// device or root access", against which app-level encryption provides no
+  /// real protection (the decryption path lives in the same app). The one
+  /// protection that does matter is applied in [toJson]: the key is excluded
+  /// from exported JSON backups so it can't leak via a shared file.
+  /// See `docs/PRD.md` (AI key storage decision) for the full rationale.
+  String aiBaseUrl;
+  String aiApiKey;
+  String aiModel;
+
+  /// Language: 0 = follow system, 1 = Chinese, 2 = English
+  int languageIndex;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
     this.themeModeIndex = 1,
     this.clipboardDetectionEnabled = true,
+    this.aiBaseUrl = '',
+    this.aiApiKey = '',
+    this.aiModel = 'gpt-4o-mini',
+    this.languageIndex = 0,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -100,6 +121,10 @@ class AppSettings {
     int? webZoomPercent,
     int? themeModeIndex,
     bool? clipboardDetectionEnabled,
+    String? aiBaseUrl,
+    String? aiApiKey,
+    String? aiModel,
+    int? languageIndex,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -109,6 +134,10 @@ class AppSettings {
       themeModeIndex: themeModeIndex ?? this.themeModeIndex,
       clipboardDetectionEnabled:
           clipboardDetectionEnabled ?? this.clipboardDetectionEnabled,
+      aiBaseUrl: aiBaseUrl ?? this.aiBaseUrl,
+      aiApiKey: aiApiKey ?? this.aiApiKey,
+      aiModel: aiModel ?? this.aiModel,
+      languageIndex: languageIndex ?? this.languageIndex,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
@@ -116,12 +145,22 @@ class AppSettings {
     );
   }
 
+  /// Serializes to JSON for the backup/export path.
+  ///
+  /// The API key is deliberately omitted: a backup file is a portable,
+  /// shareable artifact, so it must never carry a live secret even though the
+  /// key is stored locally on the device. This is the one protection that
+  /// actually matters for this threat model. Importers will prompt the user to
+  /// re-enter the key.
   Map<String, dynamic> toJson() {
     return {
       'fontSize': fontSize,
       'webZoomPercent': webZoomPercent,
       'themeModeIndex': themeModeIndex,
       'clipboardDetectionEnabled': clipboardDetectionEnabled,
+      'aiBaseUrl': aiBaseUrl,
+      'aiModel': aiModel,
+      'languageIndex': languageIndex,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -136,6 +175,12 @@ class AppSettings {
           json['clipboardDetectionEnabled'] is bool
               ? json['clipboardDetectionEnabled'] as bool
               : true,
+      aiBaseUrl: json['aiBaseUrl'] is String ? json['aiBaseUrl'] as String : '',
+      // Backups never contain the key (see toJson), so this is almost always
+      // empty on import — the user re-enters it. Read defensively anyway.
+      aiApiKey: json['aiApiKey'] is String ? json['aiApiKey'] as String : '',
+      aiModel: json['aiModel'] is String ? json['aiModel'] as String : 'gpt-4o-mini',
+      languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
@@ -164,16 +209,18 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
           (fields[3] as List?)?.cast<String>(),
       hiddenSourcePlatforms:
           (fields[4] as List?)?.cast<String>(),
-      // Field 5 added later; default to enabled for backups/data written
-      // before this field existed.
       clipboardDetectionEnabled: (fields[5] as bool?) ?? true,
+      aiBaseUrl: (fields[6] as String?) ?? '',
+      aiApiKey: (fields[7] as String?) ?? '',
+      aiModel: (fields[8] as String?) ?? 'gpt-4o-mini',
+      languageIndex: (fields[9] as int?) ?? 0,
     );
   }
 
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -185,6 +232,14 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(4)
       ..write(obj.hiddenSourcePlatforms)
       ..writeByte(5)
-      ..write(obj.clipboardDetectionEnabled);
+      ..write(obj.clipboardDetectionEnabled)
+      ..writeByte(6)
+      ..write(obj.aiBaseUrl)
+      ..writeByte(7)
+      ..write(obj.aiApiKey)
+      ..writeByte(8)
+      ..write(obj.aiModel)
+      ..writeByte(9)
+      ..write(obj.languageIndex);
   }
 }

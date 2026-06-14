@@ -48,3 +48,6 @@ app.*.map.json
 # Kotlin compiler session/build artifacts
 .kotlin/
 **/.kotlin/
+
+# Playwright MCP working dir (local tooling artifacts)
+.playwright-mcp/

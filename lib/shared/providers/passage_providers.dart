@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/filter_group.dart';
+import '../../data/models/folder.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/repositories/passage_repository.dart';
 import '../utils/url_helpers.dart';
@@ -22,6 +23,9 @@ final hiveInitProvider = FutureProvider<void>((ref) async {
   }
   if (!Hive.isAdapterRegistered(FilterGroup.typeId)) {
     Hive.registerAdapter(FilterGroupAdapter());
+  }
+  if (!Hive.isAdapterRegistered(Folder.typeId)) {
+    Hive.registerAdapter(FolderAdapter());
   }
 });
 
@@ -109,6 +113,8 @@ final searchQueryProvider = StateProvider<String>((ref) => '');
 
 final selectedSourceProvider = StateProvider<String>((ref) => '');
 
+final selectedFolderIdProvider = StateProvider<String>((ref) => '');
+
 final homeHeaderVisibilityProvider =
     StateNotifierProvider<HomeHeaderVisibilityNotifier, AsyncValue<bool>>((
       ref,
@@ -147,9 +153,19 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final sourceName = ref.watch(selectedSourceProvider);
   final selectedFilterId = ref.watch(selectedFilterGroupProvider);
   final filterGroupsAsync = ref.watch(filterGroupsProvider);
+  final folderId = ref.watch(selectedFolderIdProvider);
 
   return articlesAsync.whenData((articles) {
     var filtered = articles;
+
+    // Filter by folder
+    if (folderId.isNotEmpty) {
+      if (folderId == '__unfiled') {
+        filtered = filtered.where((a) => a.folderId == null).toList();
+      } else {
+        filtered = filtered.where((a) => a.folderId == folderId).toList();
+      }
+    }
 
     if (query.isNotEmpty) {
       final lower = query.toLowerCase();
@@ -189,3 +205,69 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
     return filtered;
   });
 });
+
+final foldersProvider =
+    StateNotifierProvider<FoldersNotifier, AsyncValue<List<Folder>>>((ref) {
+      return FoldersNotifier(ref);
+    });
+
+class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
+  final Ref _ref;
+  static const String _boxName = 'folders';
+
+  FoldersNotifier(this._ref) : super(const AsyncValue.loading()) {
+    _load();
+  }
+
+  Future<Box<Folder>> _openBox() async {
+    await _ref.read(hiveInitProvider.future);
+    return Hive.openBox<Folder>(_boxName);
+  }
+
+  Future<void> _load() async {
+    final box = await _openBox();
+    final folders = box.values.toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    state = AsyncValue.data(folders);
+  }
+
+  Future<void> add(Folder folder) async {
+    final box = await _openBox();
+    await box.put(folder.id, folder);
+    await _load();
+  }
+
+  Future<void> update(Folder folder) async {
+    final box = await _openBox();
+    await box.put(folder.id, folder);
+    await _load();
+  }
+
+  Future<void> delete(String id) async {
+    final box = await _openBox();
+    // Capture the deleted folder's parent so its children can be reparented
+    // (otherwise their parentId would dangle, orphaning them from the tree).
+    final deleted = box.get(id);
+    final newParentId = deleted?.parentId;
+    await box.delete(id);
+    // Reparent any subfolders of the deleted folder to its parent.
+    for (final folder in box.values.toList()) {
+      if (folder.parentId == id) {
+        folder.parentId = newParentId;
+        await folder.save();
+      }
+    }
+    // Move articles in this folder to unfiled.
+    final articlesBox = await Hive.openBox<Article>('passages');
+    for (final article in articlesBox.values) {
+      if (article.folderId == id) {
+        article.folderId = null;
+        await article.save();
+      }
+    }
+    await _load();
+    _ref.read(articlesProvider.notifier).refresh();
+  }
+
+  void refresh() => _load();
+}
