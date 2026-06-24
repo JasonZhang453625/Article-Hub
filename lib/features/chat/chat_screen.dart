@@ -631,8 +631,8 @@ class _CitationChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Wrap(
-      spacing: 4,
-      runSpacing: 2,
+      spacing: 2,
+      runSpacing: 0,
       children: articleIds.map((id) {
         final article = articles.where((a) => a.id == id).firstOrNull;
         if (article == null) return const SizedBox.shrink();
@@ -648,6 +648,8 @@ class _CitationChips extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11),
           ),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
           onPressed: () {
             onCitationClick(article.id);
             context.push(
