@@ -3,11 +3,13 @@ import '../models/passage.dart';
 
 class ArticleRepository {
   // Keep the legacy Hive box name so existing local data stays readable.
-  static const String _boxName = 'passages';
+  // The class name is `Article`, but the box is still `'passages'` for
+  // backward compatibility with data written by older builds.
+  static const String boxName = 'passages';
   late Box<Article> _box;
 
   Future<void> init() async {
-    _box = await Hive.openBox<Article>(_boxName);
+    _box = await Hive.openBox<Article>(boxName);
   }
 
   List<Article> getAll() {
@@ -15,12 +17,7 @@ class ArticleRepository {
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
-  Article? getById(String id) {
-    for (final article in _box.values) {
-      if (article.id == id) return article;
-    }
-    return null;
-  }
+  Article? getById(String id) => _box.get(id);
 
   Future<void> add(Article article) async {
     await _box.put(article.id, article);
@@ -61,5 +58,17 @@ class ArticleRepository {
     return getAll()
         .where((article) => article.source.name == sourceName)
         .toList();
+  }
+
+  /// Moves every article currently in [folderId] to the unfiled state
+  /// (folderId = null). Used when a folder is deleted so its contents
+  /// don't dangle pointing at a non-existent folder.
+  Future<void> unsetFolder(String folderId) async {
+    for (final article in _box.values) {
+      if (article.folderId == folderId) {
+        article.folderId = null;
+        await article.save();
+      }
+    }
   }
 }

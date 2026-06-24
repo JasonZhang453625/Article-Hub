@@ -99,6 +99,28 @@ class AiService {
     return _postChat(uri, body);
   }
 
+  /// General-purpose chat completion with explicit system + user messages.
+  /// Used by the RAG conversation flow where the caller controls both prompts.
+  Future<String?> chat({
+    required String systemPrompt,
+    required String userMessage,
+    double temperature = 0.3,
+    int maxTokens = 800,
+  }) async {
+    if (!isConfigured) return null;
+    final uri = _chatUri();
+    final body = jsonEncode({
+      'model': model,
+      'messages': [
+        {'role': 'system', 'content': systemPrompt},
+        {'role': 'user', 'content': userMessage},
+      ],
+      'temperature': temperature,
+      'max_tokens': maxTokens,
+    });
+    return _postChat(uri, body);
+  }
+
   Future<String?> _postChat(Uri uri, String body) async {
     try {
       final response = await http

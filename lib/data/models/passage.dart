@@ -1,6 +1,22 @@
 import 'package:hive/hive.dart';
 import 'source_platform.dart';
 
+enum ProcessingStatus {
+  pending,
+  processing,
+  completed,
+  failed,
+}
+
+enum ProcessingStage {
+  metadata,
+  content,
+  summary,
+  tags,
+  folderSuggestion,
+  indexing,
+}
+
 class Article extends HiveObject {
   static const int typeId = 0;
 
@@ -20,8 +36,21 @@ class Article extends HiveObject {
   /// AI-generated summary of the article content. Null when not yet summarized.
   String? summary;
 
+  /// User feedback on the AI summary: `null` = not yet rated, `1` = upvote
+  /// (helpful), `-1` = downvote (not helpful). Reset to null when the summary
+  /// is regenerated, since the content changed and old feedback no longer
+  /// applies. Serves as a real-user signal for evaluating AI output quality.
+  int? summaryFeedback;
+
   /// ID of the folder this article belongs to. Null means unfiled.
   String? folderId;
+
+  ProcessingStatus processingStatus;
+  ProcessingStage? processingStage;
+  String? processingError;
+  int retryCount;
+  DateTime? lastProcessedAt;
+  String? suggestedFolderId;
 
   Article({
     required this.id,
@@ -35,7 +64,14 @@ class Article extends HiveObject {
     this.isFavorite = false,
     this.coverImageUrl,
     this.summary,
+    this.summaryFeedback,
     this.folderId,
+    this.processingStatus = ProcessingStatus.completed,
+    this.processingStage,
+    this.processingError,
+    this.retryCount = 0,
+    this.lastProcessedAt,
+    this.suggestedFolderId,
   }) : createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -63,7 +99,14 @@ class Article extends HiveObject {
     bool? isFavorite,
     Object? coverImageUrl = _unset,
     Object? summary = _unset,
+    Object? summaryFeedback = _unset,
     Object? folderId = _unset,
+    ProcessingStatus? processingStatus,
+    Object? processingStage = _unset,
+    Object? processingError = _unset,
+    int? retryCount,
+    Object? lastProcessedAt = _unset,
+    Object? suggestedFolderId = _unset,
   }) {
     return Article(
       id: id ?? this.id,
@@ -83,9 +126,36 @@ class Article extends HiveObject {
       summary: identical(summary, _unset)
           ? this.summary
           : (identical(summary, clearValue) ? null : summary as String?),
+      summaryFeedback: identical(summaryFeedback, _unset)
+          ? this.summaryFeedback
+          : (identical(summaryFeedback, clearValue)
+              ? null
+              : summaryFeedback as int?),
       folderId: identical(folderId, _unset)
           ? this.folderId
           : (identical(folderId, clearValue) ? null : folderId as String?),
+      processingStatus: processingStatus ?? this.processingStatus,
+      processingStage: identical(processingStage, _unset)
+          ? this.processingStage
+          : (identical(processingStage, clearValue)
+              ? null
+              : processingStage as ProcessingStage?),
+      processingError: identical(processingError, _unset)
+          ? this.processingError
+          : (identical(processingError, clearValue)
+              ? null
+              : processingError as String?),
+      retryCount: retryCount ?? this.retryCount,
+      lastProcessedAt: identical(lastProcessedAt, _unset)
+          ? this.lastProcessedAt
+          : (identical(lastProcessedAt, clearValue)
+              ? null
+              : lastProcessedAt as DateTime?),
+      suggestedFolderId: identical(suggestedFolderId, _unset)
+          ? this.suggestedFolderId
+          : (identical(suggestedFolderId, clearValue)
+              ? null
+              : suggestedFolderId as String?),
     );
   }
 
@@ -105,7 +175,14 @@ class Article extends HiveObject {
       'isFavorite': isFavorite,
       'coverImageUrl': coverImageUrl,
       'summary': summary,
+      'summaryFeedback': summaryFeedback,
       'folderId': folderId,
+      'processingStatus': processingStatus.index,
+      'processingStage': processingStage?.index,
+      'processingError': processingError,
+      'retryCount': retryCount,
+      'lastProcessedAt': lastProcessedAt?.toIso8601String(),
+      'suggestedFolderId': suggestedFolderId,
     };
   }
 
@@ -132,7 +209,25 @@ class Article extends HiveObject {
       coverImageUrl:
           json['coverImageUrl'] is String ? json['coverImageUrl'] as String : null,
       summary: json['summary'] is String ? json['summary'] as String : null,
+      summaryFeedback:
+          json['summaryFeedback'] is int ? json['summaryFeedback'] as int : null,
       folderId: json['folderId'] is String ? json['folderId'] as String : null,
+      processingStatus: json['processingStatus'] is int
+          ? ProcessingStatus.values[json['processingStatus'] as int]
+          : ProcessingStatus.completed,
+      processingStage: json['processingStage'] is int
+          ? ProcessingStage.values[json['processingStage'] as int]
+          : null,
+      processingError: json['processingError'] is String
+          ? json['processingError'] as String
+          : null,
+      retryCount: json['retryCount'] is int ? json['retryCount'] as int : 0,
+      lastProcessedAt: json['lastProcessedAt'] is String
+          ? _parseDate(json['lastProcessedAt'])
+          : null,
+      suggestedFolderId: json['suggestedFolderId'] is String
+          ? json['suggestedFolderId'] as String
+          : null,
     );
   }
 
@@ -167,14 +262,28 @@ class ArticleAdapter extends TypeAdapter<Article> {
       isFavorite: fields[8] as bool,
       coverImageUrl: fields[9] as String?,
       summary: fields[10] as String?,
+      // Field 12 added after folderId (11); absent on older records → null.
+      summaryFeedback: fields[12] as int?,
       folderId: fields[11] as String?,
+      // Fields 13-18 added for processing state machine; absent on older
+      // records → sensible defaults (completed, no stage/error/retries).
+      processingStatus: fields[13] is int
+          ? ProcessingStatus.values[fields[13] as int]
+          : ProcessingStatus.completed,
+      processingStage: fields[14] is int
+          ? ProcessingStage.values[fields[14] as int]
+          : null,
+      processingError: fields[15] as String?,
+      retryCount: fields[16] is int ? fields[16] as int : 0,
+      lastProcessedAt: fields[17] as DateTime?,
+      suggestedFolderId: fields[18] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(12)
+      ..writeByte(19)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -198,7 +307,21 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(10)
       ..write(obj.summary)
       ..writeByte(11)
-      ..write(obj.folderId);
+      ..write(obj.folderId)
+      ..writeByte(12)
+      ..write(obj.summaryFeedback)
+      ..writeByte(13)
+      ..write(obj.processingStatus.index)
+      ..writeByte(14)
+      ..write(obj.processingStage?.index)
+      ..writeByte(15)
+      ..write(obj.processingError)
+      ..writeByte(16)
+      ..write(obj.retryCount)
+      ..writeByte(17)
+      ..write(obj.lastProcessedAt)
+      ..writeByte(18)
+      ..write(obj.suggestedFolderId);
   }
 }
 

@@ -132,6 +132,9 @@ class SummaryScreen extends ConsumerWidget {
               const SizedBox(height: 16),
             ],
 
+            // Folder suggestion banner
+            _FolderSuggestionBanner(article: a),
+
             // Notes
             if (a.notes.isNotEmpty) ...[
               Container(
@@ -247,7 +250,12 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
       }
 
       if (summary != null && summary.isNotEmpty && mounted) {
-        final updated = widget.article.copyWith(summary: summary);
+        // Clear any prior feedback: the content changed on regeneration, so
+        // the old thumbs up/down no longer applies to the new summary.
+        final updated = widget.article.copyWith(
+          summary: summary,
+          summaryFeedback: Article.clearValue,
+        );
         await ref.read(articlesProvider.notifier).update(updated);
       } else if (summary == null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -407,6 +415,64 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
               ),
               listBullet: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FolderSuggestionBanner extends ConsumerWidget {
+  final Article article;
+  const _FolderSuggestionBanner({required this.article});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final suggestedId = article.suggestedFolderId;
+    if (suggestedId == null) return const SizedBox.shrink();
+
+    final foldersAsync = ref.watch(foldersProvider);
+    final folders = foldersAsync.valueOrNull ?? [];
+    final folder = folders.where((f) => f.id == suggestedId).firstOrNull;
+    if (folder == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: colorScheme.primary.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.folder_rounded, size: 20, color: colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Suggested folder: ${folder.name}',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              ref.read(articlesProvider.notifier).confirmFolderSuggestion(article.id);
+            },
+            child: const Text('Move'),
+          ),
+          TextButton(
+            onPressed: () {
+              ref.read(articlesProvider.notifier).dismissFolderSuggestion(article.id);
+            },
+            child: const Text('Dismiss'),
           ),
         ],
       ),

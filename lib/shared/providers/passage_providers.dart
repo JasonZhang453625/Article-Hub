@@ -7,8 +7,13 @@ import '../../data/models/filter_group.dart';
 import '../../data/models/folder.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/repositories/passage_repository.dart';
+import '../../data/services/index_service.dart';
+import '../../data/services/embedding_service.dart';
+import '../../data/services/retrieval_service.dart';
+import '../../data/services/retrieval_log_service.dart';
 import '../utils/url_helpers.dart';
 import 'filter_providers.dart';
+import 'settings_providers.dart';
 
 final hiveInitProvider = FutureProvider<void>((ref) async {
   await Hive.initFlutter();
@@ -26,6 +31,9 @@ final hiveInitProvider = FutureProvider<void>((ref) async {
   }
   if (!Hive.isAdapterRegistered(Folder.typeId)) {
     Hive.registerAdapter(FolderAdapter());
+  }
+  if (!Hive.isAdapterRegistered(IndexRecordAdapter().typeId)) {
+    Hive.registerAdapter(IndexRecordAdapter());
   }
 });
 
@@ -70,6 +78,29 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> delete(String id) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.delete(id);
+    state = AsyncValue.data(repo.getAll());
+  }
+
+  /// Move article to its suggested folder and clear the suggestion.
+  Future<void> confirmFolderSuggestion(String id) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    final article = repo.getById(id);
+    if (article == null || article.suggestedFolderId == null) return;
+    final updated = article.copyWith(
+      folderId: article.suggestedFolderId,
+      suggestedFolderId: Article.clearValue,
+    );
+    await repo.update(updated);
+    state = AsyncValue.data(repo.getAll());
+  }
+
+  /// Dismiss the folder suggestion without moving.
+  Future<void> dismissFolderSuggestion(String id) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    final article = repo.getById(id);
+    if (article == null) return;
+    final updated = article.copyWith(suggestedFolderId: Article.clearValue);
+    await repo.update(updated);
     state = AsyncValue.data(repo.getAll());
   }
 
@@ -258,16 +289,71 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
       }
     }
     // Move articles in this folder to unfiled.
-    final articlesBox = await Hive.openBox<Article>('passages');
-    for (final article in articlesBox.values) {
-      if (article.folderId == id) {
-        article.folderId = null;
-        await article.save();
-      }
-    }
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    await repo.unsetFolder(id);
     await _load();
     _ref.read(articlesProvider.notifier).refresh();
   }
 
   void refresh() => _load();
 }
+
+/// Articles that have completed processing — shown in the knowledge base tab.
+final knowledgeBaseArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
+  final filtered = ref.watch(filteredArticlesProvider);
+  return filtered.whenData(
+    (articles) => articles
+        .where((a) => a.processingStatus == ProcessingStatus.completed)
+        .toList(),
+  );
+});
+
+/// Articles that are pending, processing, or failed — shown in the inbox tab.
+final pendingArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
+  final filtered = ref.watch(filteredArticlesProvider);
+  return filtered.whenData(
+    (articles) => articles
+        .where((a) => a.processingStatus != ProcessingStatus.completed)
+        .toList(),
+  );
+});
+
+/// Embedding service configured from user settings.
+final embeddingServiceProvider = Provider<EmbeddingService?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null) return null;
+  if (settings.embeddingBaseUrl.trim().isEmpty ||
+      settings.embeddingApiKey.trim().isEmpty ||
+      settings.embeddingModel.trim().isEmpty) {
+    return null;
+  }
+  return EmbeddingService(
+    baseUrl: settings.embeddingBaseUrl,
+    apiKey: settings.embeddingApiKey,
+    model: settings.embeddingModel,
+  );
+});
+
+/// Whether embedding is fully configured.
+final embeddingConfiguredProvider = Provider<bool>((ref) {
+  return ref.watch(embeddingServiceProvider) != null;
+});
+
+/// Local vector index service.
+final indexServiceProvider = Provider<IndexService>((ref) {
+  ref.watch(hiveInitProvider);
+  return IndexService();
+});
+
+/// Retrieval service for knowledge base queries.
+final retrievalServiceProvider = Provider<RetrievalService?>((ref) {
+  final embedding = ref.watch(embeddingServiceProvider);
+  final index = ref.watch(indexServiceProvider);
+  if (embedding == null) return null;
+  return RetrievalService(embedding: embedding, index: index);
+});
+
+/// Local retrieval log service.
+final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
+  return RetrievalLogService();
+});
