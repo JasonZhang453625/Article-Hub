@@ -80,6 +80,19 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(languageIndex: index));
   }
 
+  Future<void> setEmbeddingConfig({
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(
+      embeddingBaseUrl: baseUrl,
+      embeddingApiKey: apiKey,
+      embeddingModel: model,
+    ));
+  }
+
   Future<void> updateSourcePlatformOrder(List<String> order) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(sourcePlatformOrder: order));

@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/backup_service.dart';
+import '../../data/services/index_service.dart';
+import '../../data/services/processing_pipeline.dart';
+import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 
@@ -451,6 +455,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
                 const SizedBox(height: 20),
 
+                // ── Batch Knowledge-ification ──
+                _BatchProcessCard(cardColor: cardColor, outlineColor: outlineColor, isDark: isDark, theme: theme),
+
+                const SizedBox(height: 20),
+
+                // ── Embedding & Index Section ──
+                _SectionLabel(label: 'Embedding & Index', theme: theme),
+                const SizedBox(height: 8),
+                _EmbeddingSettingsCard(settings: settings, theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark),
+                const SizedBox(height: 12),
+                _IndexManagementCard(cardColor: cardColor, outlineColor: outlineColor, isDark: isDark, theme: theme),
+
+                const SizedBox(height: 20),
+
                 // ── Data / Backup Section ──
                 _SectionLabel(label: 'Data', theme: theme),
                 const SizedBox(height: 8),
@@ -619,6 +637,431 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _showSnack('Import failed: $e');
     } finally {
       if (mounted) setState(() => _isImporting = false);
+    }
+  }
+}
+
+class _EmbeddingSettingsCard extends ConsumerStatefulWidget {
+  final AppSettings settings;
+  final ThemeData theme;
+  final Color cardColor;
+  final Color outlineColor;
+  final bool isDark;
+
+  const _EmbeddingSettingsCard({
+    required this.settings,
+    required this.theme,
+    required this.cardColor,
+    required this.outlineColor,
+    required this.isDark,
+  });
+
+  @override
+  ConsumerState<_EmbeddingSettingsCard> createState() => _EmbeddingSettingsCardState();
+}
+
+class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> {
+  late final TextEditingController _baseUrlController;
+  late final TextEditingController _apiKeyController;
+  late final TextEditingController _modelController;
+  bool _testing = false;
+  String? _testResult;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlController = TextEditingController(text: widget.settings.embeddingBaseUrl);
+    _apiKeyController = TextEditingController(text: widget.settings.embeddingApiKey);
+    _modelController = TextEditingController(text: widget.settings.embeddingModel);
+  }
+
+  @override
+  void didUpdateWidget(_EmbeddingSettingsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.settings.embeddingBaseUrl != _baseUrlController.text) {
+      _baseUrlController.text = widget.settings.embeddingBaseUrl;
+    }
+    if (widget.settings.embeddingApiKey != _apiKeyController.text) {
+      _apiKeyController.text = widget.settings.embeddingApiKey;
+    }
+    if (widget.settings.embeddingModel != _modelController.text) {
+      _modelController.text = widget.settings.embeddingModel;
+    }
+  }
+
+  @override
+  void dispose() {
+    _baseUrlController.dispose();
+    _apiKeyController.dispose();
+    _modelController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    await ref.read(settingsProvider.notifier).setEmbeddingConfig(
+      baseUrl: _baseUrlController.text,
+      apiKey: _apiKeyController.text,
+      model: _modelController.text,
+    );
+  }
+
+  Future<void> _testConnection() async {
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
+    await _save();
+    final service = ref.read(embeddingServiceProvider);
+    if (service == null) {
+      setState(() {
+        _testing = false;
+        _testResult = 'Fill in all fields first';
+      });
+      return;
+    }
+    final ok = await service.testConnection();
+    setState(() {
+      _testing = false;
+      _testResult = ok ? 'Connection successful' : 'Connection failed — check config';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: widget.cardColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: widget.outlineColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Embedding Configuration', style: widget.theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            'Configure an OpenAI-compatible embeddings endpoint. '
+            'Used to convert article summaries into vectors for semantic search.',
+            style: widget.theme.textTheme.bodySmall?.copyWith(
+              color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _baseUrlController,
+            decoration: const InputDecoration(
+              labelText: 'Embedding Base URL',
+              hintText: 'https://api.openai.com/v1',
+              prefixIcon: Icon(Icons.link_rounded),
+            ),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _apiKeyController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Embedding API Key',
+              prefixIcon: Icon(Icons.key_rounded),
+            ),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _modelController,
+            decoration: const InputDecoration(
+              labelText: 'Embedding Model',
+              hintText: 'text-embedding-3-small',
+              prefixIcon: Icon(Icons.smart_toy_rounded),
+            ),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _testing ? null : _testConnection,
+                  icon: _testing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.wifi_tethering_rounded),
+                  label: Text(_testing ? 'Testing...' : 'Test Connection'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _save,
+                  child: const Text('Save'),
+                ),
+              ),
+            ],
+          ),
+          if (_testResult != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _testResult!,
+              style: widget.theme.textTheme.bodySmall?.copyWith(
+                color: _testResult!.contains('successful')
+                    ? Colors.green
+                    : widget.theme.colorScheme.error,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _IndexManagementCard extends ConsumerStatefulWidget {
+  final Color cardColor;
+  final Color outlineColor;
+  final bool isDark;
+  final ThemeData theme;
+
+  const _IndexManagementCard({
+    required this.cardColor,
+    required this.outlineColor,
+    required this.isDark,
+    required this.theme,
+  });
+
+  @override
+  ConsumerState<_IndexManagementCard> createState() => _IndexManagementCardState();
+}
+
+class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
+  bool _rebuilding = false;
+  int? _indexedCount;
+  String? _rebuildResult;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCount();
+  }
+
+  Future<void> _loadCount() async {
+    final index = ref.read(indexServiceProvider);
+    final count = await index.count();
+    if (mounted) setState(() => _indexedCount = count);
+  }
+
+  Future<void> _rebuild() async {
+    setState(() {
+      _rebuilding = true;
+      _rebuildResult = null;
+    });
+
+    final embedding = ref.read(embeddingServiceProvider);
+    if (embedding == null) {
+      setState(() {
+        _rebuilding = false;
+        _rebuildResult = 'Configure embedding first';
+      });
+      return;
+    }
+
+    final index = ref.read(indexServiceProvider);
+    final articles = ref.read(articlesProvider).valueOrNull ?? [];
+    final count = await rebuildIndex(
+      articles: articles,
+      embedding: embedding,
+      index: index,
+    );
+
+    setState(() {
+      _rebuilding = false;
+      _indexedCount = count;
+      _rebuildResult = 'Indexed $count articles';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: widget.cardColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: widget.outlineColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Index Management', style: widget.theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            _indexedCount != null
+                ? '$_indexedCount articles indexed'
+                : 'Loading index status...',
+            style: widget.theme.textTheme.bodySmall?.copyWith(
+              color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _rebuilding ? null : _rebuild,
+              icon: _rebuilding
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.build_rounded),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(_rebuilding ? 'Rebuilding...' : 'Rebuild Index'),
+              ),
+            ),
+          ),
+          if (_rebuildResult != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _rebuildResult!,
+              style: widget.theme.textTheme.bodySmall?.copyWith(
+                color: Colors.green,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BatchProcessCard extends ConsumerWidget {
+  final Color cardColor;
+  final Color outlineColor;
+  final bool isDark;
+  final ThemeData theme;
+
+  const _BatchProcessCard({
+    required this.cardColor,
+    required this.outlineColor,
+    required this.isDark,
+    required this.theme,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final articlesAsync = ref.watch(articlesProvider);
+    final aiConfigured = ref.watch(aiConfiguredProvider);
+
+    final articles = articlesAsync.valueOrNull ?? [];
+    final needsProcessing = articles
+        .where((a) =>
+            a.processingStatus == ProcessingStatus.completed && a.summary == null)
+        .toList();
+    final unprocessedCount = needsProcessing.length;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Batch Processing', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            unprocessedCount == 0
+                ? 'All articles have been processed.'
+                : '$unprocessedCount article${unprocessedCount == 1 ? '' : 's'} without a summary. '
+                    'Process them to generate AI summaries and tags.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: isDark ? Colors.white54 : const Color(0xFF6C8594),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: unprocessedCount == 0 || !aiConfigured
+                  ? null
+                  : () => _startBatchProcess(context, ref, needsProcessing),
+              icon: const Icon(Icons.auto_fix_high_rounded),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  !aiConfigured
+                      ? 'Configure AI first'
+                      : unprocessedCount == 0
+                          ? 'Nothing to process'
+                          : 'Process $unprocessedCount article${unprocessedCount == 1 ? '' : 's'}',
+                ),
+              ),
+            ),
+          ),
+          if (!aiConfigured) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Set up your AI provider above to enable batch processing.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startBatchProcess(
+    BuildContext context,
+    WidgetRef ref,
+    List<Article> articles,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Batch Processing'),
+        content: Text(
+          'Process ${articles.length} article${articles.length == 1 ? '' : 's'}? '
+          'This will call your AI provider for each article to generate '
+          'summaries and tags.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Start'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final pipeline = ref.read(processingPipelineProvider);
+    var processed = 0;
+    for (final article in articles) {
+      final result = await pipeline.process(article.copyWith(
+        processingStatus: ProcessingStatus.pending,
+      ));
+      if (result != null) processed++;
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Processed $processed of ${articles.length} articles')),
+      );
     }
   }
 }

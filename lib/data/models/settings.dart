@@ -32,6 +32,15 @@ class AppSettings {
   String aiApiKey;
   String aiModel;
 
+  /// Embedding configuration for semantic search / RAG (BYOK).
+  ///
+  /// Follows the same threat model as [aiApiKey]: the key is stored locally,
+  /// never transmitted (the app calls the user's own provider), and excluded
+  /// from [toJson] exports so it can't leak via a shared backup file.
+  String embeddingBaseUrl;
+  String embeddingApiKey;
+  String embeddingModel;
+
   /// Language: 0 = follow system, 1 = Chinese, 2 = English
   int languageIndex;
 
@@ -43,6 +52,9 @@ class AppSettings {
     this.aiBaseUrl = '',
     this.aiApiKey = '',
     this.aiModel = 'gpt-4o-mini',
+    this.embeddingBaseUrl = '',
+    this.embeddingApiKey = '',
+    this.embeddingModel = '',
     this.languageIndex = 0,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
@@ -124,6 +136,9 @@ class AppSettings {
     String? aiBaseUrl,
     String? aiApiKey,
     String? aiModel,
+    String? embeddingBaseUrl,
+    String? embeddingApiKey,
+    String? embeddingModel,
     int? languageIndex,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
@@ -137,6 +152,9 @@ class AppSettings {
       aiBaseUrl: aiBaseUrl ?? this.aiBaseUrl,
       aiApiKey: aiApiKey ?? this.aiApiKey,
       aiModel: aiModel ?? this.aiModel,
+      embeddingBaseUrl: embeddingBaseUrl ?? this.embeddingBaseUrl,
+      embeddingApiKey: embeddingApiKey ?? this.embeddingApiKey,
+      embeddingModel: embeddingModel ?? this.embeddingModel,
       languageIndex: languageIndex ?? this.languageIndex,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
@@ -160,6 +178,9 @@ class AppSettings {
       'clipboardDetectionEnabled': clipboardDetectionEnabled,
       'aiBaseUrl': aiBaseUrl,
       'aiModel': aiModel,
+      'embeddingBaseUrl': embeddingBaseUrl,
+      'embeddingModel': embeddingModel,
+      // embeddingApiKey deliberately omitted — same rationale as aiApiKey above.
       'languageIndex': languageIndex,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
@@ -180,6 +201,11 @@ class AppSettings {
       // empty on import — the user re-enters it. Read defensively anyway.
       aiApiKey: json['aiApiKey'] is String ? json['aiApiKey'] as String : '',
       aiModel: json['aiModel'] is String ? json['aiModel'] as String : 'gpt-4o-mini',
+      embeddingBaseUrl: json['embeddingBaseUrl'] is String ? json['embeddingBaseUrl'] as String : '',
+      // Backups never contain the key (see toJson), so this is almost always
+      // empty on import — the user re-enters it. Read defensively anyway.
+      embeddingApiKey: json['embeddingApiKey'] is String ? json['embeddingApiKey'] as String : '',
+      embeddingModel: json['embeddingModel'] is String ? json['embeddingModel'] as String : '',
       languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
@@ -214,13 +240,16 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       aiApiKey: (fields[7] as String?) ?? '',
       aiModel: (fields[8] as String?) ?? 'gpt-4o-mini',
       languageIndex: (fields[9] as int?) ?? 0,
+      embeddingBaseUrl: (fields[10] as String?) ?? '',
+      embeddingApiKey: (fields[11] as String?) ?? '',
+      embeddingModel: (fields[12] as String?) ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(13)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -240,6 +269,12 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(8)
       ..write(obj.aiModel)
       ..writeByte(9)
-      ..write(obj.languageIndex);
+      ..write(obj.languageIndex)
+      ..writeByte(10)
+      ..write(obj.embeddingBaseUrl)
+      ..writeByte(11)
+      ..write(obj.embeddingApiKey)
+      ..writeByte(12)
+      ..write(obj.embeddingModel);
   }
 }

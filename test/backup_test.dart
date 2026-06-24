@@ -222,4 +222,128 @@ void main() {
       expect(copy.folderId, 'folder-2');
     });
   });
+
+  group('Processing status fields', () {
+    test('new Article defaults to completed with no stage/error/retries', () {
+      final a = Article(
+        id: 'p1',
+        url: 'https://example.com',
+        title: 'T',
+        source: SourcePlatform.web,
+      );
+      expect(a.processingStatus, ProcessingStatus.completed);
+      expect(a.processingStage, isNull);
+      expect(a.processingError, isNull);
+      expect(a.retryCount, 0);
+      expect(a.lastProcessedAt, isNull);
+      expect(a.suggestedFolderId, isNull);
+    });
+
+    test('processing fields survive toJson/fromJson round-trip', () {
+      final original = Article(
+        id: 'p2',
+        url: 'https://example.com',
+        title: 'T',
+        source: SourcePlatform.web,
+        processingStatus: ProcessingStatus.failed,
+        processingStage: ProcessingStage.summary,
+        processingError: 'API timeout',
+        retryCount: 3,
+        lastProcessedAt: DateTime(2026, 6, 15, 10, 30),
+        suggestedFolderId: 'folder-abc',
+      );
+      final restored = Article.fromJson(original.toJson());
+      expect(restored.processingStatus, ProcessingStatus.failed);
+      expect(restored.processingStage, ProcessingStage.summary);
+      expect(restored.processingError, 'API timeout');
+      expect(restored.retryCount, 3);
+      expect(restored.lastProcessedAt, DateTime(2026, 6, 15, 10, 30));
+      expect(restored.suggestedFolderId, 'folder-abc');
+    });
+
+    test('fromJson defaults to completed when processing fields are absent',
+        () {
+      final json = <String, dynamic>{
+        'id': 'old',
+        'url': 'https://old.com',
+        'title': 'Old article',
+        'source': 2,
+      };
+      final a = Article.fromJson(json);
+      expect(a.processingStatus, ProcessingStatus.completed);
+      expect(a.processingStage, isNull);
+      expect(a.processingError, isNull);
+      expect(a.retryCount, 0);
+      expect(a.lastProcessedAt, isNull);
+      expect(a.suggestedFolderId, isNull);
+    });
+
+    test('copyWith updates processing fields', () {
+      final a = Article(
+        id: 'p3',
+        url: 'https://example.com',
+        title: 'T',
+        source: SourcePlatform.web,
+      );
+      final updated = a.copyWith(
+        processingStatus: ProcessingStatus.processing,
+        processingStage: ProcessingStage.content,
+        retryCount: 1,
+      );
+      expect(updated.processingStatus, ProcessingStatus.processing);
+      expect(updated.processingStage, ProcessingStage.content);
+      expect(updated.retryCount, 1);
+    });
+
+    test('copyWith clearValue resets nullable processing fields', () {
+      final a = Article(
+        id: 'p4',
+        url: 'https://example.com',
+        title: 'T',
+        source: SourcePlatform.web,
+        processingStage: ProcessingStage.metadata,
+        processingError: 'err',
+        lastProcessedAt: DateTime(2026, 1, 1),
+        suggestedFolderId: 'f1',
+      );
+      final cleared = a.copyWith(
+        processingStage: Article.clearValue,
+        processingError: Article.clearValue,
+        lastProcessedAt: Article.clearValue,
+        suggestedFolderId: Article.clearValue,
+      );
+      expect(cleared.processingStage, isNull);
+      expect(cleared.processingError, isNull);
+      expect(cleared.lastProcessedAt, isNull);
+      expect(cleared.suggestedFolderId, isNull);
+    });
+
+    test('all ProcessingStatus enum values are valid', () {
+      for (final status in ProcessingStatus.values) {
+        final a = Article(
+          id: 's',
+          url: 'https://x.com',
+          title: 'T',
+          source: SourcePlatform.x,
+          processingStatus: status,
+        );
+        final restored = Article.fromJson(a.toJson());
+        expect(restored.processingStatus, status);
+      }
+    });
+
+    test('all ProcessingStage enum values survive round-trip', () {
+      for (final stage in ProcessingStage.values) {
+        final a = Article(
+          id: 's',
+          url: 'https://x.com',
+          title: 'T',
+          source: SourcePlatform.x,
+          processingStage: stage,
+        );
+        final restored = Article.fromJson(a.toJson());
+        expect(restored.processingStage, stage);
+      }
+    });
+  });
 }
