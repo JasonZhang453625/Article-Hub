@@ -39,40 +39,48 @@ class AiService {
     final isChinese = languageHint.contains('Chinese') ||
         languageHint.contains('中文');
 
-    // Content-quality constraints — applied to all modes.
-    final qualityRules = isChinese
-        ? 'Each bullet point MUST mention a specific fact, number, or entity from the article. '
-            'Do NOT use vague phrases like "文章介绍了..." or "本文讨论了..." — go straight to the fact. '
-            'Use ONLY information from the article; do not add external knowledge.'
-        : 'Each bullet point MUST mention a specific fact, number, or entity from the article. '
-            'Do NOT start bullets with "The article discusses...", "This piece covers..." — go straight to the fact. '
-            'Use ONLY information from the article; do not add external knowledge or assumptions.';
+    if (isChinese) {
+      return _summaryInstructionChinese(contentLength, verbosity);
+    } else {
+      return _summaryInstructionEnglish(contentLength, verbosity);
+    }
+  }
+
+  static String _summaryInstructionChinese(int contentLength, int verbosity) {
+    const qualityRules =
+        '每条要点必须包含文章中的具体事实、数字或专有名词。'
+        '禁止使用"文章介绍了..."、"本文讨论了..."等空泛开头，直接陈述事实。'
+        '仅使用文章中的信息，不要添加外部知识或推测。';
 
     if (verbosity == 0) {
-      if (isChinese) {
-        return 'Write a brief 80-120 character overview followed by 3 key takeaways as bullet points. $qualityRules';
-      } else {
-        return 'Write a brief 60-100 word overview followed by 3 key takeaways as bullet points. $qualityRules';
-      }
+      return '用80-120个中文字写一段概述，然后列出3条要点。$qualityRules';
     }
 
-    // Detailed mode — adaptive by article length.
-    if (isChinese) {
-      if (contentLength < 2000) {
-        return 'Write a 100-150 character overview followed by 3 key takeaways as bullet points. $qualityRules';
-      } else if (contentLength < 8000) {
-        return 'Write a 200-300 character overview followed by 5 key takeaways as bullet points. $qualityRules';
-      } else {
-        return 'Write a 300-500 character overview followed by 5-7 key takeaways as bullet points. $qualityRules';
-      }
+    if (contentLength < 2000) {
+      return '用100-150个中文字写一段概述，然后列出3条要点。$qualityRules';
+    } else if (contentLength < 8000) {
+      return '用200-300个中文字写一段概述，然后列出5条要点。$qualityRules';
     } else {
-      if (contentLength < 1500) {
-        return 'Write a 80-120 word overview followed by 3 key takeaways as bullet points. $qualityRules';
-      } else if (contentLength < 6000) {
-        return 'Write a 150-250 word overview followed by 5 key takeaways as bullet points. $qualityRules';
-      } else {
-        return 'Write a 250-400 word overview followed by 5-7 key takeaways as bullet points. $qualityRules';
-      }
+      return '用300-500个中文字写一段概述，然后列出5-7条要点。$qualityRules';
+    }
+  }
+
+  static String _summaryInstructionEnglish(int contentLength, int verbosity) {
+    const qualityRules =
+        'Each bullet point MUST mention a specific fact, number, or entity from the article. '
+        'Do NOT start bullets with "The article discusses...", "This piece covers..." — go straight to the fact. '
+        'Use ONLY information from the article; do not add external knowledge or assumptions.';
+
+    if (verbosity == 0) {
+      return 'Write a brief 60-100 word overview followed by 3 key takeaways as bullet points. $qualityRules';
+    }
+
+    if (contentLength < 1500) {
+      return 'Write a 80-120 word overview followed by 3 key takeaways as bullet points. $qualityRules';
+    } else if (contentLength < 6000) {
+      return 'Write a 150-250 word overview followed by 5 key takeaways as bullet points. $qualityRules';
+    } else {
+      return 'Write a 250-400 word overview followed by 5-7 key takeaways as bullet points. $qualityRules';
     }
   }
 
@@ -85,21 +93,21 @@ class AiService {
         ? '${content.substring(0, 15000)}...'
         : content;
 
-    final langInstruction = languageHint.isNotEmpty
-        ? '\n$languageHint'
-        : '';
+    final isChinese = languageHint.contains('Chinese') ||
+        languageHint.contains('中文');
 
     final instruction = summaryInstruction(truncatedContent.length, languageHint, verbosity);
+
+    final systemPrompt = isChinese
+        ? '你是一个简洁的阅读助手。请用与原文相同的语言总结文章。$instruction'
+        : 'You are a concise reading assistant. Summarize the article in the same language as the source. $instruction';
 
     final body = jsonEncode({
       'model': model,
       'messages': [
         {
           'role': 'system',
-          'content':
-              'You are a concise reading assistant. Summarize the article in the same language as the source. '
-              '$instruction '
-              '$langInstruction',
+          'content': systemPrompt,
         },
         {
           'role': 'user',
@@ -118,24 +126,28 @@ class AiService {
 
     final uri = _chatUri();
 
-    final langInstruction = languageHint.isNotEmpty
-        ? '\n$languageHint'
-        : '';
+    final isChinese = languageHint.contains('Chinese') ||
+        languageHint.contains('中文');
 
     final instruction = summaryInstruction(4000, languageHint, verbosity);
+
+    final systemPrompt = isChinese
+        ? '你是一个简洁的阅读助手。用户会给你一个URL和标题。'
+            '如果你能访问该URL，请阅读全文并进行总结。'
+            '如果无法访问，请仅根据标题推测文章内容并简要描述。'
+            '$instruction'
+        : 'You are a concise reading assistant. The user will give you a URL and title. '
+            'If you can access the URL, read the content and summarize it. '
+            'If you cannot access it, summarize based on the title alone — give a brief '
+            'description of what this article is likely about. '
+            '$instruction';
 
     final body = jsonEncode({
       'model': model,
       'messages': [
         {
           'role': 'system',
-          'content':
-              'You are a concise reading assistant. The user will give you a URL and title. '
-              'If you can access the URL, read the content and summarize it. '
-              'If you cannot access it, summarize based on the title alone — give a brief '
-              'description of what this article is likely about. '
-              '$instruction '
-              '$langInstruction',
+          'content': systemPrompt,
         },
         {
           'role': 'user',
