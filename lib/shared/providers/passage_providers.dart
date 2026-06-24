@@ -78,6 +78,8 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> delete(String id) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.delete(id);
+    // Also remove the vector index entry if one exists.
+    _ref.read(indexServiceProvider).delete(id).catchError((_) {});
     state = AsyncValue.data(repo.getAll());
   }
 

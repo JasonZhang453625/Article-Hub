@@ -128,18 +128,33 @@ class IndexService {
 }
 
 /// Rebuilds the index for all completed articles.
-/// Returns the number of articles indexed.
+/// Skips articles whose fingerprint and model already match the existing
+/// record, so switching embedding model or editing content triggers a
+/// fresh vector while leaving unchanged articles untouched.
+/// Returns the number of (newly) indexed articles.
 Future<int> rebuildIndex({
   required List<Article> articles,
   required EmbeddingService embedding,
   required IndexService index,
 }) async {
-  await index.clear();
+  final existingRecords = {for (final r in await index.getAll()) r.articleId: r};
   int count = 0;
 
   for (final article in articles) {
     if (article.processingStatus != ProcessingStatus.completed) continue;
     if (article.summary == null || article.summary!.isEmpty) continue;
+
+    final currentFp = contentFingerprint(
+        article.title, article.summary!, article.tags);
+    final existing = existingRecords[article.id];
+
+    // Skip if the content fingerprint and embedding model are unchanged.
+    if (existing != null &&
+        existing.fingerprint == currentFp &&
+        existing.model == embedding.model) {
+      count++;
+      continue;
+    }
 
     final input = IndexService.buildEmbeddingInput(article);
     final result = await embedding.embed(input);
@@ -148,11 +163,24 @@ Future<int> rebuildIndex({
     await index.put(IndexRecord(
       articleId: article.id,
       model: result.model,
-      fingerprint: contentFingerprint(
-          article.title, article.summary!, article.tags),
+      fingerprint: currentFp,
       vector: result.vector,
     ));
     count++;
+  }
+
+  // Clean up orphans — articles that were deleted or are no longer completed.
+  final validIds = articles
+      .where((a) =>
+          a.processingStatus == ProcessingStatus.completed &&
+          a.summary != null &&
+          a.summary!.isNotEmpty)
+      .map((a) => a.id)
+      .toSet();
+  final removedOrphans = await index.removeOrphans(validIds);
+  if (removedOrphans > 0) {
+    developer.log('removed $removedOrphans orphaned index records',
+        name: 'article_hub.index');
   }
 
   developer.log('rebuilt index: $count articles', name: 'article_hub.index');

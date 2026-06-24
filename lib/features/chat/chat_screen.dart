@@ -142,12 +142,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
 
     // Build context from candidate summaries.
+    // Truncate each article's contribution to avoid exceeding the model's
+    // context window. 5 articles × ~600 chars ≈ 3000 chars total, well within
+    // typical limits while still giving the model enough material.
+    const maxContextPerArticle = 600;
     final contextBuffer = StringBuffer();
     final citationMap = buildCitationMap(candidates.map((a) => a.id).toList());
     for (int i = 0; i < candidates.length; i++) {
       final a = candidates[i];
       contextBuffer.writeln('[${i + 1}] ${a.title}');
-      contextBuffer.writeln('Summary: ${a.summary}');
+      final summary = (a.summary ?? '').trim();
+      if (summary.isNotEmpty) {
+        contextBuffer.writeln(
+            'Summary: ${summary.length > maxContextPerArticle ? '${summary.substring(0, maxContextPerArticle)}...' : summary}');
+      }
       contextBuffer.writeln('Tags: ${a.tags.join(", ")}');
       contextBuffer.writeln();
     }
@@ -176,7 +184,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final response = await ai.chat(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
-        maxTokens: 800,
+        maxTokens: 2000,
       );
 
       if (response == null || response.isEmpty) {

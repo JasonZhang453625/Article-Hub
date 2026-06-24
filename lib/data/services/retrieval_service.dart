@@ -51,7 +51,7 @@ class RetrievalService {
     if (_embedding.isConfigured) {
       try {
         final result = await _vectorRetrieve(query, articles);
-        if (result != null) {
+        if (result != null && result.isNotEmpty) {
           stopwatch.stop();
           return RetrievalResult(
             articles: result,
@@ -93,6 +93,10 @@ class RetrievalService {
     final scored = <({String id, double score})>[];
     for (final record in records) {
       if (!articleMap.containsKey(record.articleId)) continue;
+      // Skip records indexed with a different embedding model — their
+      // vectors live in an incompatible space and cosine similarity is
+      // meaningless. The stale entries will be cleaned up on next rebuild.
+      if (record.model != _embedding.model) continue;
       final score = cosineSimilarity(queryEmbedding.vector, record.vector);
       if (score >= _minRelevance) {
         scored.add((id: record.articleId, score: score));
