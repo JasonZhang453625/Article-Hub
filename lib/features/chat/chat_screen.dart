@@ -631,8 +631,8 @@ class _CitationChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Wrap(
-      spacing: 6,
-      runSpacing: 6,
+      spacing: 4,
+      runSpacing: 2,
       children: articleIds.map((id) {
         final article = articles.where((a) => a.id == id).firstOrNull;
         if (article == null) return const SizedBox.shrink();
