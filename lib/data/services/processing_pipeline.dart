@@ -196,21 +196,37 @@ class ProcessingPipeline {
 
     try {
       final cachedContent = _contentCache.remove(article.id);
-      String? summary;
-
-      if (cachedContent != null && cachedContent.isNotEmpty) {
-        summary = await ai.summarize(article.title, cachedContent,
-            languageHint: langHint, verbosity: verbosity);
-      } else {
-        summary = await ai.summarizeFromUrl(article.title, article.url,
-            languageHint: langHint, verbosity: verbosity);
+      if (cachedContent == null || cachedContent.isEmpty) {
+        return _fail(article, 'summary', 'Could not extract page content for summarization');
       }
 
-      if (summary == null || summary.isEmpty) {
+      developer.log(
+        'summary input title="${article.title}", '
+        'content preview="${cachedContent.substring(0, cachedContent.length.clamp(0, 200))}"',
+        name: 'article_hub.pipeline',
+      );
+
+      final result = await ai.summarizeWithTitle(article.title, cachedContent,
+          languageHint: langHint, verbosity: verbosity);
+
+      if (result.summary == null || result.summary!.isEmpty) {
         return _fail(article, 'summary', 'AI returned empty summary');
       }
 
-      return article.copyWith(summary: summary);
+      // Update title if AI provided a meaningful one (not just the domain).
+      String? newTitle;
+      if (result.title != null && result.title!.isNotEmpty) {
+        final looksLikeDomain = result.title!.contains('.') &&
+            !result.title!.contains(' ');
+        if (!looksLikeDomain) {
+          newTitle = result.title;
+        }
+      }
+
+      return article.copyWith(
+        title: newTitle ?? article.title,
+        summary: result.summary,
+      );
     } catch (e) {
       return _fail(article, 'summary', e);
     }

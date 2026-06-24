@@ -94,22 +94,46 @@ class AppHttpClient {
     // 1. Check HTTP Content-Type header for charset.
     var charset = _extractCharset(ct);
 
-    // 2. If not in header, check HTML <meta> tags (first 1024 bytes).
+    // 2. If not in header, check HTML <meta> tags (first 2048 bytes).
     if (charset == null) {
-      final head = latin1.decode(bytes.sublist(0, bytes.length.clamp(0, 1024)));
+      final head = latin1.decode(bytes.sublist(0, bytes.length.clamp(0, 2048)));
       charset = _extractCharset(head);
     }
 
+    developer.log(
+      '_decodeBody: header-ct="$ct", detected charset=$charset, '
+      'bytes=${bytes.length}',
+      name: 'article_hub.http',
+    );
+
     // 3. Decode with detected charset.
     if (charset != null) {
-      return _decodeWithCharset(bytes, charset);
+      final decoded = _decodeWithCharset(bytes, charset);
+      developer.log(
+        '_decodeBody: decoded with "$charset", '
+        'preview="${decoded.substring(0, decoded.length.clamp(0, 200))}"',
+        name: 'article_hub.http',
+      );
+      return decoded;
     }
 
     // 4. Default: try UTF-8, fall back to latin1.
     try {
-      return utf8.decode(bytes);
+      final decoded = utf8.decode(bytes);
+      developer.log(
+        '_decodeBody: decoded with utf8, '
+        'preview="${decoded.substring(0, decoded.length.clamp(0, 200))}"',
+        name: 'article_hub.http',
+      );
+      return decoded;
     } catch (_) {
-      return latin1.decode(bytes);
+      final decoded = latin1.decode(bytes);
+      developer.log(
+        '_decodeBody: utf8 failed, fallback latin1, '
+        'preview="${decoded.substring(0, decoded.length.clamp(0, 200))}"',
+        name: 'article_hub.http',
+      );
+      return decoded;
     }
   }
 
