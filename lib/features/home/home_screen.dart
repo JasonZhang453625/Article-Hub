@@ -5,6 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:uuid/uuid.dart';
+import '../../data/models/passage.dart';
+import '../../data/models/source_platform.dart';
+import '../../data/services/processing_pipeline.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
@@ -62,6 +66,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _maybeDetectClipboardUrl();
+      _resumePendingArticles();
+    }
+  }
+
+  /// Resume processing for any articles that are pending or failed.
+  void _resumePendingArticles() {
+    final articles = ref.read(articlesProvider).valueOrNull;
+    if (articles == null) return;
+    final pipeline = ref.read(processingPipelineProvider);
+    for (final article in articles) {
+      if (article.processingStatus == ProcessingStatus.pending ||
+          article.processingStatus == ProcessingStatus.failed) {
+        pipeline.process(article);
+      }
     }
   }
 
@@ -126,7 +144,61 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _navigateToAdd(String url) {
-    context.push(AppRoutes.addArticle, extra: url);
+    _quickSave(url);
+  }
+
+  /// Immediately save the URL as a pending article and kick off processing.
+  /// If the URL already exists, navigate to the existing article instead.
+  Future<void> _quickSave(String url) async {
+    final cleaned = cleanUrl(url);
+    if (!isValidUrl(cleaned)) return;
+
+    // URL deduplication — open existing article if already saved.
+    final existing = ref.read(articlesProvider).valueOrNull;
+    final duplicate = existing?.where((a) => a.url == cleaned).firstOrNull;
+    if (duplicate != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Already saved: ${duplicate.title}')),
+      );
+      return;
+    }
+
+    final article = Article(
+      id: const Uuid().v4(),
+      url: cleaned,
+      title: extractDomain(cleaned),
+      source: SourcePlatform.fromUrl(cleaned),
+      processingStatus: ProcessingStatus.pending,
+    );
+
+    await ref.read(articlesProvider.notifier).add(article);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saved — processing in background')),
+    );
+
+    // Fire-and-forget processing pipeline.
+    _processArticle(article);
+  }
+
+  void _processArticle(Article article) {
+    final pipeline = ref.read(processingPipelineProvider);
+    pipeline.process(article).then((result) {
+      if (result != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.processingStatus == ProcessingStatus.completed
+                  ? 'Processed: ${result.title}'
+                  : 'Failed: ${result.processingError ?? "unknown error"}',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
   }
 
   Future<void> _maybeDetectClipboardUrl() async {
@@ -167,10 +239,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         duration: const Duration(seconds: 6),
         content: Text('Link found on clipboard: ${extractDomain(url)}'),
         action: SnackBarAction(
-          label: 'Add',
-          onPressed: () {
-            context.push(AppRoutes.addArticle, extra: url);
-          },
+          label: 'Save',
+          onPressed: () => _quickSave(url),
         ),
       ),
     );
@@ -284,42 +354,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 children: [
                   DelayedReveal(
                     delayMs: 260,
-                    beginOffset: const Offset(0, 0.18),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(20),
-                        onTap: () {
-                          context.push(AppRoutes.settings);
-                        },
-                        child: Ink(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surface,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .outline
-                                  .withValues(alpha: 0.3),
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.settings_rounded,
-                            size: 22,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.55),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  DelayedReveal(
-                    delayMs: 300,
                     beginOffset: const Offset(0, 0.18),
                     child: Material(
                       color: Colors.transparent,

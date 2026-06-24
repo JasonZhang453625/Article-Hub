@@ -2,22 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../data/models/passage.dart';
 import '../features/article_resolver.dart';
+import '../features/chat/chat_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/add_passage/add_passage_screen.dart';
+import '../features/inbox/inbox_screen.dart';
 import '../features/reader/reader_screen.dart';
 import '../features/reader/summary_screen.dart';
 import '../features/detail/detail_screen.dart';
 import '../features/folders/folders_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/shell/app_shell.dart';
 
 class AppRoutes {
-  static const String home = '/';
+  static const String chat = '/chat';
+  static const String knowledge = '/knowledge';
+  static const String inbox = '/inbox';
+  static const String settings = '/settings';
   static const String addArticle = '/add';
   static const String summary = '/summary';
   static const String reader = '/reader';
   static const String detail = '/detail';
   static const String folders = '/folders';
-  static const String settings = '/settings';
 
   static String summaryWithId(String id) => '/summary/$id';
   static String readerWithId(String id) => '/reader/$id';
@@ -34,15 +39,11 @@ CustomTransitionPage<void> _buildPage({
     transitionDuration: const Duration(milliseconds: 380),
     reverseTransitionDuration: const Duration(milliseconds: 320),
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      // Primary animation: the incoming page fades + slides in
       final primaryCurved = CurvedAnimation(
         parent: animation,
         curve: Curves.easeOutCubic,
         reverseCurve: Curves.easeInCubic,
       );
-
-      // Secondary animation: when another page is pushed on top,
-      // the current page fades out slightly and scales down.
       final secondaryCurved = CurvedAnimation(
         parent: secondaryAnimation,
         curve: Curves.easeOutCubic,
@@ -57,7 +58,6 @@ CustomTransitionPage<void> _buildPage({
             end: Offset.zero,
           ).animate(primaryCurved),
           child: FadeTransition(
-            // When a page is pushed on top, fade this page slightly
             opacity: Tween<double>(
               begin: 1.0,
               end: 0.88,
@@ -77,13 +77,48 @@ CustomTransitionPage<void> _buildPage({
 }
 
 final appRouter = GoRouter(
-  initialLocation: AppRoutes.home,
+  initialLocation: AppRoutes.chat,
   routes: [
-    GoRoute(
-      path: AppRoutes.home,
-      pageBuilder: (context, state) =>
-          _buildPage(state: state, child: const HomeScreen()),
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) {
+        return AppShell(navigationShell: navigationShell);
+      },
+      branches: [
+        // Tab 0: Chat
+        StatefulShellBranch(routes: [
+          GoRoute(
+            path: AppRoutes.chat,
+            pageBuilder: (context, state) =>
+                _buildPage(state: state, child: const ChatScreen()),
+          ),
+        ]),
+        // Tab 1: Knowledge Base
+        StatefulShellBranch(routes: [
+          GoRoute(
+            path: AppRoutes.knowledge,
+            pageBuilder: (context, state) =>
+                _buildPage(state: state, child: const HomeScreen()),
+          ),
+        ]),
+        // Tab 2: Inbox
+        StatefulShellBranch(routes: [
+          GoRoute(
+            path: AppRoutes.inbox,
+            pageBuilder: (context, state) =>
+                _buildPage(state: state, child: const InboxScreen()),
+          ),
+        ]),
+        // Tab 3: Settings
+        StatefulShellBranch(routes: [
+          GoRoute(
+            path: AppRoutes.settings,
+            pageBuilder: (context, state) =>
+                _buildPage(state: state, child: const SettingsScreen()),
+          ),
+        ]),
+      ],
     ),
+    // Overlay routes (push on top of shell)
     GoRoute(
       path: AppRoutes.addArticle,
       pageBuilder: (context, state) => _buildPage(
@@ -134,11 +169,6 @@ final appRouter = GoRouter(
           ),
         );
       },
-    ),
-    GoRoute(
-      path: AppRoutes.settings,
-      pageBuilder: (context, state) =>
-          _buildPage(state: state, child: const SettingsScreen()),
     ),
     GoRoute(
       path: AppRoutes.folders,
