@@ -25,6 +25,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _scrollController = ScrollController();
   final List<_ChatMessage> _messages = [];
   bool _loading = false;
+  int _answerLength = 0;
+  int _knowledgeSource = 0;
 
   @override
   void dispose() {
@@ -169,12 +171,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final langHint = aiLanguagePrompt(settings.languageIndex);
 
     try {
+      final knowledgeRule = _knowledgeSource == 0
+          ? 'Use ONLY the provided article summaries. If the summaries don\'t '
+              'contain enough information, say so clearly — do NOT make up answers.'
+          : 'Primarily use the provided article summaries. When the summaries '
+              'don\'t cover the topic, you may supplement with your general '
+              'knowledge, but prefix that portion with "Based on general knowledge:". '
+              'Always cite article numbers [1], [2] when referencing knowledge base content.';
+
+      final lengthRule = _answerLength == 0
+          ? 'Keep answers concise — 2-3 sentences per point, use bullet points when possible.'
+          : 'Provide detailed explanations. Include examples, context, and reasoning when relevant.';
+
       final systemPrompt =
-          'You are a knowledge assistant. Answer the user\'s question based '
-          'ONLY on the provided article summaries. If the summaries don\'t '
-          'contain enough information, say so clearly — do NOT make up answers. '
-          'When referencing information, cite the article number in brackets '
-          'like [1], [2]. Keep answers concise and factual.'
+          'You are a knowledge assistant. $knowledgeRule $lengthRule '
+          'When referencing information from the knowledge base, cite the article '
+          'number in brackets like [1], [2].'
           '${langHint.isNotEmpty ? "\n$langHint" : ""}';
 
       final userMessage =
@@ -184,7 +196,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final response = await ai.chat(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
-        maxTokens: 2000,
+        maxTokens: _answerLength == 0 ? 1000 : 2500,
       );
 
       if (response == null || response.isEmpty) {
@@ -278,6 +290,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return scored.take(3).map((s) => s.article).toList();
   }
 
+  void _showChatSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ChatSettingsSheet(
+        answerLength: _answerLength,
+        knowledgeSource: _knowledgeSource,
+        onChanged: (answerLength, knowledgeSource) {
+          setState(() {
+            _answerLength = answerLength;
+            _knowledgeSource = knowledgeSource;
+          });
+        },
+      ),
+    );
+  }
+
   void _onFeedback(String? logId, int feedback) {
     if (logId == null) return;
     ref.read(retrievalLogServiceProvider).updateFeedback(logId, feedback);
@@ -298,7 +328,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Chat')),
+      appBar: AppBar(
+        title: const Text('Chat'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.tune_rounded),
+            tooltip: 'Chat Settings',
+            onPressed: _showChatSettings,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
@@ -879,3 +918,178 @@ class _InputBar extends StatelessWidget {
     );
   }
 }
+
+class _ChatSettingsSheet extends StatefulWidget {
+  final int answerLength;
+  final int knowledgeSource;
+  final void Function(int answerLength, int knowledgeSource) onChanged;
+
+  const _ChatSettingsSheet({
+    required this.answerLength,
+    required this.knowledgeSource,
+    required this.onChanged,
+  });
+
+  @override
+  State<_ChatSettingsSheet> createState() => _ChatSettingsSheetState();
+}
+
+class _ChatSettingsSheetState extends State<_ChatSettingsSheet> {
+  late int _answerLength;
+  late int _knowledgeSource;
+
+  @override
+  void initState() {
+    super.initState();
+    _answerLength = widget.answerLength;
+    _knowledgeSource = widget.knowledgeSource;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(24, 24, 24, 24 + bottom),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Chat Settings', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 20),
+          Text('Answer Length', style: theme.textTheme.labelLarge),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _SettingsChip(
+                  icon: Icons.short_text_rounded,
+                  label: 'Short',
+                  selected: _answerLength == 0,
+                  onTap: () => setState(() => _answerLength = 0),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _SettingsChip(
+                  icon: Icons.notes_rounded,
+                  label: 'Detailed',
+                  selected: _answerLength == 1,
+                  onTap: () => setState(() => _answerLength = 1),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text('Knowledge Source', style: theme.textTheme.labelLarge),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _SettingsChip(
+                  icon: Icons.library_books_rounded,
+                  label: 'Knowledge Base Only',
+                  selected: _knowledgeSource == 0,
+                  onTap: () => setState(() => _knowledgeSource = 0),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _SettingsChip(
+                  icon: Icons.public_rounded,
+                  label: 'KB + General',
+                  selected: _knowledgeSource == 1,
+                  onTap: () => setState(() => _knowledgeSource = 1),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () {
+                widget.onChanged(_answerLength, _knowledgeSource);
+                Navigator.pop(context);
+              },
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Apply'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SettingsChip({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        decoration: BoxDecoration(
+          color: selected
+              ? colorScheme.primaryContainer
+              : colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? colorScheme.primary
+                : colorScheme.outline.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected
+                  ? colorScheme.onPrimaryContainer
+                  : colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: selected
+                      ? colorScheme.onPrimaryContainer
+                      : colorScheme.onSurfaceVariant,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
