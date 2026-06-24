@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
@@ -12,7 +13,7 @@ class AiService {
     required this.baseUrl,
     required this.apiKey,
     required this.model,
-    this.timeout = const Duration(seconds: 30),
+    this.timeout = const Duration(seconds: 60),
   });
 
   Uri _chatUri() {
@@ -121,46 +122,6 @@ class AiService {
     return _postChat(uri, body);
   }
 
-  Future<String?> summarizeFromUrl(String title, String url, {String languageHint = '', int verbosity = 0}) async {
-    if (!isConfigured) return null;
-
-    final uri = _chatUri();
-
-    final isChinese = languageHint.contains('Chinese') ||
-        languageHint.contains('中文');
-
-    final instruction = summaryInstruction(4000, languageHint, verbosity);
-
-    final systemPrompt = isChinese
-        ? '你是一个简洁的阅读助手。用户会给你一个URL和标题。'
-            '如果你能访问该URL，请阅读全文并进行总结。'
-            '如果无法访问，请仅根据标题推测文章内容并简要描述。'
-            '$instruction'
-        : 'You are a concise reading assistant. The user will give you a URL and title. '
-            'If you can access the URL, read the content and summarize it. '
-            'If you cannot access it, summarize based on the title alone — give a brief '
-            'description of what this article is likely about. '
-            '$instruction';
-
-    final body = jsonEncode({
-      'model': model,
-      'messages': [
-        {
-          'role': 'system',
-          'content': systemPrompt,
-        },
-        {
-          'role': 'user',
-          'content': 'Title: $title\nURL: $url',
-        },
-      ],
-      'temperature': 0.3,
-      'max_tokens': 1500,
-    });
-
-    return _postChat(uri, body);
-  }
-
   /// Summarize content and also generate a proper article title.
   /// Returns a record of (title, summary). Either may be null on failure.
   Future<({String? title, String? summary})> summarizeWithTitle(
@@ -211,62 +172,20 @@ class AiService {
     return _postChatWithTitle(uri, body);
   }
 
-  /// Summarize from URL and also generate a proper article title.
-  Future<({String? title, String? summary})> summarizeFromUrlWithTitle(
-    String title,
-    String url, {
-    String languageHint = '',
-    int verbosity = 0,
-  }) async {
-    if (!isConfigured) return (title: null, summary: null);
-
-    final uri = _chatUri();
-
-    final isChinese = languageHint.contains('Chinese') ||
-        languageHint.contains('中文');
-
-    final instruction = summaryInstruction(4000, languageHint, verbosity);
-
-    final systemPrompt = isChinese
-        ? '你是一个简洁的阅读助手。用户会给你一个URL和标题。\n'
-            '如果你能访问该URL，请阅读全文。如果无法访问，请仅根据标题推测。\n'
-            '然后返回一个JSON对象，包含两个字段：\n'
-            '1. "title"：一个简洁准确的文章标题（不是URL或域名）\n'
-            '2. "summary"：文章摘要。$instruction\n'
-            '请只返回JSON，不要添加其他文字。格式：{"title":"...","summary":"..."}'
-        : 'You are a concise reading assistant. The user will give you a URL and title.\n'
-            'If you can access the URL, read the content. If not, infer from the title.\n'
-            'Then return a JSON object with two fields:\n'
-            '1. "title": a concise, descriptive article title (not a URL or domain name)\n'
-            '2. "summary": the article summary. $instruction\n'
-            'Return ONLY the JSON, nothing else. Format: {"title":"...","summary":"..."}';
-
-    final body = jsonEncode({
-      'model': model,
-      'messages': [
-        {
-          'role': 'system',
-          'content': systemPrompt,
-        },
-        {
-          'role': 'user',
-          'content': 'Title: $title\nURL: $url',
-        },
-      ],
-      'temperature': 0.3,
-      'max_tokens': 1500,
-    });
-
-    return _postChatWithTitle(uri, body);
-  }
-
   Future<({String? title, String? summary})> _postChatWithTitle(Uri uri, String body) async {
     final text = await _postChat(uri, body);
     if (text == null || text.isEmpty) return (title: null, summary: null);
 
     try {
-      // Try to parse as JSON
-      final json = jsonDecode(text) as Map<String, dynamic>;
+      // Strip markdown code block wrappers if present (many LLMs wrap JSON in ```json ... ```)
+      var jsonStr = text.trim();
+      final codeBlockPattern = RegExp(r'^```(?:json)?\s*\n?(.*?)\n?```$', dotAll: true);
+      final match = codeBlockPattern.firstMatch(jsonStr);
+      if (match != null) {
+        jsonStr = match.group(1)!.trim();
+      }
+
+      final json = jsonDecode(jsonStr) as Map<String, dynamic>;
       final aiTitle = json['title'] as String?;
       final aiSummary = json['summary'] as String?;
       return (
@@ -318,7 +237,7 @@ class AiService {
           .timeout(timeout);
 
       developer.log(
-        'API response status: ${response.statusCode}',
+        'API response status: ${response.statusCode}, url: $uri',
         name: 'article_hub.ai',
       );
       if (response.statusCode != 200) {
@@ -345,6 +264,12 @@ class AiService {
       }
 
       if (text != null && text.trim().isNotEmpty) return text.trim();
+      return null;
+    } on TimeoutException {
+      developer.log(
+        'AI API timeout ($timeout), url: $uri',
+        name: 'article_hub.ai',
+      );
       return null;
     } catch (e, st) {
       developer.log(

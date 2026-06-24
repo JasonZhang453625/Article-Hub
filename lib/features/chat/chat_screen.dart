@@ -26,8 +26,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _scrollController = ScrollController();
   final List<_ChatMessage> _messages = [];
   bool _loading = false;
-  int _answerLength = 0;
-  int _knowledgeSource = 0;
 
   @override
   void dispose() {
@@ -114,8 +112,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final candidates = result.articles;
     final logId = const Uuid().v4();
 
-    if (candidates.isEmpty) {
-      // Log the no-result query.
+    if (candidates.isEmpty && settings.chatKnowledgeSourceIndex == 0) {
+      // KB Only mode: no candidates → inform the user.
       final logService = ref.read(retrievalLogServiceProvider);
       await logService.save(RetrievalLog(
         id: logId,
@@ -125,7 +123,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         durationMs: result.duration.inMilliseconds,
       ));
 
-      // Show weakly related cards if any exist.
       final weakCandidates = _getWeakCandidates(query, completedArticles);
 
       setState(() {
@@ -172,15 +169,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final langHint = aiLanguagePrompt(settings.languageIndex);
 
     try {
-      final knowledgeRule = _knowledgeSource == 0
+      final knowledgeRule = settings.chatKnowledgeSourceIndex == 0
           ? 'Use ONLY the provided article summaries. If the summaries don\'t '
               'contain enough information, say so clearly — do NOT make up answers.'
-          : 'Primarily use the provided article summaries. When the summaries '
-              'don\'t cover the topic, you may supplement with your general '
-              'knowledge, but prefix that portion with "Based on general knowledge:". '
-              'Always cite article numbers [1], [2] when referencing knowledge base content.';
+          : candidates.isEmpty
+              ? 'No relevant articles were found in the knowledge base for this question. '
+                  'Answer using your general knowledge. Be thorough and factual.'
+              : 'Primarily use the provided article summaries. When the summaries '
+                  'don\'t cover the topic, you may supplement with your general '
+                  'knowledge, but prefix that portion with "Based on general knowledge:". '
+                  'Always cite article numbers [1], [2] when referencing knowledge base content.';
 
-      final lengthRule = _answerLength == 0
+      final lengthRule = settings.chatAnswerLengthIndex == 0
           ? 'Keep answers concise — 2-3 sentences per point, use bullet points when possible.'
           : 'Provide detailed explanations. Include examples, context, and reasoning when relevant.';
 
@@ -212,7 +212,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         systemPrompt: systemPrompt,
         userMessage: userMessage,
         history: history,
-        maxTokens: _answerLength == 0 ? 1000 : 2500,
+        maxTokens: settings.chatAnswerLengthIndex == 0 ? 1000 : 2500,
       );
 
       if (response == null || response.isEmpty) {
@@ -307,18 +307,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   void _showChatSettings() {
+    final settings = ref.read(settingsProvider).valueOrNull;
+    if (settings == null) return;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _ChatSettingsSheet(
-        answerLength: _answerLength,
-        knowledgeSource: _knowledgeSource,
+        answerLength: settings.chatAnswerLengthIndex,
+        knowledgeSource: settings.chatKnowledgeSourceIndex,
         onChanged: (answerLength, knowledgeSource) {
-          setState(() {
-            _answerLength = answerLength;
-            _knowledgeSource = knowledgeSource;
-          });
+          ref.read(settingsProvider.notifier).setChatAnswerLength(answerLength);
+          ref.read(settingsProvider.notifier).setChatKnowledgeSource(knowledgeSource);
         },
       ),
     );

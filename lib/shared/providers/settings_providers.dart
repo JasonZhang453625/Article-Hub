@@ -85,6 +85,16 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(summaryVerbosityIndex: index));
   }
 
+  Future<void> setChatAnswerLength(int index) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(chatAnswerLengthIndex: index));
+  }
+
+  Future<void> setChatKnowledgeSource(int index) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(chatKnowledgeSourceIndex: index));
+  }
+
   Future<void> setEmbeddingConfig({
     String? baseUrl,
     String? apiKey,

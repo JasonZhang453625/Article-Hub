@@ -6,6 +6,12 @@ import 'source_platform.dart';
 class AppSettings {
   static const int typeId = 2;
 
+  /// Built-in default embedding configuration (SiliconFlow BGE-M3).
+  /// Used when the user hasn't provided their own config (BYOK).
+  static const String defaultEmbeddingBaseUrl = 'https://api.siliconflow.cn/v1';
+  static const String defaultEmbeddingApiKey = 'sk-goxkdsfshuekimktyiwdkexdnkdantwuhfylssothjhetcjh';
+  static const String defaultEmbeddingModel = 'BAAI/bge-m3';
+
   double fontSize;
   int webZoomPercent;
 
@@ -47,6 +53,12 @@ class AppSettings {
   /// Summary verbosity: 0 = concise (3 bullets), 1 = detailed (adaptive by article length)
   int summaryVerbosityIndex;
 
+  /// Chat answer length: 0 = short, 1 = detailed
+  int chatAnswerLengthIndex;
+
+  /// Chat knowledge source: 0 = knowledge base only, 1 = knowledge base + general knowledge
+  int chatKnowledgeSourceIndex;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
@@ -60,6 +72,8 @@ class AppSettings {
     this.embeddingModel = '',
     this.languageIndex = 0,
     this.summaryVerbosityIndex = 0,
+    this.chatAnswerLengthIndex = 0,
+    this.chatKnowledgeSourceIndex = 0,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -128,6 +142,24 @@ class AppSettings {
         .toList(growable: false);
   }
 
+  /// Returns true when the user has provided custom embedding config (BYOK).
+  bool get hasCustomEmbeddingConfig =>
+      embeddingBaseUrl.trim().isNotEmpty &&
+      embeddingApiKey.trim().isNotEmpty &&
+      embeddingModel.trim().isNotEmpty;
+
+  /// Returns the effective embedding base URL (user-provided or built-in default).
+  String get effectiveEmbeddingBaseUrl =>
+      embeddingBaseUrl.trim().isNotEmpty ? embeddingBaseUrl : defaultEmbeddingBaseUrl;
+
+  /// Returns the effective embedding API key (user-provided or built-in default).
+  String get effectiveEmbeddingApiKey =>
+      embeddingApiKey.trim().isNotEmpty ? embeddingApiKey : defaultEmbeddingApiKey;
+
+  /// Returns the effective embedding model (user-provided or built-in default).
+  String get effectiveEmbeddingModel =>
+      embeddingModel.trim().isNotEmpty ? embeddingModel : defaultEmbeddingModel;
+
   ThemeMode get themeMode {
     switch (themeModeIndex) {
       case 1:
@@ -152,6 +184,8 @@ class AppSettings {
     String? embeddingModel,
     int? languageIndex,
     int? summaryVerbosityIndex,
+    int? chatAnswerLengthIndex,
+    int? chatKnowledgeSourceIndex,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -169,6 +203,8 @@ class AppSettings {
       embeddingModel: embeddingModel ?? this.embeddingModel,
       languageIndex: languageIndex ?? this.languageIndex,
       summaryVerbosityIndex: summaryVerbosityIndex ?? this.summaryVerbosityIndex,
+      chatAnswerLengthIndex: chatAnswerLengthIndex ?? this.chatAnswerLengthIndex,
+      chatKnowledgeSourceIndex: chatKnowledgeSourceIndex ?? this.chatKnowledgeSourceIndex,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
@@ -196,6 +232,8 @@ class AppSettings {
       // embeddingApiKey deliberately omitted — same rationale as aiApiKey above.
       'languageIndex': languageIndex,
       'summaryVerbosityIndex': summaryVerbosityIndex,
+      'chatAnswerLengthIndex': chatAnswerLengthIndex,
+      'chatKnowledgeSourceIndex': chatKnowledgeSourceIndex,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -222,6 +260,8 @@ class AppSettings {
       embeddingModel: json['embeddingModel'] is String ? json['embeddingModel'] as String : '',
       languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
       summaryVerbosityIndex: (json['summaryVerbosityIndex'] as num?)?.toInt() ?? 0,
+      chatAnswerLengthIndex: (json['chatAnswerLengthIndex'] as num?)?.toInt() ?? 0,
+      chatKnowledgeSourceIndex: (json['chatKnowledgeSourceIndex'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
@@ -244,8 +284,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
     }
     return AppSettings(
       fontSize: (fields[0] as num?)?.toDouble() ?? 14.0,
-      webZoomPercent: (fields[1] as int?) ?? 100,
-      themeModeIndex: (fields[2] as int?) ?? 1,
+      webZoomPercent: (fields[1] as num?)?.toInt() ?? 100,
+      themeModeIndex: (fields[2] as num?)?.toInt() ?? 1,
       sourcePlatformOrder:
           (fields[3] as List?)?.cast<String>(),
       hiddenSourcePlatforms:
@@ -254,8 +294,10 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       aiBaseUrl: (fields[6] as String?) ?? '',
       aiApiKey: (fields[7] as String?) ?? '',
       aiModel: (fields[8] as String?) ?? 'gpt-4o-mini',
-      languageIndex: (fields[9] as int?) ?? 0,
-      summaryVerbosityIndex: (fields[13] as int?) ?? 0,
+      languageIndex: (fields[9] as num?)?.toInt() ?? 0,
+      summaryVerbosityIndex: (fields[13] as num?)?.toInt() ?? 0,
+      chatAnswerLengthIndex: (fields[14] as num?)?.toInt() ?? 0,
+      chatKnowledgeSourceIndex: (fields[15] as num?)?.toInt() ?? 0,
       embeddingBaseUrl: (fields[10] as String?) ?? '',
       embeddingApiKey: (fields[11] as String?) ?? '',
       embeddingModel: (fields[12] as String?) ?? '',
@@ -265,7 +307,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(16)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -293,6 +335,10 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(12)
       ..write(obj.embeddingModel)
       ..writeByte(13)
-      ..write(obj.summaryVerbosityIndex);
+      ..write(obj.summaryVerbosityIndex)
+      ..writeByte(14)
+      ..write(obj.chatAnswerLengthIndex)
+      ..writeByte(15)
+      ..write(obj.chatKnowledgeSourceIndex);
   }
 }
