@@ -358,9 +358,8 @@ class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {
       case 7:
         return SourcePlatform.youtube;
       case 8:
-        return SourcePlatform.medium;
       case 9:
-        return SourcePlatform.substack;
+        return SourcePlatform.web;
       case 10:
         return SourcePlatform.reddit;
       default:
@@ -386,10 +385,6 @@ class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {
         return 6;
       case SourcePlatform.youtube:
         return 7;
-      case SourcePlatform.medium:
-        return 8;
-      case SourcePlatform.substack:
-        return 9;
       case SourcePlatform.reddit:
         return 10;
     }

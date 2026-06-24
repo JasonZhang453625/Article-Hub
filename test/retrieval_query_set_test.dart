@@ -59,7 +59,7 @@ void main() {
       id: 'flutter',
       url: 'https://example.com/flutter',
       title: 'Flutter State Management Guide',
-      source: SourcePlatform.medium,
+      source: SourcePlatform.web,
       summary: 'A comparison of Riverpod, Bloc, and Provider for managing '
           'application state in Flutter apps.',
       tags: ['flutter', 'riverpod', 'mobile'],

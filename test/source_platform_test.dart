@@ -19,10 +19,6 @@ void main() {
           SourcePlatform.youtube);
       expect(SourcePlatform.fromUrl('https://www.reddit.com/r/flutter'),
           SourcePlatform.reddit);
-      expect(SourcePlatform.fromUrl('https://medium.com/@author/post'),
-          SourcePlatform.medium);
-      expect(SourcePlatform.fromUrl('https://author.substack.com/p/post'),
-          SourcePlatform.substack);
     });
 
     test('detects subdomains of registrable domains', () {

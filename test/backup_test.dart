@@ -98,14 +98,14 @@ void main() {
         articles: [
           Article(
             id: 'a1',
-            url: 'https://medium.com/p/1',
+            url: 'https://example.com/p/1',
             title: 'Post',
-            source: SourcePlatform.medium,
+            source: SourcePlatform.web,
             tags: ['x'],
           ),
         ],
         filterGroups: [
-          FilterGroup(id: 'f1', name: 'G', sourcePlatforms: ['medium']),
+          FilterGroup(id: 'f1', name: 'G', sourcePlatforms: ['web']),
         ],
         folders: const [],
         settings: AppSettings(fontSize: 16),
@@ -116,7 +116,7 @@ void main() {
       expect(restored.schemaVersion, kBackupSchemaVersion);
       expect(restored.articles, hasLength(1));
       expect(restored.articles.first.id, 'a1');
-      expect(restored.articles.first.source, SourcePlatform.medium);
+      expect(restored.articles.first.source, SourcePlatform.web);
       expect(restored.filterGroups, hasLength(1));
       expect(restored.settings?.fontSize, 16);
     });

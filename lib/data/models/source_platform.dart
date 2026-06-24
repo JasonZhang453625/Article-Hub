@@ -9,8 +9,6 @@ enum SourcePlatform {
   xiaohongshu,
   chatgpt,
   youtube,
-  medium,
-  substack,
   reddit;
 
   String get displayName {
@@ -31,10 +29,6 @@ enum SourcePlatform {
         return 'ChatGPT';
       case SourcePlatform.youtube:
         return 'YouTube';
-      case SourcePlatform.medium:
-        return 'Medium';
-      case SourcePlatform.substack:
-        return 'Substack';
       case SourcePlatform.reddit:
         return 'Reddit';
     }
@@ -58,10 +52,6 @@ enum SourcePlatform {
         return 'GPT';
       case SourcePlatform.youtube:
         return 'YT';
-      case SourcePlatform.medium:
-        return 'MED';
-      case SourcePlatform.substack:
-        return 'SUB';
       case SourcePlatform.reddit:
         return 'RD';
     }
@@ -85,10 +75,6 @@ enum SourcePlatform {
         return Icons.bolt_rounded;
       case SourcePlatform.youtube:
         return Icons.play_circle_fill_rounded;
-      case SourcePlatform.medium:
-        return Icons.menu_book_rounded;
-      case SourcePlatform.substack:
-        return Icons.sticky_note_2_rounded;
       case SourcePlatform.reddit:
         return Icons.chat_bubble_rounded;
     }
@@ -112,10 +98,6 @@ enum SourcePlatform {
         return const Color(0xFF10A37F);
       case SourcePlatform.youtube:
         return const Color(0xFFFF0033);
-      case SourcePlatform.medium:
-        return const Color(0xFF1A8917);
-      case SourcePlatform.substack:
-        return const Color(0xFFFF6719);
       case SourcePlatform.reddit:
         return const Color(0xFFFF5700);
     }
@@ -158,14 +140,6 @@ enum SourcePlatform {
 
     if (_matchesAny(host, const ['youtube.com', 'youtu.be'])) {
       return SourcePlatform.youtube;
-    }
-
-    if (_matchesAny(host, const ['medium.com'])) {
-      return SourcePlatform.medium;
-    }
-
-    if (_matchesAny(host, const ['substack.com'])) {
-      return SourcePlatform.substack;
     }
 
     if (_matchesAny(host, const ['reddit.com', 'redd.it'])) {

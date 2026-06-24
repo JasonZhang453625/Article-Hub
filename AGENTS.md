@@ -71,6 +71,10 @@ lib/
 - `processing_pipeline.dart` — Orchestrates the 5-stage knowledge pipeline
 - `backup_service.dart`     — JSON export/import (uses `backup_data.dart`)
 
+## Git rules
+
+- **Don't touch unrelated changes.** Unstaged/untracked files that are NOT part of the current task were likely modified in another session — leave them alone. Only stage and commit files relevant to the current request.
+
 ## Critical conventions
 
 - **Hive adapters are hand-written**, not generated. When adding a field to a model, update the `TypeAdapter` manually — both `read()` and `write()` — and bump the field count in `writeByte()`. New fields MUST use null-aware reads (`fields[N] as Type?`) for backward compatibility with data written by older builds.
