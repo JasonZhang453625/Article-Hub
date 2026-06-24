@@ -39,30 +39,39 @@ class AiService {
     final isChinese = languageHint.contains('Chinese') ||
         languageHint.contains('中文');
 
+    // Content-quality constraints — applied to all modes.
+    final qualityRules = isChinese
+        ? 'Each bullet point MUST mention a specific fact, number, or entity from the article. '
+            'Do NOT use vague phrases like "文章介绍了..." or "本文讨论了..." — go straight to the fact. '
+            'Use ONLY information from the article; do not add external knowledge.'
+        : 'Each bullet point MUST mention a specific fact, number, or entity from the article. '
+            'Do NOT start bullets with "The article discusses...", "This piece covers..." — go straight to the fact. '
+            'Use ONLY information from the article; do not add external knowledge or assumptions.';
+
     if (verbosity == 0) {
       if (isChinese) {
-        return 'Write a brief 80-120 character overview followed by 3 key takeaways as bullet points.';
+        return 'Write a brief 80-120 character overview followed by 3 key takeaways as bullet points. $qualityRules';
       } else {
-        return 'Write a brief 60-100 word overview followed by 3 key takeaways as bullet points.';
+        return 'Write a brief 60-100 word overview followed by 3 key takeaways as bullet points. $qualityRules';
       }
     }
 
     // Detailed mode — adaptive by article length.
     if (isChinese) {
       if (contentLength < 2000) {
-        return 'Write a 100-150 character overview followed by 3 key takeaways as bullet points.';
+        return 'Write a 100-150 character overview followed by 3 key takeaways as bullet points. $qualityRules';
       } else if (contentLength < 8000) {
-        return 'Write a 200-300 character overview followed by 5 key takeaways as bullet points.';
+        return 'Write a 200-300 character overview followed by 5 key takeaways as bullet points. $qualityRules';
       } else {
-        return 'Write a 300-500 character overview followed by 5-7 key takeaways as bullet points.';
+        return 'Write a 300-500 character overview followed by 5-7 key takeaways as bullet points. $qualityRules';
       }
     } else {
       if (contentLength < 1500) {
-        return 'Write a 80-120 word overview followed by 3 key takeaways as bullet points.';
+        return 'Write a 80-120 word overview followed by 3 key takeaways as bullet points. $qualityRules';
       } else if (contentLength < 6000) {
-        return 'Write a 150-250 word overview followed by 5 key takeaways as bullet points.';
+        return 'Write a 150-250 word overview followed by 5 key takeaways as bullet points. $qualityRules';
       } else {
-        return 'Write a 250-400 word overview followed by 5-7 key takeaways as bullet points.';
+        return 'Write a 250-400 word overview followed by 5-7 key takeaways as bullet points. $qualityRules';
       }
     }
   }
@@ -90,7 +99,6 @@ class AiService {
           'content':
               'You are a concise reading assistant. Summarize the article in the same language as the source. '
               '$instruction '
-              'Be factual; do not add opinions.'
               '$langInstruction',
         },
         {
@@ -127,7 +135,6 @@ class AiService {
               'If you cannot access it, summarize based on the title alone — give a brief '
               'description of what this article is likely about. '
               '$instruction '
-              'Be factual; do not add opinions.'
               '$langInstruction',
         },
         {
