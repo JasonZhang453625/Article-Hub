@@ -1,6 +1,6 @@
 # Article-Hub AI-Native 实施路线图
 
-> 配套文档：[`PRD.md`](./PRD.md) · 最后更新：2026-06-16 · 当前版本：V1.6.0
+> 配套文档：[`PRD.md`](./PRD.md) · 最后更新：2026-06-24 · 当前版本：V1.6.0
 
 本路线图围绕一个闭环推进：
 
@@ -124,8 +124,9 @@
 ### 1.4 测试与验收
 
 - [x] 单元测试：状态迁移、重试计数、旧 Hive 数据读取、备份恢复
-- [ ] 服务测试：各阶段成功/失败时状态与错误正确
-- [ ] Widget 测试：待处理空状态、处理中、失败、重试和文件夹建议确认
+- [x] 服务测试：各阶段成功/失败时状态与错误正确（`test/processing_pipeline_test.dart`，覆盖 metadata/content/summary 三阶段成败、retry 计数推进）
+- [x] Widget 测试：待处理空状态、处理中、失败、重试按钮（`test/inbox_screen_widget_test.dart`，6 个场景）
+- [x] `MetadataService.parseHtmlMetadata` 单元覆盖（`test/metadata_service_test.dart`，15 个用例，含 og/twitter/title 优先级与相对 URL 解析）
 - [ ] 设备验收：Android 与 iOS 分享后立即可见，断网或 AI 未配置时不丢失
 
 **阶段验收标准**
