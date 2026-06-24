@@ -58,7 +58,7 @@ class AiService {
         },
       ],
       'temperature': 0.3,
-      'max_tokens': 500,
+      'max_tokens': 1500,
     });
 
     return _postChat(uri, body);
@@ -93,7 +93,7 @@ class AiService {
         },
       ],
       'temperature': 0.3,
-      'max_tokens': 500,
+      'max_tokens': 1500,
     });
 
     return _postChat(uri, body);
@@ -152,6 +152,15 @@ class AiService {
 
       final message = choices[0]['message'] as Map<String, dynamic>?;
       final text = message?['content'] as String?;
+
+      final finishReason = choices[0]['finish_reason'] as String?;
+      if (finishReason != null && finishReason != 'stop') {
+        developer.log(
+          'AI response finish_reason: $finishReason',
+          name: 'article_hub.ai',
+        );
+      }
+
       if (text != null && text.trim().isNotEmpty) return text.trim();
       return null;
     } catch (e, st) {
