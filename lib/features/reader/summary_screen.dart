@@ -239,14 +239,17 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
     );
     final extractor = ContentExtractor();
     final langHint = aiLanguagePrompt(settings.languageIndex);
+    final verbosity = settings.summaryVerbosityIndex;
 
     try {
       String? summary;
       final content = await extractor.extract(widget.article.url);
       if (content != null && content.isNotEmpty) {
-        summary = await ai.summarize(widget.article.title, content, languageHint: langHint);
+        summary = await ai.summarize(widget.article.title, content,
+            languageHint: langHint, verbosity: verbosity);
       } else {
-        summary = await ai.summarizeFromUrl(widget.article.title, widget.article.url, languageHint: langHint);
+        summary = await ai.summarizeFromUrl(widget.article.title, widget.article.url,
+            languageHint: langHint, verbosity: verbosity);
       }
 
       if (summary != null && summary.isNotEmpty && mounted) {

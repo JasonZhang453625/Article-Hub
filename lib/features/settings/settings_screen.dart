@@ -157,6 +157,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
                 const SizedBox(height: 20),
 
+                // ── Summary Style Section ──
+                _SectionLabel(label: 'Summary Style', theme: theme),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Summary Style',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          _ThemeModeButton(
+                            icon: Icons.short_text_rounded,
+                            label: 'Brief',
+                            isSelected: settings.summaryVerbosityIndex == 0,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setSummaryVerbosity(0),
+                            theme: theme,
+                          ),
+                          const SizedBox(width: 10),
+                          _ThemeModeButton(
+                            icon: Icons.notes_rounded,
+                            label: 'Detailed',
+                            isSelected: settings.summaryVerbosityIndex == 1,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setSummaryVerbosity(1),
+                            theme: theme,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
                 // ── Font Size Section ──
                 _SectionLabel(label: 'Font Size', theme: theme),
                 const SizedBox(height: 8),

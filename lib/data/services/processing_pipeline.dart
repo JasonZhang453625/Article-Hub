@@ -192,6 +192,7 @@ class ProcessingPipeline {
       model: _settings.aiModel,
     );
     final langHint = aiLanguagePrompt(_settings.languageIndex);
+    final verbosity = _settings.summaryVerbosityIndex;
 
     try {
       final cachedContent = _contentCache.remove(article.id);
@@ -199,10 +200,10 @@ class ProcessingPipeline {
 
       if (cachedContent != null && cachedContent.isNotEmpty) {
         summary = await ai.summarize(article.title, cachedContent,
-            languageHint: langHint);
+            languageHint: langHint, verbosity: verbosity);
       } else {
         summary = await ai.summarizeFromUrl(article.title, article.url,
-            languageHint: langHint);
+            languageHint: langHint, verbosity: verbosity);
       }
 
       if (summary == null || summary.isEmpty) {

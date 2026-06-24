@@ -44,6 +44,9 @@ class AppSettings {
   /// Language: 0 = follow system, 1 = Chinese, 2 = English
   int languageIndex;
 
+  /// Summary verbosity: 0 = concise (3 bullets), 1 = detailed (adaptive by article length)
+  int summaryVerbosityIndex;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
@@ -56,6 +59,7 @@ class AppSettings {
     this.embeddingApiKey = '',
     this.embeddingModel = '',
     this.languageIndex = 0,
+    this.summaryVerbosityIndex = 0,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -102,7 +106,14 @@ class AppSettings {
 
   List<SourcePlatform> get orderedSourcePlatforms {
     return sourcePlatformOrder
-        .map(SourcePlatform.values.byName)
+        .map((name) {
+          try {
+            return SourcePlatform.values.byName(name);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<SourcePlatform>()
         .toList(growable: false);
   }
 
@@ -140,6 +151,7 @@ class AppSettings {
     String? embeddingApiKey,
     String? embeddingModel,
     int? languageIndex,
+    int? summaryVerbosityIndex,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -156,6 +168,7 @@ class AppSettings {
       embeddingApiKey: embeddingApiKey ?? this.embeddingApiKey,
       embeddingModel: embeddingModel ?? this.embeddingModel,
       languageIndex: languageIndex ?? this.languageIndex,
+      summaryVerbosityIndex: summaryVerbosityIndex ?? this.summaryVerbosityIndex,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
@@ -182,6 +195,7 @@ class AppSettings {
       'embeddingModel': embeddingModel,
       // embeddingApiKey deliberately omitted — same rationale as aiApiKey above.
       'languageIndex': languageIndex,
+      'summaryVerbosityIndex': summaryVerbosityIndex,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -207,6 +221,7 @@ class AppSettings {
       embeddingApiKey: json['embeddingApiKey'] is String ? json['embeddingApiKey'] as String : '',
       embeddingModel: json['embeddingModel'] is String ? json['embeddingModel'] as String : '',
       languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
+      summaryVerbosityIndex: (json['summaryVerbosityIndex'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
@@ -240,6 +255,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       aiApiKey: (fields[7] as String?) ?? '',
       aiModel: (fields[8] as String?) ?? 'gpt-4o-mini',
       languageIndex: (fields[9] as int?) ?? 0,
+      summaryVerbosityIndex: (fields[13] as int?) ?? 0,
       embeddingBaseUrl: (fields[10] as String?) ?? '',
       embeddingApiKey: (fields[11] as String?) ?? '',
       embeddingModel: (fields[12] as String?) ?? '',
@@ -249,7 +265,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(13)
+      ..writeByte(14)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -275,6 +291,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(11)
       ..write(obj.embeddingApiKey)
       ..writeByte(12)
-      ..write(obj.embeddingModel);
+      ..write(obj.embeddingModel)
+      ..writeByte(13)
+      ..write(obj.summaryVerbosityIndex);
   }
 }

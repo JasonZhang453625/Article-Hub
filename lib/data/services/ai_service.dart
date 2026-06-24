@@ -28,18 +28,59 @@ class AiService {
   bool get isConfigured =>
       baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
 
-  Future<String?> summarize(String title, String content, {String languageHint = ''}) async {
+  /// Build a language- and length-aware summary instruction.
+  ///
+  /// [contentLength] is the character count of the extracted article body.
+  /// [languageHint] is the user's language preference string.
+  /// [verbosity] controls detail level: 0 = concise (3 bullets),
+  ///   1 = detailed (adaptive by article length, 3-7 bullets).
+  static String summaryInstruction(
+      int contentLength, String languageHint, int verbosity) {
+    final isChinese = languageHint.contains('Chinese') ||
+        languageHint.contains('中文');
+
+    if (verbosity == 0) {
+      if (isChinese) {
+        return 'Write a brief 80-120 character overview followed by 3 key takeaways as bullet points.';
+      } else {
+        return 'Write a brief 60-100 word overview followed by 3 key takeaways as bullet points.';
+      }
+    }
+
+    // Detailed mode — adaptive by article length.
+    if (isChinese) {
+      if (contentLength < 2000) {
+        return 'Write a 100-150 character overview followed by 3 key takeaways as bullet points.';
+      } else if (contentLength < 8000) {
+        return 'Write a 200-300 character overview followed by 5 key takeaways as bullet points.';
+      } else {
+        return 'Write a 300-500 character overview followed by 5-7 key takeaways as bullet points.';
+      }
+    } else {
+      if (contentLength < 1500) {
+        return 'Write a 80-120 word overview followed by 3 key takeaways as bullet points.';
+      } else if (contentLength < 6000) {
+        return 'Write a 150-250 word overview followed by 5 key takeaways as bullet points.';
+      } else {
+        return 'Write a 250-400 word overview followed by 5-7 key takeaways as bullet points.';
+      }
+    }
+  }
+
+  Future<String?> summarize(String title, String content, {String languageHint = '', int verbosity = 0}) async {
     if (!isConfigured) return null;
 
     final uri = _chatUri();
 
-    final truncatedContent = content.length > 8000
-        ? '${content.substring(0, 8000)}...'
+    final truncatedContent = content.length > 15000
+        ? '${content.substring(0, 15000)}...'
         : content;
 
     final langInstruction = languageHint.isNotEmpty
         ? '\n$languageHint'
         : '';
+
+    final instruction = summaryInstruction(truncatedContent.length, languageHint, verbosity);
 
     final body = jsonEncode({
       'model': model,
@@ -48,8 +89,8 @@ class AiService {
           'role': 'system',
           'content':
               'You are a concise reading assistant. Summarize the article in the same language as the source. '
-              'Format: a one-sentence overview followed by 3-5 bullet points of key takeaways. '
-              'Keep the total under 200 words. Be factual; do not add opinions.'
+              '$instruction '
+              'Be factual; do not add opinions.'
               '$langInstruction',
         },
         {
@@ -64,7 +105,7 @@ class AiService {
     return _postChat(uri, body);
   }
 
-  Future<String?> summarizeFromUrl(String title, String url, {String languageHint = ''}) async {
+  Future<String?> summarizeFromUrl(String title, String url, {String languageHint = '', int verbosity = 0}) async {
     if (!isConfigured) return null;
 
     final uri = _chatUri();
@@ -72,6 +113,8 @@ class AiService {
     final langInstruction = languageHint.isNotEmpty
         ? '\n$languageHint'
         : '';
+
+    final instruction = summaryInstruction(4000, languageHint, verbosity);
 
     final body = jsonEncode({
       'model': model,
@@ -82,9 +125,9 @@ class AiService {
               'You are a concise reading assistant. The user will give you a URL and title. '
               'If you can access the URL, read the content and summarize it. '
               'If you cannot access it, summarize based on the title alone — give a brief '
-              'one-sentence description of what this article is likely about. '
-              'Format: a one-sentence overview followed by 3-5 bullet points. '
-              'Keep the total under 200 words. Be factual; do not add opinions.'
+              'description of what this article is likely about. '
+              '$instruction '
+              'Be factual; do not add opinions.'
               '$langInstruction',
         },
         {

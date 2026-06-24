@@ -80,6 +80,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(languageIndex: index));
   }
 
+  Future<void> setSummaryVerbosity(int index) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(summaryVerbosityIndex: index));
+  }
+
   Future<void> setEmbeddingConfig({
     String? baseUrl,
     String? apiKey,
@@ -202,6 +207,13 @@ final visibleSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
 final languageIndexProvider = Provider<int>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
     data: (s) => s.languageIndex,
+    orElse: () => 0,
+  );
+});
+
+final summaryVerbosityProvider = Provider<int>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.summaryVerbosityIndex,
     orElse: () => 0,
   );
 });
