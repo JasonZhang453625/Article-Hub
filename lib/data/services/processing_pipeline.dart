@@ -9,6 +9,7 @@ import '../../shared/providers/settings_providers.dart';
 import 'ai_service.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
+import 'http_client.dart';
 import 'index_service.dart';
 import 'metadata_service.dart';
 
@@ -30,6 +31,10 @@ class ProcessingPipeline {
   final ContentExtractor _extractor;
   final EmbeddingService? _embedding;
   final IndexService? _index;
+
+  /// Per-article fetched page, scoped to a single pipeline run.
+  /// Stage 1 (metadata) fetches and caches; Stage 2 (content) reuses.
+  final Map<String, FetchedPage> _fetchedPageCache = <String, FetchedPage>{};
 
   /// Per-article extracted content, scoped to a single pipeline run.
   /// Cleared as soon as the summary stage finishes (or fails).
@@ -117,6 +122,21 @@ class ProcessingPipeline {
   Future<Article> _stageMetadata(Article article) async {
     _notifyStage(article, ProcessingStage.metadata);
     try {
+      // Fetch the page once and cache it for Stage 2.
+      final http = AppHttpClient();
+      final page = await http.fetch(article.url);
+      http.dispose();
+      if (page != null) {
+        _fetchedPageCache[article.id] = page;
+        final meta = _metadata.fromFetchedPage(page, article.url);
+        return article.copyWith(
+          title: (meta.title != null && meta.title!.isNotEmpty)
+              ? meta.title!
+              : article.title,
+          coverImageUrl: meta.imageUrl ?? article.coverImageUrl,
+        );
+      }
+      // If fetch failed, fall back to direct fetch (may still work for some URLs).
       final meta = await _metadata.fetch(article.url);
       return article.copyWith(
         title: (meta.title != null && meta.title!.isNotEmpty)
@@ -132,7 +152,19 @@ class ProcessingPipeline {
   Future<Article> _stageContent(Article article) async {
     _notifyStage(article, ProcessingStage.content);
     try {
-      final content = await _extractor.extract(article.url);
+      String? content;
+
+      // Try to reuse the page fetched in Stage 1.
+      final cachedPage = _fetchedPageCache.remove(article.id);
+      if (cachedPage != null) {
+        content = _extractor.fromFetchedPage(cachedPage);
+      }
+
+      // Fallback to a fresh fetch if cached page wasn't available or extraction failed.
+      if (content == null || content.isEmpty) {
+        content = await _extractor.extract(article.url);
+      }
+
       if (content == null || content.isEmpty) {
         return _fail(article, 'content', 'Could not extract page content');
       }
@@ -336,6 +368,7 @@ class ProcessingPipeline {
     final msg = '$stage: $error';
     developer.log('pipeline failed: $msg', name: 'article_hub.pipeline');
     // Drop any cached content for this article — we won't get to use it.
+    _fetchedPageCache.remove(article.id);
     _contentCache.remove(article.id);
     return article.copyWith(
       processingStatus: ProcessingStatus.failed,
@@ -345,6 +378,7 @@ class ProcessingPipeline {
   }
 
   void dispose() {
+    _fetchedPageCache.clear();
     _contentCache.clear();
     _metadata.dispose();
     _extractor.dispose();

@@ -2,7 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:article_hub/data/services/http_client.dart';
 import 'package:article_hub/data/services/metadata_service.dart';
+
+/// Helper to create an [AppHttpClient] backed by a [MockClient].
+AppHttpClient mockHttp(Future<http.Response> Function(http.Request) handler) {
+  return AppHttpClient(client: MockClient(handler));
+}
 
 /// Phase 1.4 unit tests for [parseHtmlMetadata] and [MetadataService.fetch].
 ///
@@ -113,7 +119,7 @@ void main() {
   group('MetadataService.fetch: graceful failure', () {
     test('returns empty metadata on non-200 response', () async {
       final svc = MetadataService(
-        client: MockClient((_) async => http.Response('not found', 404)),
+        http: mockHttp((_) async => http.Response('not found', 404)),
       );
       final meta = await svc.fetch('https://example.com/missing');
       expect(meta.isEmpty, isTrue);
@@ -122,7 +128,7 @@ void main() {
 
     test('returns empty metadata on non-HTML content type', () async {
       final svc = MetadataService(
-        client: MockClient((_) async => http.Response(
+        http: mockHttp((_) async => http.Response(
               '{"title":"json"}',
               200,
               headers: {'content-type': 'application/json'},
@@ -135,7 +141,7 @@ void main() {
 
     test('returns empty metadata on network error', () async {
       final svc = MetadataService(
-        client: MockClient((_) async => throw Exception('boom')),
+        http: mockHttp((_) async => throw Exception('boom')),
       );
       final meta = await svc.fetch('https://example.com/');
       expect(meta.isEmpty, isTrue);
@@ -150,7 +156,7 @@ void main() {
         </head></html>
       ''';
       final svc = MetadataService(
-        client: MockClient((_) async => http.Response(
+        http: mockHttp((_) async => http.Response(
               html,
               200,
               headers: {'content-type': 'text/html; charset=utf-8'},

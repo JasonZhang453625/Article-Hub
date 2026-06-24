@@ -9,9 +9,15 @@ import 'package:article_hub/data/models/settings.dart';
 import 'package:article_hub/data/models/source_platform.dart';
 import 'package:article_hub/data/repositories/passage_repository.dart';
 import 'package:article_hub/data/services/content_extractor.dart';
+import 'package:article_hub/data/services/http_client.dart';
 import 'package:article_hub/data/services/metadata_service.dart';
 import 'package:article_hub/data/services/processing_pipeline.dart';
 import 'package:article_hub/shared/providers/passage_providers.dart';
+
+/// Helper to create an [AppHttpClient] backed by a [MockClient].
+AppHttpClient mockHttp(Future<http.Response> Function(http.Request) handler) {
+  return AppHttpClient(client: MockClient(handler));
+}
 
 /// Phase 1.4 service tests for [ProcessingPipeline].
 ///
@@ -69,10 +75,10 @@ void main() {
         articles: notifier,
         settings: null,
         metadata: MetadataService(
-          client: MockClient((_) async => htmlResponse(html)),
+          http: mockHttp((_) async => htmlResponse(html)),
         ),
         extractor: ContentExtractor(
-          client: MockClient(
+          http: mockHttp(
               (_) async => htmlResponse('<html><body><p>body</p></body></html>')),
         ),
       );
@@ -92,10 +98,10 @@ void main() {
         articles: notifier,
         settings: null,
         metadata: MetadataService(
-          client: MockClient((_) async => throw Exception('dns failure')),
+          http: mockHttp((_) async => throw Exception('dns failure')),
         ),
         extractor: ContentExtractor(
-          client: MockClient((_) async => http.Response('boom', 500)),
+          http: mockHttp((_) async => http.Response('boom', 500)),
         ),
       );
 
@@ -114,11 +120,11 @@ void main() {
         articles: notifier,
         settings: null,
         metadata: MetadataService(
-          client: MockClient((_) async =>
+          http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
         ),
         extractor: ContentExtractor(
-          client: MockClient((_) async => http.Response('nope', 500)),
+          http: mockHttp((_) async => http.Response('nope', 500)),
         ),
       );
 
@@ -135,11 +141,11 @@ void main() {
         articles: notifier,
         settings: null,
         metadata: MetadataService(
-          client: MockClient((_) async =>
+          http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
         ),
         extractor: ContentExtractor(
-          client: MockClient(
+          http: mockHttp(
               (_) async => htmlResponse('<html><body></body></html>')),
         ),
       );
@@ -158,11 +164,11 @@ void main() {
         articles: notifier,
         settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
         metadata: MetadataService(
-          client: MockClient((_) async =>
+          http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
         ),
         extractor: ContentExtractor(
-          client: MockClient((_) async => htmlResponse(_longArticleHtml)),
+          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
         ),
       );
 
@@ -181,11 +187,11 @@ void main() {
         articles: notifier,
         settings: null,
         metadata: MetadataService(
-          client: MockClient((_) async =>
+          http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
         ),
         extractor: ContentExtractor(
-          client: MockClient((_) async => http.Response('nope', 500)),
+          http: mockHttp((_) async => http.Response('nope', 500)),
         ),
       );
 
@@ -213,11 +219,11 @@ void main() {
         settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
         folders: const <Folder>[],
         metadata: MetadataService(
-          client: MockClient((_) async =>
+          http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
         ),
         extractor: ContentExtractor(
-          client: MockClient((_) async => htmlResponse(_longArticleHtml)),
+          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
         ),
       );
 

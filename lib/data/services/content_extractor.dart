@@ -1,52 +1,33 @@
 import 'dart:developer' as developer;
 import 'package:html/parser.dart' as html_parser;
-import 'package:http/http.dart' as http;
+
+import 'http_client.dart';
 
 class ContentExtractor {
-  final http.Client _client;
-  final Duration timeout;
+  final AppHttpClient _http;
 
-  ContentExtractor({http.Client? client, this.timeout = const Duration(seconds: 10)})
-      : _client = client ?? http.Client();
+  ContentExtractor({AppHttpClient? http}) : _http = http ?? AppHttpClient();
 
   Future<String?> extract(String url) async {
-    try {
-      final response = await _client
-          .get(
-            Uri.parse(url),
-            headers: const {
-              'User-Agent':
-                  'Mozilla/5.0 (compatible; Article-Hub/1.0; +https://github.com)',
-              'Accept': 'text/html,application/xhtml+xml',
-            },
-          )
-          .timeout(timeout);
+    final page = await _http.fetch(url);
+    developer.log(
+      'status: ${page?.statusCode}, url: $url',
+      name: 'article_hub.extractor',
+    );
+    if (page == null || !page.isHtml) return null;
 
-      developer.log(
-        'status: ${response.statusCode}, url: $url',
-        name: 'article_hub.extractor',
-      );
-      if (response.statusCode != 200) return null;
+    final text = _extractText(page.body);
+    developer.log(
+      'extracted text length: ${text?.length ?? 0}',
+      name: 'article_hub.extractor',
+    );
+    return text;
+  }
 
-      final contentType = response.headers['content-type'] ?? '';
-      developer.log('content-type: $contentType', name: 'article_hub.extractor');
-      if (!contentType.contains('html') && contentType.isNotEmpty) return null;
-
-      final text = _extractText(response.body);
-      developer.log(
-        'extracted text length: ${text?.length ?? 0}',
-        name: 'article_hub.extractor',
-      );
-      return text;
-    } catch (e, st) {
-      developer.log(
-        'extract error',
-        name: 'article_hub.extractor',
-        error: e,
-        stackTrace: st,
-      );
-      return null;
-    }
+  /// Extract content from an already-fetched page (avoids a second HTTP call).
+  String? fromFetchedPage(FetchedPage page) {
+    if (!page.isHtml) return null;
+    return _extractText(page.body);
   }
 
   String? _extractText(String htmlBody) {
@@ -97,5 +78,5 @@ class ContentExtractor {
         .trim();
   }
 
-  void dispose() => _client.close();
+  void dispose() => _http.dispose();
 }

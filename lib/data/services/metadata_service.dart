@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:html/parser.dart' as html_parser;
-import 'package:http/http.dart' as http;
+
+import 'http_client.dart';
 
 /// Lightweight page metadata extracted from a URL's HTML.
 class PageMetadata {
@@ -63,35 +64,21 @@ String? _resolveUrl(String? raw, String baseUrl) {
 /// [PageMetadata] on any network error, timeout, non-HTML response, or
 /// non-200 status, so callers can fall back gracefully.
 class MetadataService {
-  final http.Client _client;
-  final Duration timeout;
+  final AppHttpClient _http;
 
-  MetadataService({http.Client? client, this.timeout = const Duration(seconds: 8)})
-      : _client = client ?? http.Client();
+  MetadataService({AppHttpClient? http}) : _http = http ?? AppHttpClient();
 
   Future<PageMetadata> fetch(String url) async {
-    try {
-      final response = await _client.get(
-        Uri.parse(url),
-        headers: const {
-          'User-Agent':
-              'Mozilla/5.0 (compatible; Article-Hub/1.0; +https://github.com)',
-          'Accept': 'text/html,application/xhtml+xml',
-        },
-      ).timeout(timeout);
-
-      if (response.statusCode != 200) return const PageMetadata();
-
-      final contentType = response.headers['content-type'] ?? '';
-      if (!contentType.contains('html') && contentType.isNotEmpty) {
-        return const PageMetadata();
-      }
-
-      return parseHtmlMetadata(response.body, url);
-    } catch (_) {
-      return const PageMetadata();
-    }
+    final page = await _http.fetch(url);
+    if (page == null || !page.isHtml) return const PageMetadata();
+    return parseHtmlMetadata(page.body, url);
   }
 
-  void dispose() => _client.close();
+  /// Extract metadata from an already-fetched page (avoids a second HTTP call).
+  PageMetadata fromFetchedPage(FetchedPage page, String baseUrl) {
+    if (!page.isHtml) return const PageMetadata();
+    return parseHtmlMetadata(page.body, baseUrl);
+  }
+
+  void dispose() => _http.dispose();
 }
