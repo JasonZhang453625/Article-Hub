@@ -51,3 +51,6 @@ app.*.map.json
 
 # Playwright MCP working dir (local tooling artifacts)
 .playwright-mcp/
+
+# Local scratch / working dir
+/tmp/

@@ -10,7 +10,15 @@
       "Bash(flutter run:*)",
       "Bash(flutter devices:*)",
       "Bash(flutter emulators:*)",
-      "Bash(flutter doctor:*)"
+      "Bash(flutter doctor:*)",
+      "Bash(xargs echo \"markers:\")",
+      "Bash(git push *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(git stash *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git add *)",
+      "Bash(git fetch *)",
+      "Bash(git tag *)"
     ]
   }
 }
