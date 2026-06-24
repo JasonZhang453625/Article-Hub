@@ -1,70 +1,98 @@
 # Article-Hub
 
-Article-Hub is a cross-platform Flutter app for collecting, organizing, and revisiting articles, videos, and posts from the platforms you actually use — X, Bilibili, Xiaohongshu (Rednote), WeChat, Zhihu, ChatGPT, YouTube, Medium, Substack, Reddit, and the wider web.
+Article-Hub is a local-first, AI-native personal knowledge inbox:
 
-Paste a link and it's saved. The app detects the source platform automatically, lets you tag and annotate it, and keeps everything searchable in one place — so the things you meant to read later are actually findable later.
+> **Share it into knowledge. Ask to find it again. Always trace it back to the source.**
 
-## Why
+The product is designed for people who save useful articles, videos, and posts across WeChat, Zhihu, Bilibili, Xiaohongshu, X, YouTube, and the wider web, but rarely find or reuse them later.
 
-Great content is scattered across a dozen apps that don't talk to each other. Your WeChat favorites, Bilibili watch-later, X bookmarks, and browser tabs all live in separate silos with no tags, no notes, and no unified search. Article-Hub turns that fragmented collection into a single, searchable personal library that you own.
+The target workflow is:
 
-## Features
+```text
+Share a link
+  → process it safely
+  → create one clean AI summary knowledge card
+  → tag and index it locally
+  → ask questions across the whole library
+  → open cited cards and original sources
+```
 
-- **One-step save** — paste any URL; the source platform is detected automatically from its domain
-- **11 recognized sources** — WeChat, Zhihu, X, Bilibili, Xiaohongshu, ChatGPT, YouTube, Medium, Substack, Reddit, plus generic web, each with its own icon and accent color
-- **Organize** — free-form tags, notes, favorites, and automatic timestamps
-- **Search & filter** — full-text search across titles, tags, notes, and URLs; filter by source; build reusable custom filter groups (tag keywords + source platforms)
-- **Built-in reader** — open saved links in an in-app WebView with zoom, progress, and smart deep-link handling, with a one-tap fallback to the system browser
-- **Backup & restore** — export all your data (articles, filters, settings) to a JSON file and import it back; your data is never locked in
-- **Personalization** — light / dark / system themes, adjustable global font size, configurable reader zoom, and reorderable / hideable source chips
-- **Local-first & private** — data is stored on-device with Hive; nothing is uploaded or tracked
+Article-Hub remains local-first and BYOK. Content, metadata, and future vector indexes stay on the user's device. AI requests go directly to the model provider configured by the user; Article-Hub does not operate an AI content backend.
 
-## Getting started
+## Current Status
 
-Requires the Flutter SDK (Dart 3.11+).
+The current app is the foundation for the AI-native workflow. It already supports:
+
+- **Local-first storage** with Hive and backward-compatible hand-written adapters
+- **11 recognized sources**: WeChat, Zhihu, X, Bilibili, Xiaohongshu, ChatGPT, YouTube, Medium, Substack, Reddit, and generic web
+- **Multiple capture paths**: manual URL entry, bulk URL entry, clipboard detection, and Android system sharing
+- **Metadata and content processing**: title/cover extraction, article text extraction, and BYOK AI summaries
+- **Knowledge-card reading**: a summary-first page with a direct path to the original page
+- **Organization**: tags, notes, favorites, folders, nested folders, filters, and search
+- **Built-in reader**: in-app WebView with a system-browser fallback
+- **Portable data**: JSON backup and restore; API keys are excluded from exports
+
+The following AI-native capabilities are **planned, not yet implemented**:
+
+- A reliable processing inbox with visible failures and retries
+- Automatic tags and folder suggestions
+- BYOK embeddings and a rebuildable local summary index
+- Whole-library RAG answers with cited knowledge cards
+- A new primary navigation: Chat / Library / Processing / Settings
+
+## Product Direction
+
+The product is moving from a list-first bookmark manager with optional summaries to an AI-native knowledge workflow:
+
+- A shared link must be saved before any network or AI work begins.
+- One article becomes one normalized AI summary knowledge card and one retrieval chunk.
+- The home screen becomes a conversation with the entire local knowledge library.
+- Every generated answer must cite real saved cards.
+- If the saved summaries do not contain enough information, the app must say so instead of inventing an answer.
+- Original pages remain available for verification and deeper reading.
+
+See [`docs/OVERVIEW.md`](docs/OVERVIEW.md) for the product overview, [`docs/PRD.md`](docs/PRD.md) for product requirements, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased implementation plan.
+
+## Getting Started
+
+Requires Flutter with Dart 3.11+.
 
 ```bash
 flutter pub get
 flutter run
 ```
 
-Run the analyzer and tests:
+Run checks:
 
 ```bash
 flutter analyze
 flutter test
 ```
 
-## Project structure
-
-```
-lib/
-├── config/        # Theme and routing
-├── data/
-│   ├── models/        # Article, SourcePlatform, AppSettings, FilterGroup
-│   ├── repositories/  # Hive-backed persistence
-│   └── services/      # Backup export/import
-├── features/      # Feature-first screens
-│   ├── home/          # List, search, and filtering
-│   ├── add_passage/   # Add an article
-│   ├── detail/        # Edit details
-│   ├── reader/        # In-app reader
-│   └── settings/      # Settings and backup
-└── shared/        # Cross-feature providers, utils, and widgets
-```
-
-## Tech stack
+## Architecture
 
 | Concern | Choice |
-|---------|--------|
-| Framework | Flutter (Dart 3.11) |
+|---|---|
+| Framework | Flutter |
 | State management | Riverpod |
-| Local storage | Hive (hand-written `TypeAdapter`s for backward-compatible schemas) |
-| Routing | go_router with custom transitions |
-| In-app reader | flutter_inappwebview |
+| Local storage | Hive with hand-written `TypeAdapter`s |
+| Routing | go_router |
+| Built-in reader | flutter_inappwebview |
+| AI integration | User-configured OpenAI-compatible API |
+| Backend | None |
 
-## Roadmap
+```text
+lib/
+├── config/        # Theme and routing
+├── data/          # Models, repositories, and processing services
+├── features/      # Feature-first screens
+└── shared/        # Shared providers, utilities, and widgets
+```
 
-Article-Hub is evolving from a local collection tool into a cross-device, AI-assisted reading hub — AI summaries that let you read the gist without opening the original page, multi-device cloud sync, and richer organization and import.
+## Privacy
 
-See [`docs/OVERVIEW.md`](docs/OVERVIEW.md) for a full product overview, [`docs/PRD.md`](docs/PRD.md) for requirements, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased plan.
+- Core data stays on the device.
+- Article-Hub does not operate a content or AI proxy backend.
+- AI content is sent only to services explicitly configured by the user.
+- API keys are stored locally and excluded from JSON backups.
+- Planned embeddings and vector indexes are local derived data and will also be excluded from backups.

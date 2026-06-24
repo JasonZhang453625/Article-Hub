@@ -54,3 +54,12 @@ app.*.map.json
 
 # Local scratch / working dir
 /tmp/
+
+# Personal / research artifacts (not for public repo)
+/docs/简历_项目经历_优化版.md
+/docs/调研问卷.docx
+/docs/调研分析报告.md
+/docs/调研问题映射表.md
+/docs/用户调研问卷.docx
+/docs/FIGMA原型训练手册.md
+/docs/366414913_*.xlsx
