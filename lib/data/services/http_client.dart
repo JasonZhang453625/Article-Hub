@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert' show utf8, latin1;
+import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
+import 'package:charset/charset.dart';
 
 /// A response from a single HTTP fetch, reusable by multiple consumers.
 class FetchedPage {
@@ -49,20 +52,122 @@ class AppHttpClient {
           .get(Uri.parse(url), headers: _browserHeaders)
           .timeout(timeout);
 
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        developer.log(
+          'non-200 status: ${response.statusCode}, url: $url',
+          name: 'article_hub.http',
+        );
+        return null;
+      }
 
       final ct = response.headers['content-type'] ?? '';
-      if (!ct.contains('html') && ct.isNotEmpty) return null;
+      if (!ct.contains('html') && ct.isNotEmpty) {
+        developer.log(
+          'non-HTML content-type: $ct, url: $url',
+          name: 'article_hub.http',
+        );
+        return null;
+      }
+
+      final body = _decodeBody(response);
 
       return FetchedPage(
         statusCode: response.statusCode,
         contentType: ct.isEmpty ? null : ct,
-        body: response.body,
+        body: body,
       );
-    } catch (_) {
+    } on TimeoutException {
+      developer.log('timeout ($timeout), url: $url', name: 'article_hub.http');
+      return null;
+    } catch (e) {
+      developer.log('fetch error: $e, url: $url', name: 'article_hub.http');
       return null;
     }
   }
 
   void dispose() => _client.close();
+
+  String _decodeBody(http.Response response) {
+    final ct = response.headers['content-type'] ?? '';
+    final bytes = response.bodyBytes;
+
+    // 1. Check HTTP Content-Type header for charset.
+    var charset = _extractCharset(ct);
+
+    // 2. If not in header, check HTML <meta> tags (first 1024 bytes).
+    if (charset == null) {
+      final head = latin1.decode(bytes.sublist(0, bytes.length.clamp(0, 1024)));
+      charset = _extractCharset(head);
+    }
+
+    // 3. Decode with detected charset.
+    if (charset != null) {
+      return _decodeWithCharset(bytes, charset);
+    }
+
+    // 4. Default: try UTF-8, fall back to latin1.
+    try {
+      return utf8.decode(bytes);
+    } catch (_) {
+      return latin1.decode(bytes);
+    }
+  }
+
+  String? _extractCharset(String text) {
+    // Match Content-Type charset: charset=xxx or charset="xxx"
+    final m1 = RegExp(r'charset=["\x27]?([^\s;"\x27]+)', caseSensitive: false).firstMatch(text);
+    if (m1 != null) return m1.group(1)!.toLowerCase().replaceAll('"', '').replaceAll("'", '');
+
+    // Match <meta charset="xxx">
+    final m2 = RegExp(r'<meta[^>]+charset=["\x27]?([^\s;"\x27>]+)', caseSensitive: false).firstMatch(text);
+    if (m2 != null) return m2.group(1)!.toLowerCase().replaceAll('"', '').replaceAll("'", '');
+
+    return null;
+  }
+
+  String _decodeWithCharset(List<int> bytes, String charset) {
+    // Normalize charset aliases.
+    final normalized = charset
+        .replaceAll(RegExp(r'[-_]'), '')
+        .replaceAll('windows1252', 'latin1')
+        .replaceAll('iso88591', 'latin1');
+
+    // GBK / GB2312 / GB18030 — all use the charset package.
+    if (normalized.contains('gbk') || normalized.contains('gb2312') || normalized.contains('gb18030')) {
+      try {
+        return gbk.decode(bytes);
+      } catch (_) {}
+    }
+
+    // Big5 (Traditional Chinese) — not in charset package, try UTF-8 fallback.
+
+    // Shift_JIS (Japanese).
+    if (normalized.contains('shiftjis') || normalized.contains('sjis')) {
+      try {
+        return shiftJis.decode(bytes);
+      } catch (_) {}
+    }
+
+    // EUC-KR (Korean).
+    if (normalized.contains('euckr')) {
+      try {
+        return eucKr.decode(bytes);
+      } catch (_) {}
+    }
+
+    // UTF-8 variants.
+    if (normalized.contains('utf8')) {
+      try {
+        return utf8.decode(bytes);
+      } catch (_) {}
+    }
+
+    // Everything else (latin1, iso-8859-x, windows-125x): try UTF-8 first,
+    // fall back to latin1 (byte-transparent).
+    try {
+      return utf8.decode(bytes);
+    } catch (_) {
+      return latin1.decode(bytes);
+    }
+  }
 }
