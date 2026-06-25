@@ -123,19 +123,23 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     // screen is popped throws (and was previously swallowed, silently
     // dropping the summary).
     final settings = ref.read(settingsProvider).valueOrNull;
+    final embedding = ref.read(embeddingServiceProvider);
+    final index = ref.read(indexServiceProvider);
 
     if (mounted) {
       Navigator.of(context).pop();
     }
 
     // Fire-and-forget: summarize in background if AI is configured.
-    _summarizeInBackground(article, notifier, settings);
+    _summarizeInBackground(article, notifier, settings, embedding, index);
   }
 
   void _summarizeInBackground(
     Article article,
     ArticlesNotifier notifier,
     AppSettings? settings,
+    EmbeddingService? embedding,
+    IndexService index,
   ) {
     if (settings == null) return;
     if (settings.aiBaseUrl.trim().isEmpty ||
@@ -195,8 +199,6 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
         await notifier.update(updated);
 
         // Update vector index if embedding is configured.
-        final embedding = ref.read(embeddingServiceProvider);
-        final index = ref.read(indexServiceProvider);
         if (embedding != null && result.summary!.isNotEmpty) {
           final input = IndexService.buildEmbeddingInput(updated);
           final embedResult = await embedding.embed(input);
