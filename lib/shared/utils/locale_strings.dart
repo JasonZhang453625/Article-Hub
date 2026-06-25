@@ -64,9 +64,6 @@ class LocaleStrings {
   final String generateSummary;
   final String generating;
   final String summaryFailed;
-  final String suggestedFolder;
-  final String move;
-  final String dismiss;
   final String readOriginal;
   final String refresh;
   final String processing;
@@ -267,9 +264,6 @@ class LocaleStrings {
     required this.generateSummary,
     required this.generating,
     required this.summaryFailed,
-    required this.suggestedFolder,
-    required this.move,
-    required this.dismiss,
     required this.readOriginal,
     required this.refresh,
     required this.processing,
@@ -425,7 +419,7 @@ class LocaleStrings {
     appTitle: 'Article-Hub',
     tabChat: 'Chat',
     tabKnowledge: 'Knowledge',
-    tabInbox: 'Inbox',
+    tabInbox: 'Progress',
     tabSettings: 'Settings',
     searchHint: 'Search articles, tags or notes...',
     filterAll: 'All',
@@ -485,9 +479,6 @@ class LocaleStrings {
     generateSummary: 'Generate Summary',
     generating: 'Generating...',
     summaryFailed: 'Summary generation failed. Check your AI settings.',
-    suggestedFolder: 'Suggested folder',
-    move: 'Move',
-    dismiss: 'Dismiss',
     readOriginal: 'Read Original',
     refresh: 'Refresh',
     processing: 'Processing',
@@ -502,9 +493,9 @@ class LocaleStrings {
     indexing: 'Indexing',
     retry: 'Retry',
     deleteArticleQ: 'Delete article?',
-    removeFromInbox: 'Remove from inbox?',
-    inboxEmpty: 'Inbox is empty',
-    inboxEmptyDesc: 'Shared links will appear here while processing.',
+    removeFromInbox: 'Remove from progress?',
+    inboxEmpty: 'No articles in progress',
+    inboxEmptyDesc: 'Articles being processed will appear here.',
     configureAiFirst: 'Please configure your AI provider in Settings first.',
     knowledgeBaseEmpty: 'Your knowledge base is empty. Process some articles first, then come back to ask questions.',
     notEnoughInfo: 'I couldn\'t find enough relevant information in your knowledge base to answer this question.',
@@ -629,7 +620,7 @@ class LocaleStrings {
     appTitle: '文章中心',
     tabChat: '对话',
     tabKnowledge: '知识库',
-    tabInbox: '收件箱',
+    tabInbox: '进程',
     tabSettings: '设置',
     searchHint: '搜索文章、标签或笔记…',
     filterAll: '全部',
@@ -689,9 +680,6 @@ class LocaleStrings {
     generateSummary: '生成摘要',
     generating: '生成中…',
     summaryFailed: '摘要生成失败，请检查 AI 设置。',
-    suggestedFolder: '建议文件夹',
-    move: '移动',
-    dismiss: '忽略',
     readOriginal: '阅读原文',
     refresh: '刷新',
     processing: '处理中',
@@ -706,9 +694,9 @@ class LocaleStrings {
     indexing: '索引中',
     retry: '重试',
     deleteArticleQ: '删除文章？',
-    removeFromInbox: '从收件箱移除？',
-    inboxEmpty: '收件箱为空',
-    inboxEmptyDesc: '共享链接在处理期间会显示在此处。',
+    removeFromInbox: '从进程移除？',
+    inboxEmpty: '无处理中的文章',
+    inboxEmptyDesc: '正在处理的文章会显示在此处。',
     configureAiFirst: '请先在设置中配置 AI。',
     knowledgeBaseEmpty: '知识库为空。请先处理一些文章，然后再来提问。',
     notEnoughInfo: '在知识库中找不到足够的相关信息来回答此问题。',

@@ -34,9 +34,9 @@ Article-Hub 的目标不是帮助用户保存更多，而是让保存过的内�
 
 ```text
 跨平台分享链接
-  → 待处理箱
+  → 进程页
   → AI 摘要知识卡片
-  → 自动标签 + 文件夹建议
+  → 自动标签 + 自动文件夹分类
   → 本地向量索引
   → 首页全库对话
   → 引用知识卡片
@@ -45,7 +45,7 @@ Article-Hub 的目标不是帮助用户保存更多，而是让保存过的内�
 
 ### 1. 分享：低摩擦进入
 
-用户在其他 App 中点击“分享到 Article-Hub”。应用第一时间保存链接，再执行后续处理。即使网络断开、AI 未配置或正文提取失败，内容也不会丢失，而是留在待处理箱等待重试。
+用户在其他 App 中点击“分享到 Article-Hub”。应用第一时间保存链接，再执行后续处理。即使网络断开、AI 未配置或正文提取失败，内容也不会丢失，而是留在进程页等待重试。
 
 ### 2. 知识化：统一内容单位
 
@@ -100,7 +100,7 @@ Article-Hub 不以取代 NotebookLM 式研究工具或 Readwise 式深度阅读�
 |---|---|
 | **对话** | 向整个知识库提问，查看带引用回答 |
 | **知识库** | 浏览、搜索和整理知识卡片 |
-| **待处理** | 查看处理中、失败和等待配置的内容 |
+| **进程** | 查看处理中、失败和等待配置的内容 |
 | **设置** | 配置 AI、embedding、隐私、备份与索引 |
 
 传统文章列表、文件夹、标签和关键词搜索不会消失，而是统一进入知识库页。
@@ -128,13 +128,15 @@ Article-Hub 不以取代 NotebookLM 式研究工具或 Readwise 式深度阅读�
 - 全局入场动画（DelayedReveal）；
 - **处理状态机**：Article 新增 processingStatus / processingStage / processingError / retryCount / lastProcessedAt / suggestedFolderId，Hive field 13-18，旧数据自动降级为 completed；
 - **先保存再处理**：分享链接立即持久化为 pending 状态，后台 pipeline 异步处理，URL 去重；
-- **待处理箱**：Inbox 页面展示 processing / pending / failed 分组，显示阶段、错误、重试和删除，前台恢复自动重试；
-- **5 阶段处理流水线**：metadata → content extraction → AI summary → auto-tags → folder suggestion，每阶段状态持久化，失败不丢失；
-- **自动标签与文件夹建议**：AI 返回标签自动写入（不覆盖用户编辑），文件夹建议写入 suggestedFolderId 由用户确认；
+- **进程页**：原“待处理箱 / Inbox”，展示 processing / pending / failed 分组，显示阶段、错误、重试和删除，前台恢复自动重试；
+- **5 阶段处理流水线**：metadata → content extraction → AI summary → auto-tags → auto folder classification，每阶段状态持久化，失败不丢失；
+- **自动标签与自动文件夹分类**：AI 返回标签自动写入（不覆盖用户编辑），文件夹直接归类到现有文件夹或自动新建；
+- **思考模型兼容**：MiMo / DeepSeek / o1 / o3 等思考模型自动适配（关 thinking 或保留思考预算，剥离 `<think>` 标签）；
+- **文件夹过滤 chip**：知识库页显示当前文件夹过滤，点击 chip 可清除；从文件夹页点击条目可一键切换到对应文件夹视图；
 - **旧文章批量知识化**：Settings 页入口，显示条数与 API 成本提示，需用户确认；
 - **Embedding 配置与本地向量索引**：独立 embedding baseUrl/apiKey/model 配置，API Key 不进入备份，Hive 独立 box (typeId=6)，一篇一记录，增量更新+全量重建；
 - **向量召回与关键词降级**：cosine similarity top-k 召回，最低门槛过滤，embedding 不可用时降级为标题+摘要+标签关键词召回；
-- **四入口底部导航**：Chat / Knowledge / Inbox / Settings，StatefulShellRoute 保持各 tab 状态；
+- **四入口底部导航**：Chat / Knowledge / Progress / Settings，StatefulShellRoute 保持各 tab 状态；
 - **RAG 对话首页**：查询→本地召回→候选摘要发送聊天模型→回答+引用知识卡片 ActionChip，信息不足时明确拒绝编造。
 
 ---
@@ -146,7 +148,7 @@ Article-Hub 不以取代 NotebookLM 式研究工具或 Readwise 式深度阅读�
 - ✅ 分享后立即持久化；
 - ✅ 处理中、失败和重试状态；
 - ❌ iOS 分享入口；
-- ✅ 自动标签与文件夹建议；
+- ✅ 自动标签与自动文件夹分类；
 - ✅ 旧文章显式批量知识化。
 
 ### 本地摘要索引 ✅

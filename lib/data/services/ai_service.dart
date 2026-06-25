@@ -34,10 +34,17 @@ class AiService {
   bool get isConfigured =>
       baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
 
+  /// True when the configured endpoint or model looks like MiMo.
+  /// MiMo uses `max_completion_tokens` instead of `max_tokens` and has a
+  /// "thinking" mode that consumes tokens before generating the answer.
+  bool get _isMiMo {
+    final b = baseUrl.toLowerCase();
+    final m = model.toLowerCase();
+    return b.contains('mimo') || m.contains('mimo');
+  }
+
   Map<String, dynamic> get _summaryOutputOptions {
-    final isMiMo = baseUrl.toLowerCase().contains('xiaomimimo.com') ||
-        model.toLowerCase().startsWith('mimo-');
-    if (isMiMo) {
+    if (_isMiMo) {
       return {
         'max_completion_tokens': _summaryMaxTokens,
         'thinking': {'type': 'disabled'},
@@ -333,13 +340,30 @@ class AiService {
       ...history,
       {'role': 'user', 'content': userMessage},
     ];
-    final body = jsonEncode({
+
+    final isMiMo = _isMiMo;
+    developer.log(
+      'chat() isMiMo=$isMiMo model="$model" baseUrl="$baseUrl"',
+      name: 'article_hub.ai',
+    );
+    final payload = <String, dynamic>{
       'model': model,
       'messages': messages,
       'temperature': temperature,
-      'max_tokens': maxTokens,
-    });
-    return _postChat(uri, body);
+    };
+    if (isMiMo) {
+      // MiMo: explicit thinking-disable + MiMo-specific token field.
+      payload['max_completion_tokens'] = maxTokens;
+      payload['thinking'] = {'type': 'disabled'};
+    } else {
+      // Other providers: send BOTH token fields so thinking models
+      // (DeepSeek-R1, o1/o3, etc.) and classic models both work without
+      // per-provider detection. Servers ignore the field they don't use.
+      payload['max_tokens'] = maxTokens;
+      payload['max_completion_tokens'] = maxTokens;
+    }
+
+    return _postChat(uri, jsonEncode(payload));
   }
 
   Future<String?> _postChat(Uri uri, String body) async {

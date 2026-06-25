@@ -129,29 +129,6 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     state = AsyncValue.data(repo.getAll());
   }
 
-  /// Move article to its suggested folder and clear the suggestion.
-  Future<void> confirmFolderSuggestion(String id) async {
-    final repo = await _ref.read(articleRepositoryProvider.future);
-    final article = repo.getById(id);
-    if (article == null || article.suggestedFolderId == null) return;
-    final updated = article.copyWith(
-      folderId: article.suggestedFolderId,
-      suggestedFolderId: Article.clearValue,
-    );
-    await repo.update(updated);
-    state = AsyncValue.data(repo.getAll());
-  }
-
-  /// Dismiss the folder suggestion without moving.
-  Future<void> dismissFolderSuggestion(String id) async {
-    final repo = await _ref.read(articleRepositoryProvider.future);
-    final article = repo.getById(id);
-    if (article == null) return;
-    final updated = article.copyWith(suggestedFolderId: Article.clearValue);
-    await repo.update(updated);
-    state = AsyncValue.data(repo.getAll());
-  }
-
   /// Imports a batch of articles (merge by id) and refreshes state.
   /// Returns the number of articles written.
   Future<int> importAll(Iterable<Article> articles) async {

@@ -63,8 +63,15 @@ Article-Hub 不提供账号体系、云内容后端或 AI 代理后端。文章�
 ### 自动整理，但保留用户控制
 
 - AI 标签可以自动写入，用户仍可编辑。
-- AI 只提出文件夹建议，不会未经确认直接移动文章。
+- AI 直接把新文章自动分类到合适的文件夹，匹配不到现有文件夹时自动创建新文件夹。
+- 进程页可以看到正在处理与失败的条目，从知识库切换文件夹查看时支持当前过滤可视化。
 - 支持标签、备注、收藏、文件夹、嵌套文件夹、自定义筛选和全文字段搜索。
+
+### 思考模型兼容
+
+- 支持 MiMo（关闭思考模式 + `max_completion_tokens`）。
+- 同时发送 `max_tokens` 与 `max_completion_tokens`，自动覆盖 DeepSeek、o1/o3 等其他 OpenAI-compatible 思考模型。
+- 文件夹分类等短回答类调用为思考过程预留 token，并自动剥离 `<think>...</think>` 标签。
 
 ### 本地检索与 RAG 对话
 
@@ -123,12 +130,13 @@ RAG 流程先在本地召回，再把候选摘要交给聊天模型。回答中�
 | 模块 | 已实现能力 |
 |---|---|
 | 收集 | 单 URL、批量 URL、剪贴板检测、Android 分享 |
-| 知识化 | 元数据、正文、AI 摘要、自动标签、文件夹建议 |
-| 可靠性 | 待处理箱、阶段状态、错误展示、重试、HTTP → WebView 兜底 |
-| 知识库 | 搜索、来源筛选、标签、备注、收藏、文件夹和嵌套文件夹 |
+| 知识化 | 元数据（含封面回退）、正文、AI 摘要、自动标签、自动文件夹分类（必要时新建文件夹） |
+| 可靠性 | 进程页、阶段状态、错误展示、重试、HTTP → WebView 兜底 |
+| 知识库 | 搜索、来源筛选、标签、备注、收藏、文件夹、嵌套文件夹、当前文件夹过滤 chip |
 | 检索 | 本地向量索引、余弦相似度、关键词降级 |
 | 对话 | 全库 RAG、引用卡片、信息不足提示、回答反馈 |
 | 阅读 | 摘要优先页面、应用内 WebView、外部浏览器入口 |
+| AI 兼容 | OpenAI-compatible、MiMo 思考模型、DeepSeek/o1/o3 等思考模型自动兼容 |
 | 设置 | 中英文界面、主题、字体、WebView 缩放、来源排序与隐藏 |
 | 数据 | JSON 备份恢复、API Key 排除、索引可重建 |
 
@@ -281,8 +289,15 @@ Article-Hub has no account system, hosted content backend, or AI proxy backend. 
 ### Automated organization with user control
 
 - AI-generated tags are editable.
-- Folder classification is a suggestion only; moving an article requires user confirmation.
+- AI directly classifies new articles into the best matching folder, creating a new folder when none of the existing ones fit.
+- The Progress tab shows in-flight and failed items; the Knowledge tab shows a folder-filter chip when a folder filter is active.
 - Includes tags, notes, favorites, folders, nested folders, custom filters, and local search.
+
+### Thinking-model compatibility
+
+- Native support for MiMo (thinking disabled + `max_completion_tokens`).
+- Sends both `max_tokens` and `max_completion_tokens` so DeepSeek, o1/o3, and other OpenAI-compatible thinking models work out of the box.
+- Short-answer calls (e.g. folder classification) reserve enough tokens for the model's thinking phase and strip `<think>...</think>` tags from the response.
 
 ### Local retrieval and RAG chat
 
@@ -341,12 +356,13 @@ RAG queries retrieve locally before calling the chat model. Citation numbers are
 | Area | Implemented |
 |---|---|
 | Capture | Single URL, bulk URLs, clipboard detection, Android sharing |
-| Processing | Metadata, content, AI summary, automatic tags, folder suggestions |
-| Reliability | Inbox, persisted stages, errors, retries, HTTP-to-WebView fallback |
-| Library | Search, source filters, tags, notes, favorites, nested folders |
+| Processing | Metadata (with cover-image fallback), content, AI summary, auto tags, auto folder classification (creates folders on demand) |
+| Reliability | Progress tab, persisted stages, errors, retries, HTTP-to-WebView fallback |
+| Library | Search, source filters, tags, notes, favorites, nested folders, active folder-filter chip |
 | Retrieval | Local vector index, cosine similarity, keyword fallback |
 | Chat | Library-wide RAG, citation cards, insufficient-context handling, feedback |
 | Reading | Summary-first view, in-app WebView, external browser access |
+| AI compatibility | OpenAI-compatible, MiMo thinking model, DeepSeek/o1/o3-style thinking models |
 | Settings | Chinese/English UI, theme, font size, WebView zoom, source management |
 | Data | JSON backup/restore, API-key exclusion, rebuildable indexes |
 

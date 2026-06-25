@@ -39,6 +39,8 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
     final s = ref.watch(stringsProvider);
     final selectedSource = ref.watch(selectedSourceProvider);
     final selectedFilterId = ref.watch(selectedFilterGroupProvider);
+    final selectedFolderId = ref.watch(selectedFolderIdProvider);
+    final foldersAsync = ref.watch(foldersProvider);
     final filtersAsync = ref.watch(filterGroupsProvider);
     final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
     final theme = Theme.of(context);
@@ -101,10 +103,11 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
                 chipBg: chipBg,
                 isAllChip: true,
                 isSelected:
-                    selectedSource.isEmpty && selectedFilterId.isEmpty,
+                    selectedSource.isEmpty && selectedFilterId.isEmpty && selectedFolderId.isEmpty,
                 onTap: () {
                   ref.read(selectedSourceProvider.notifier).state = '';
                   ref.read(selectedFilterGroupProvider.notifier).state = '';
+                  ref.read(selectedFolderIdProvider.notifier).state = '';
                 },
               ),
               ...visiblePlatforms.map((platform) {
@@ -170,6 +173,36 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
                   color: isDark ? Colors.white12 : const Color(0xFFD7E3EA),
                 ),
               ),
+              // Folder filter chip
+              if (selectedFolderId.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: _SourceChip(
+                    label: foldersAsync.maybeWhen(
+                      data: (folders) => folders
+                          .where((f) => f.id == selectedFolderId)
+                          .firstOrNull
+                          ?.name ?? s.filterAll,
+                      orElse: () => s.filterAll,
+                    ),
+                    icon: Icons.folder_rounded,
+                    color: theme.colorScheme.tertiary,
+                    chipBg: chipBg,
+                    isSelected: true,
+                    onTap: () {
+                      ref.read(selectedFolderIdProvider.notifier).state = '';
+                    },
+                  ),
+                ),
+              if (selectedFolderId.isNotEmpty)
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+                  child: Container(
+                    width: 1,
+                    color: isDark ? Colors.white12 : const Color(0xFFD7E3EA),
+                  ),
+                ),
               ...filtersAsync.maybeWhen(
                 data: (groups) => groups.map((group) {
                   return Padding(

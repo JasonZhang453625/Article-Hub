@@ -44,7 +44,11 @@ PageMetadata parseHtmlMetadata(String htmlBody, String baseUrl) {
   }
 
   final rawImage = metaContent(['og:image', 'twitter:image', 'twitter:image:src']);
-  final imageUrl = _resolveUrl(rawImage, baseUrl);
+  var imageUrl = _resolveUrl(rawImage, baseUrl);
+
+  // Fallback: extract the first meaningful image from the article body
+  // when OG/Twitter meta tags don't provide one.
+  imageUrl ??= _extractFirstContentImage(document, baseUrl);
 
   return PageMetadata(
     title: (title != null && title.isNotEmpty) ? title : null,
@@ -60,6 +64,65 @@ String? _resolveUrl(String? raw, String baseUrl) {
   if (resolved.hasScheme) return resolved.toString();
   if (base == null) return null;
   return base.resolveUri(resolved).toString();
+}
+
+/// Try to find the first meaningful image inside article content.
+/// Targets common content containers, falls back to all images in body.
+String? _extractFirstContentImage(dynamic document, String baseUrl) {
+  // Try article-specific containers first, then broader fallbacks.
+  final selectors = [
+    '#js_content',
+    '.main-content',
+    '#body_wrapper',
+    'article',
+    '[role="main"]',
+    'main',
+    '.post-content',
+    '.article-content',
+    '.entry-content',
+    '#content',
+  ];
+
+  for (final selector in selectors) {
+    final el = document.querySelector(selector);
+    if (el == null) continue;
+    final img = _findValidImage(el, baseUrl);
+    if (img != null) return img;
+  }
+
+  // Last resort: scan all images in the body.
+  return _findValidImage(document.body ?? document, baseUrl);
+}
+
+/// Walk <img> elements under [root] and return the first one that looks
+/// like a real content image (not an icon, avatar, or tracking pixel).
+String? _findValidImage(dynamic root, String baseUrl) {
+  final imgs = root.querySelectorAll('img');
+  for (final img in imgs) {
+    final src = img.attributes['src'] ??
+        img.attributes['data-src'] ??
+        img.attributes['data-original'];
+    if (src == null || src.isEmpty) continue;
+
+    // Skip data URIs, SVGs, and common non-content patterns.
+    final lower = src.toLowerCase();
+    if (lower.startsWith('data:')) continue;
+    if (lower.endsWith('.svg')) continue;
+    if (lower.contains('avatar') || lower.contains('icon')) continue;
+    if (lower.contains('logo') || lower.contains('emoji')) continue;
+    if (lower.contains('1x1') || lower.contains('spacer')) continue;
+    if (lower.contains('pixel') || lower.contains('track')) continue;
+
+    // Skip tiny images by explicit dimensions.
+    final w = int.tryParse(img.attributes['width'] ?? '');
+    final h = int.tryParse(img.attributes['height'] ?? '');
+    if (w != null && w < 80) continue;
+    if (h != null && h < 80) continue;
+
+    final resolved = _resolveUrl(src, baseUrl);
+    if (resolved != null) return resolved;
+  }
+  return null;
 }
 
 /// Fetches a URL and extracts page metadata. Never throws — returns an empty

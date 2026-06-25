@@ -110,7 +110,7 @@ class ProcessingPipeline {
     // Stage 4: Tags (AI-generated, auto-written — non-fatal on failure)
     current = await _stageTags(current);
 
-    // Stage 5: Folder suggestion (writes suggestedFolderId, non-fatal)
+    // Stage 5: Folder suggestion (auto-classifies to folderId, non-fatal)
     current = await _stageFolderSuggestion(current);
 
     // Mark completed.
@@ -302,13 +302,15 @@ class ProcessingPipeline {
   }
 
   /// Stage 5: Ask AI to suggest the best matching folder. Writes to
-  /// [Article.suggestedFolderId] — the user must confirm before moving.
+  /// [Article.folderId] directly (auto-classification).
   Future<Article> _stageFolderSuggestion(Article article) async {
     _notifyStage(article, ProcessingStage.folderSuggestion);
     final settings = _settings;
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
         settings.aiApiKey.trim().isEmpty) {
+      developer.log('folder suggestion: skipped (AI not configured)',
+          name: 'article_hub.pipeline');
       return article;
     }
 
@@ -316,6 +318,12 @@ class ProcessingPipeline {
       final folderNames = _folders.map((f) => f.name).toList();
       developer.log('folder suggestion: ${folderNames.length} folders available',
           name: 'article_hub.pipeline');
+
+      if (folderNames.isEmpty && _createFolder == null) {
+        developer.log('folder suggestion: skipped (no folders and cannot create)',
+            name: 'article_hub.pipeline');
+        return article;
+      }
 
       final suggested = await _suggestFolder(
         article.title,
@@ -325,14 +333,20 @@ class ProcessingPipeline {
       developer.log('folder suggestion: AI returned "$suggested"',
           name: 'article_hub.pipeline');
 
-      if (suggested == null) return article;
+      if (suggested == null) {
+        developer.log('folder suggestion: AI returned null/none',
+            name: 'article_hub.pipeline');
+        return article;
+      }
 
       // Match the suggested name back to a folder ID (case-insensitive).
       final match = _folders.where(
         (f) => f.name.toLowerCase() == suggested.toLowerCase(),
       ).firstOrNull;
       if (match != null) {
-        return article.copyWith(suggestedFolderId: match.id);
+        developer.log('folder suggestion: matched existing folder "${match.name}"',
+            name: 'article_hub.pipeline');
+        return article.copyWith(folderId: match.id);
       }
 
       // No existing folder matched — create a new one if possible.
@@ -342,7 +356,12 @@ class ProcessingPipeline {
         final newFolder = await _createFolder(suggested);
         if (newFolder != null) {
           _folders.add(newFolder);
-          return article.copyWith(suggestedFolderId: newFolder.id);
+          developer.log('folder suggestion: created and assigned folder "${newFolder.name}"',
+              name: 'article_hub.pipeline');
+          return article.copyWith(folderId: newFolder.id);
+        } else {
+          developer.log('folder suggestion: folder creation failed',
+              name: 'article_hub.pipeline');
         }
       }
       return article;
@@ -364,26 +383,55 @@ class ProcessingPipeline {
 
     final namesList = folderNames.map((n) => '"$n"').join(', ');
     final systemPrompt = folderNames.isEmpty
-        ? 'You are a folder organizer. Given an article title and summary, '
-            'suggest a concise folder name (2-4 words) to categorize this article. '
-            'Return ONLY the folder name, nothing else.'
-        : 'You are a folder organizer. Given an article title, summary, and a '
-            'list of existing folders, return the single best matching folder name. '
-            'If none fit well, suggest a new concise folder name (2-4 words). '
-            'Return ONLY the folder name, nothing else. '
-            'Available folders: [$namesList]';
+        ? 'You categorize articles into folders. Output ONLY a folder name '
+            '(2-4 words). Never output "null", "none", or empty. '
+            'Always invent a real category name.'
+        : 'You categorize articles into folders. Available folders: [$namesList]. '
+            'If one fits, output its exact name. Otherwise invent a new '
+            'category name (2-4 words). Output ONLY the folder name. '
+            'Never output "null", "none", or empty.';
 
-    final userMessage = 'Title: $title\n\nSummary: $summary';
+    // Few-shot: prime the model with one example so it imitates the format
+    // and stops returning "null"/"none" on weak models like gpt-4o-mini.
+    final history = <Map<String, String>>[
+      {
+        'role': 'user',
+        'content':
+            'Title: Introduction to Neural Networks\n\nSummary: Explains how '
+            'neural networks learn through backpropagation and gradient descent.\n\n'
+            'Folder name:',
+      },
+      {
+        'role': 'assistant',
+        'content': folderNames.contains('AI') ? 'AI' : 'Machine Learning',
+      },
+    ];
+
+    final userMessage =
+        'Title: $title\n\nSummary: $summary\n\nFolder name:';
     final response = await ai.chat(
       systemPrompt: systemPrompt,
       userMessage: userMessage,
-      temperature: 0.1,
-      maxTokens: 50,
+      history: history,
+      temperature: 0.3,
+      maxTokens: 500,
     );
     if (response == null) return null;
+    developer.log(
+      'folder suggestion: raw AI response = "$response"',
+      name: 'article_hub.pipeline',
+    );
 
-    final cleaned = response.trim().replaceAll('"', '').replaceAll("'", '');
-    if (cleaned.toLowerCase() == 'none' || cleaned.isEmpty) return null;
+    // Strip reasoning-model thinking tags (DeepSeek-R1 style).
+    final stripped = response
+        .replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '')
+        .replaceAll(RegExp(r'<thinking>.*?</thinking>', dotAll: true), '')
+        .trim();
+
+    final cleaned = stripped.replaceAll(RegExp(r'''["'`.]'''), '');
+    if (cleaned.isEmpty) return null;
+    const placeholders = {'none', 'null', 'nil', 'n/a', 'na', 'undefined'};
+    if (placeholders.contains(cleaned.toLowerCase())) return null;
     return cleaned;
   }
 

@@ -165,6 +165,10 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
                 folder: folder,
                 children: children,
                 s: s,
+                onTap: (folderId) {
+                  ref.read(selectedFolderIdProvider.notifier).state = folderId;
+                  Navigator.pop(context);
+                },
                 onRename: () => _showRenameDialog(folder),
                 onDelete: () => _confirmDelete(folder),
                 onAddSubfolder: () => _showAddDialog(parentId: folder.id),
@@ -183,6 +187,7 @@ class _FolderTile extends StatelessWidget {
   final Folder folder;
   final List<Folder> children;
   final LocaleStrings s;
+  final ValueChanged<String> onTap;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onAddSubfolder;
@@ -193,6 +198,7 @@ class _FolderTile extends StatelessWidget {
     required this.folder,
     required this.children,
     required this.s,
+    required this.onTap,
     required this.onRename,
     required this.onDelete,
     required this.onAddSubfolder,
@@ -210,6 +216,7 @@ class _FolderTile extends StatelessWidget {
         ListTile(
           leading: Icon(Icons.folder_rounded, color: theme.colorScheme.primary),
           title: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+          onTap: () => onTap(folder.id),
           trailing: PopupMenuButton<String>(
             onSelected: (value) {
               switch (value) {
@@ -237,6 +244,7 @@ class _FolderTile extends StatelessWidget {
             child: ListTile(
               leading: Icon(Icons.folder_outlined, color: theme.colorScheme.primary.withValues(alpha: 0.6)),
               title: Text(child.name),
+              onTap: () => onTap(child.id),
               trailing: PopupMenuButton<String>(
                 onSelected: (value) {
                   switch (value) {

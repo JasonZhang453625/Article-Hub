@@ -1,16 +1,11 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
-import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
-import '../../data/services/ai_service.dart';
-import '../../data/services/content_extractor.dart';
-import '../../data/services/embedding_service.dart';
-import '../../data/services/index_service.dart';
 import '../../data/services/metadata_service.dart';
+import '../../data/services/processing_pipeline.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -113,145 +108,21 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       notes: _notesController.text.trim(),
       coverImageUrl: _fetchedCoverUrl,
       folderId: _selectedFolderId,
+      processingStatus: ProcessingStatus.pending,
     );
 
     final notifier = ref.read(articlesProvider.notifier);
     await notifier.add(article);
 
-    // Capture provider-derived objects BEFORE popping. The StateNotifier
-    // outlives this widget, but `ref` does not — touching `ref` after the
-    // screen is popped throws (and was previously swallowed, silently
-    // dropping the summary).
-    final settings = ref.read(settingsProvider).valueOrNull;
-    final embedding = ref.read(embeddingServiceProvider);
-    final index = ref.read(indexServiceProvider);
+    // Capture pipeline BEFORE popping — ref is invalid after pop.
+    final pipeline = ref.read(processingPipelineProvider);
 
     if (mounted) {
       Navigator.of(context).pop();
     }
 
-    // Fire-and-forget: summarize in background if AI is configured.
-    _summarizeInBackground(article, notifier, settings, embedding, index);
-  }
-
-  void _summarizeInBackground(
-    Article article,
-    ArticlesNotifier notifier,
-    AppSettings? settings,
-    EmbeddingService? embedding,
-    IndexService index,
-  ) {
-    if (settings == null) return;
-    if (settings.aiBaseUrl.trim().isEmpty ||
-        settings.aiApiKey.trim().isEmpty) {
-      developer.log(
-        'skipping summary: AI not fully configured',
-        name: 'article_hub.ai',
-      );
-      return;
-    }
-
-    final ai = AiService(
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-    );
-    final extractor = ContentExtractor();
-    final langHint = aiLanguagePrompt(settings.languageIndex);
-
-    () async {
-      try {
-        final content = await extractor.extract(article.url);
-        if (content == null || content.isEmpty) {
-          developer.log('content extraction failed, skipping summary', name: 'article_hub.ai');
-          return;
-        }
-
-        developer.log(
-          'extracted ${content.length} chars, calling AI',
-          name: 'article_hub.ai',
-        );
-        final result = await ai.summarizeWithTitle(article.title, content, languageHint: langHint);
-
-        if (result.summary == null || result.summary!.isEmpty) {
-          developer.log('AI returned null/empty summary', name: 'article_hub.ai');
-          return;
-        }
-        developer.log(
-          'got summary (${result.summary!.length} chars), saving',
-          name: 'article_hub.ai',
-        );
-
-        // Update title if AI provided a meaningful one (not just the domain).
-        String? newTitle;
-        if (result.title != null && result.title!.isNotEmpty) {
-          final looksLikeDomain = result.title!.contains('.') &&
-              !result.title!.contains(' ');
-          if (!looksLikeDomain) {
-            newTitle = result.title;
-          }
-        }
-
-        final updated = article.copyWith(
-          title: newTitle ?? article.title,
-          summary: result.summary,
-        );
-        await notifier.update(updated);
-
-        // Update vector index if embedding is configured.
-        if (embedding == null) {
-          developer.log(
-            'skipping index update: embedding not configured',
-            name: 'article_hub.index',
-          );
-        } else if (result.summary!.isEmpty) {
-          developer.log(
-            'skipping index update: empty summary',
-            name: 'article_hub.index',
-          );
-        } else {
-          try {
-            final input = IndexService.buildEmbeddingInput(updated);
-            final embedResult = await embedding.embed(input);
-            if (embedResult == null) {
-              developer.log(
-                'embedding API returned null — index NOT updated for article ${updated.id}',
-                name: 'article_hub.index',
-              );
-            } else {
-              await index.put(IndexRecord(
-                articleId: updated.id,
-                model: embedResult.model,
-                fingerprint: contentFingerprint(
-                    updated.title, result.summary!, updated.tags),
-                vector: embedResult.vector,
-              ));
-              developer.log(
-                'index updated for article ${updated.id} '
-                '(model=${embedResult.model}, vector dim=${embedResult.vector.length})',
-                name: 'article_hub.index',
-              );
-            }
-          } catch (e, st) {
-            developer.log(
-              'index update failed for article ${updated.id}',
-              name: 'article_hub.index',
-              error: e,
-              stackTrace: st,
-            );
-          }
-        }
-      } catch (e, st) {
-        developer.log(
-          'background summarize failed',
-          name: 'article_hub.ai',
-          error: e,
-          stackTrace: st,
-        );
-      } finally {
-        extractor.dispose();
-      }
-    }();
+    // Fire-and-forget: run the full pipeline (metadata → content → summary → tags → folder).
+    pipeline.process(article);
   }
 
   Future<void> _openBulkImport() async {

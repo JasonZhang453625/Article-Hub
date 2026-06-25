@@ -6,6 +6,7 @@ import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/content_extractor.dart';
+import '../../data/services/metadata_service.dart';
 import '../../shared/providers/page_loader_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -13,9 +14,10 @@ import '../../shared/providers/settings_providers.dart';
 class SummaryRegenerationResult {
   final String? title;
   final String? summary;
+  final String? coverImageUrl;
   final String? error;
 
-  const SummaryRegenerationResult({this.title, this.summary, this.error});
+  const SummaryRegenerationResult({this.title, this.summary, this.coverImageUrl, this.error});
 
   bool get succeeded => summary != null && summary!.isNotEmpty;
 }
@@ -27,7 +29,7 @@ typedef SummaryRegenerationRunner =
     );
 
 typedef SaveGeneratedSummary =
-    Future<void> Function(String articleId, String? title, String summary);
+    Future<void> Function(String articleId, String? title, String summary, String? coverImageUrl);
 
 class SummaryRegenerationController extends StateNotifier<Set<String>> {
   final SummaryRegenerationRunner _runner;
@@ -71,7 +73,7 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
       );
       final result = await _runner(article, settings);
       if (result.succeeded) {
-        await _save(article.id, result.title, result.summary!);
+        await _save(article.id, result.title, result.summary!, result.coverImageUrl);
         developer.log(
           'background summary saved, articleId: ${article.id}',
           name: 'article_hub.ai',
@@ -97,6 +99,10 @@ final summaryRegenerationProvider =
 
       return SummaryRegenerationController(
         runner: (article, settings) async {
+          final metadataService = MetadataService(
+            loader: pageLoader,
+            ownsLoader: false,
+          );
           final extractor = ContentExtractor(
             loader: pageLoader,
             ownsLoader: false,
@@ -108,7 +114,16 @@ final summaryRegenerationProvider =
           );
 
           try {
-            final content = await extractor.extract(article.url);
+            // Fetch page once, reuse for both metadata and content extraction.
+            final page = await metadataService.fetchPage(article.url);
+            if (page == null) {
+              return const SummaryRegenerationResult(
+                error: 'Could not fetch page',
+              );
+            }
+
+            final meta = metadataService.fromFetchedPage(page);
+            final content = extractor.fromFetchedPage(page);
             if (content == null || content.isEmpty) {
               return const SummaryRegenerationResult(
                 error: 'Could not extract page content',
@@ -136,7 +151,11 @@ final summaryRegenerationProvider =
               if (!looksLikeDomain) newTitle = generatedTitle;
             }
 
-            return SummaryRegenerationResult(title: newTitle, summary: summary);
+            return SummaryRegenerationResult(
+              title: newTitle,
+              summary: summary,
+              coverImageUrl: meta.imageUrl,
+            );
           } catch (error, stackTrace) {
             developer.log(
               'background summary regeneration failed',
@@ -147,6 +166,7 @@ final summaryRegenerationProvider =
             return SummaryRegenerationResult(error: error.toString());
           } finally {
             extractor.dispose();
+            metadataService.dispose();
           }
         },
         save: articles.updateGeneratedSummary,

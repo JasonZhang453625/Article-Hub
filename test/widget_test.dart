@@ -9,7 +9,7 @@ void main() {
 
     // The bottom navigation bar should have all 4 tabs.
     expect(find.text('Knowledge'), findsOneWidget);
-    expect(find.text('Inbox'), findsOneWidget);
+    expect(find.text('Progress'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     // "Chat" appears in both AppBar title and NavigationBar label.
     expect(find.text('Chat'), findsAtLeastNWidgets(1));
