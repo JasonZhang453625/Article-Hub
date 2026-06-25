@@ -4,21 +4,9 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:charset/charset.dart';
 
-/// A response from a single HTTP fetch, reusable by multiple consumers.
-class FetchedPage {
-  final int statusCode;
-  final String? contentType;
-  final String body;
+import 'page_loader.dart';
 
-  const FetchedPage({
-    required this.statusCode,
-    this.contentType,
-    required this.body,
-  });
-
-  bool get isHtml =>
-      contentType == null || contentType!.contains('html');
-}
+export 'page_loader.dart' show FetchedPage, PageLoadSource, PageLoader;
 
 /// Shared browser-like headers for all outgoing HTTP requests.
 const Map<String, String> _browserHeaders = {
@@ -29,7 +17,6 @@ const Map<String, String> _browserHeaders = {
   'Accept':
       'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-  'Accept-Encoding': 'gzip, deflate, br',
   'Connection': 'keep-alive',
   'Upgrade-Insecure-Requests': '1',
   'Cache-Control': 'max-age=0',
@@ -38,7 +25,7 @@ const Map<String, String> _browserHeaders = {
 /// Thin wrapper around [http.Client] that injects browser-like headers and
 /// returns a reusable [FetchedPage] so metadata + content extraction can share
 /// a single network round-trip per URL.
-class AppHttpClient {
+class AppHttpClient implements PageLoader {
   final http.Client _client;
   final Duration timeout;
 
@@ -46,6 +33,7 @@ class AppHttpClient {
       : _client = client ?? http.Client();
 
   /// Fetch [url] once and return a [FetchedPage]. Returns null on any error.
+  @override
   Future<FetchedPage?> fetch(String url) async {
     try {
       final response = await _client
@@ -75,6 +63,8 @@ class AppHttpClient {
         statusCode: response.statusCode,
         contentType: ct.isEmpty ? null : ct,
         body: body,
+        finalUrl: response.request?.url.toString() ?? url,
+        source: PageLoadSource.http,
       );
     } on TimeoutException {
       developer.log('timeout ($timeout), url: $url', name: 'article_hub.http');
@@ -85,6 +75,7 @@ class AppHttpClient {
     }
   }
 
+  @override
   void dispose() => _client.close();
 
   String _decodeBody(http.Response response) {
@@ -100,40 +91,16 @@ class AppHttpClient {
       charset = _extractCharset(head);
     }
 
-    developer.log(
-      '_decodeBody: header-ct="$ct", detected charset=$charset, '
-      'bytes=${bytes.length}',
-      name: 'article_hub.http',
-    );
-
     // 3. Decode with detected charset.
     if (charset != null) {
-      final decoded = _decodeWithCharset(bytes, charset);
-      developer.log(
-        '_decodeBody: decoded with "$charset", '
-        'preview="${decoded.substring(0, decoded.length.clamp(0, 200))}"',
-        name: 'article_hub.http',
-      );
-      return decoded;
+      return _decodeWithCharset(bytes, charset);
     }
 
     // 4. Default: try UTF-8, fall back to latin1.
     try {
-      final decoded = utf8.decode(bytes);
-      developer.log(
-        '_decodeBody: decoded with utf8, '
-        'preview="${decoded.substring(0, decoded.length.clamp(0, 200))}"',
-        name: 'article_hub.http',
-      );
-      return decoded;
+      return utf8.decode(bytes);
     } catch (_) {
-      final decoded = latin1.decode(bytes);
-      developer.log(
-        '_decodeBody: utf8 failed, fallback latin1, '
-        'preview="${decoded.substring(0, decoded.length.clamp(0, 200))}"',
-        name: 'article_hub.http',
-      );
-      return decoded;
+      return latin1.decode(bytes);
     }
   }
 

@@ -6,12 +6,13 @@ import '../models/settings.dart';
 import '../models/folder.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/providers/page_loader_provider.dart';
 import 'ai_service.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
-import 'http_client.dart';
 import 'index_service.dart';
 import 'metadata_service.dart';
+import 'page_loader.dart';
 
 /// Orchestrates the sequential processing of an Article through all
 /// knowledge-ification stages: metadata → content → summary → tags → folder.
@@ -23,6 +24,12 @@ import 'metadata_service.dart';
 /// ([_contentCache]) keyed by article id, NEVER persisted into the
 /// user-facing `notes` field. If the pipeline crashes mid-run the cache
 /// is simply lost — no risk of corrupting user notes.
+///
+/// **WebView Fallback:**
+/// MetadataService and ContentExtractor now use a ResilientPageLoader that
+/// automatically tries HTTP first, then falls back to headless WebView on
+/// 403/timeout/network errors. This happens transparently without user
+/// intervention.
 class ProcessingPipeline {
   final ArticlesNotifier _articles;
   final AppSettings? _settings;
@@ -33,7 +40,7 @@ class ProcessingPipeline {
   final IndexService? _index;
 
   /// Per-article fetched page, scoped to a single pipeline run.
-  /// Stage 1 (metadata) fetches and caches; Stage 2 (content) reuses.
+  /// Stage 1 fetches once; Stage 2 parses the same final HTML.
   final Map<String, FetchedPage> _fetchedPageCache = <String, FetchedPage>{};
 
   /// Per-article extracted content, scoped to a single pipeline run.
@@ -104,6 +111,7 @@ class ProcessingPipeline {
 
     // Incrementally update the vector index.
     _updateIndex(current);
+    _fetchedPageCache.remove(current.id);
 
     return current;
   }
@@ -122,22 +130,11 @@ class ProcessingPipeline {
   Future<Article> _stageMetadata(Article article) async {
     _notifyStage(article, ProcessingStage.metadata);
     try {
-      // Fetch the page once and cache it for Stage 2.
-      final http = AppHttpClient();
-      final page = await http.fetch(article.url);
-      http.dispose();
-      if (page != null) {
-        _fetchedPageCache[article.id] = page;
-        final meta = _metadata.fromFetchedPage(page, article.url);
-        return article.copyWith(
-          title: (meta.title != null && meta.title!.isNotEmpty)
-              ? meta.title!
-              : article.title,
-          coverImageUrl: meta.imageUrl ?? article.coverImageUrl,
-        );
-      }
-      // If fetch failed, fall back to direct fetch (may still work for some URLs).
-      final meta = await _metadata.fetch(article.url);
+      final page = await _metadata.fetchPage(article.url);
+      if (page == null) return article;
+
+      _fetchedPageCache[article.id] = page;
+      final meta = _metadata.fromFetchedPage(page);
       return article.copyWith(
         title: (meta.title != null && meta.title!.isNotEmpty)
             ? meta.title!
@@ -152,18 +149,9 @@ class ProcessingPipeline {
   Future<Article> _stageContent(Article article) async {
     _notifyStage(article, ProcessingStage.content);
     try {
-      String? content;
-
-      // Try to reuse the page fetched in Stage 1.
-      final cachedPage = _fetchedPageCache.remove(article.id);
-      if (cachedPage != null) {
-        content = _extractor.fromFetchedPage(cachedPage);
-      }
-
-      // Fallback to a fresh fetch if cached page wasn't available or extraction failed.
-      if (content == null || content.isEmpty) {
-        content = await _extractor.extract(article.url);
-      }
+      final page = _fetchedPageCache.remove(article.id);
+      final content =
+          page == null ? null : _extractor.fromFetchedPage(page);
 
       if (content == null || content.isEmpty) {
         return _fail(article, 'content', 'Could not extract page content');
@@ -197,27 +185,33 @@ class ProcessingPipeline {
     try {
       final cachedContent = _contentCache.remove(article.id);
       if (cachedContent == null || cachedContent.isEmpty) {
-        return _fail(article, 'summary', 'Could not extract page content for summarization');
+        return _fail(
+          article,
+          'summary',
+          'Could not extract page content for summarization',
+        );
       }
 
-      developer.log(
-        'summary input title="${article.title}", '
-        'content preview="${cachedContent.substring(0, cachedContent.length.clamp(0, 200))}"',
-        name: 'article_hub.pipeline',
+      final result = await ai.summarizeWithTitle(
+        article.title,
+        cachedContent,
+        languageHint: langHint,
+        verbosity: verbosity,
       );
 
-      final result = await ai.summarizeWithTitle(article.title, cachedContent,
-          languageHint: langHint, verbosity: verbosity);
-
       if (result.summary == null || result.summary!.isEmpty) {
-        return _fail(article, 'summary', 'AI returned empty summary');
+        return _fail(
+          article,
+          'summary',
+          ai.lastError ?? 'AI returned empty summary',
+        );
       }
 
       // Update title if AI provided a meaningful one (not just the domain).
       String? newTitle;
       if (result.title != null && result.title!.isNotEmpty) {
-        final looksLikeDomain = result.title!.contains('.') &&
-            !result.title!.contains(' ');
+        final looksLikeDomain =
+            result.title!.contains('.') && !result.title!.contains(' ');
         if (!looksLikeDomain) {
           newTitle = result.title;
         }
@@ -408,11 +402,19 @@ final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
   final folders = ref.read(foldersProvider).valueOrNull ?? [];
   final embedding = ref.read(embeddingServiceProvider);
   final index = ref.read(indexServiceProvider);
-  return ProcessingPipeline(
+
+  // Use the shared resilient PageLoader (HTTP → WebView fallback)
+  final pageLoader = ref.read(pageLoaderProvider);
+
+  final pipeline = ProcessingPipeline(
     articles: articles,
     settings: settings,
     folders: folders,
+    metadata: MetadataService(loader: pageLoader, ownsLoader: false),
+    extractor: ContentExtractor(loader: pageLoader, ownsLoader: false),
     embedding: embedding,
     index: index,
   );
+  ref.onDispose(pipeline.dispose);
+  return pipeline;
 });
