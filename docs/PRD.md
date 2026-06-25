@@ -1,7 +1,5 @@
-# Article-Hub 产品需求文档（PRD）
-
 > 版本：AI-Native V2.0 规划 · 文档状态：草案 · 最后更新：2026-06-25
-> 当前应用版本：V1.6.0 · 配套实施计划：[`ROADMAP.md`](./ROADMAP.md)
+> 当前应用版本：V2.0.0 · 配套实施计划：[`ROADMAP.md`](./ROADMAP.md)
 
 ---
 
@@ -270,7 +268,7 @@ NotebookLM 等产品擅长对用户主动组织的一组来源进行深度研究
 - 现有 `Article.summary` 继续作为首版唯一规范化知识 chunk。
 - 新字段必须继续使用手写 `TypeAdapter`，并以空值兼容旧数据。
 
-已新增的处理状态字段（V1.6.0，Phase 1.1）：
+已新增的处理状态字段（V2.0.0，Phase 1.1）：
 
 - `processingStatus`：`ProcessingStatus` 枚举（pending / processing / completed / failed），默认 completed；
 - `processingStage`：`ProcessingStage` 枚举（metadata / content / summary / tags / folderSuggestion / indexing），可空；
