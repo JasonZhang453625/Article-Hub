@@ -24,7 +24,7 @@ void main() {
     final saves = <SummaryRegenerationResult>[];
     final controller = SummaryRegenerationController(
       runner: (_, _) => completion.future,
-      save: (id, title, summary) async {
+      save: (id, title, summary, coverImageUrl) async {
         saves.add(SummaryRegenerationResult(title: title, summary: summary));
       },
     );
@@ -54,7 +54,7 @@ void main() {
         runs++;
         return completion.future;
       },
-      save: (_, _, _) async {},
+      save: (_, _, _, _) async {},
     );
 
     final first = controller.regenerate(article, settings);
@@ -72,7 +72,7 @@ void main() {
     var saves = 0;
     final controller = SummaryRegenerationController(
       runner: (_, _) async => const SummaryRegenerationResult(error: 'failed'),
-      save: (_, _, _) async {
+      save: (_, _, _, _) async {
         saves++;
       },
     );

@@ -8,6 +8,8 @@ import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/content_extractor.dart';
+import '../../data/services/embedding_service.dart';
+import '../../data/services/index_service.dart';
 import '../../data/services/metadata_service.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
@@ -191,6 +193,23 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
           summary: result.summary,
         );
         await notifier.update(updated);
+
+        // Update vector index if embedding is configured.
+        final embedding = ref.read(embeddingServiceProvider);
+        final index = ref.read(indexServiceProvider);
+        if (embedding != null && result.summary!.isNotEmpty) {
+          final input = IndexService.buildEmbeddingInput(updated);
+          final embedResult = await embedding.embed(input);
+          if (embedResult != null) {
+            await index.put(IndexRecord(
+              articleId: updated.id,
+              model: embedResult.model,
+              fingerprint: contentFingerprint(
+                  updated.title, result.summary!, updated.tags),
+              vector: embedResult.vector,
+            ));
+          }
+        }
       } catch (e, st) {
         developer.log(
           'background summarize failed',
