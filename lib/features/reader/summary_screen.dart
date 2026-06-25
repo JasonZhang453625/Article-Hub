@@ -42,6 +42,34 @@ class SummaryScreen extends ConsumerWidget {
               context.push(AppRoutes.readerWithId(a.id), extra: a);
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline_rounded),
+            tooltip: s.delete,
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: Text(s.deleteArticle),
+                  content: Text(s.deleteConfirm),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: Text(s.cancel),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                      child: Text(s.delete),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true && context.mounted) {
+                await ref.read(articlesProvider.notifier).delete(a.id);
+                if (context.mounted) Navigator.of(context).pop();
+              }
+            },
+          ),
         ],
       ),
       body: SingleChildScrollView(
