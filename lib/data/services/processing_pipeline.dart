@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import '../models/passage.dart';
 import '../models/settings.dart';
 import '../models/folder.dart';
@@ -32,12 +33,17 @@ import 'page_loader.dart';
 /// intervention.
 class ProcessingPipeline {
   final ArticlesNotifier _articles;
-  final AppSettings? _settings;
-  final List<Folder> _folders;
+  final AppSettings? Function() _getSettings;
+  final List<Folder> Function() _getFolders;
   final MetadataService _metadata;
   final ContentExtractor _extractor;
   final EmbeddingService? _embedding;
   final IndexService? _index;
+  final Future<Folder?> Function(String name)? _createFolder;
+
+  /// Mutable — refreshed from getters at the start of each [process] call.
+  AppSettings? _settings;
+  List<Folder> _folders = [];
 
   /// Per-article fetched page, scoped to a single pipeline run.
   /// Stage 1 fetches once; Stage 2 parses the same final HTML.
@@ -49,22 +55,28 @@ class ProcessingPipeline {
 
   ProcessingPipeline({
     required ArticlesNotifier articles,
-    required AppSettings? settings,
-    List<Folder> folders = const [],
+    required AppSettings? Function() getSettings,
+    required List<Folder> Function() getFolders,
     MetadataService? metadata,
     ContentExtractor? extractor,
     EmbeddingService? embedding,
     IndexService? index,
+    Future<Folder?> Function(String name)? createFolder,
   })  : _articles = articles,
-        _settings = settings,
-        _folders = folders,
+        _getSettings = getSettings,
+        _getFolders = getFolders,
         _metadata = metadata ?? MetadataService(),
         _extractor = extractor ?? ContentExtractor(),
         _embedding = embedding,
-        _index = index;
+        _index = index,
+        _createFolder = createFolder;
 
   /// Process a single article through all stages. Returns the final article.
   Future<Article?> process(Article article) async {
+    // Refresh settings and folders from providers each run.
+    _settings = _getSettings();
+    _folders = List<Folder>.from(_getFolders());
+
     var current = article;
 
     // Mark as processing.
@@ -110,7 +122,7 @@ class ProcessingPipeline {
     await _articles.update(current);
 
     // Incrementally update the vector index.
-    _updateIndex(current);
+    await _updateIndex(current);
     _fetchedPageCache.remove(current.id);
 
     return current;
@@ -167,20 +179,21 @@ class ProcessingPipeline {
 
   Future<Article> _stageSummary(Article article) async {
     _notifyStage(article, ProcessingStage.summary);
-    if (_settings == null ||
-        _settings.aiBaseUrl.trim().isEmpty ||
-        _settings.aiApiKey.trim().isEmpty) {
+    final settings = _settings;
+    if (settings == null ||
+        settings.aiBaseUrl.trim().isEmpty ||
+        settings.aiApiKey.trim().isEmpty) {
       _contentCache.remove(article.id);
       return _fail(article, 'summary', 'AI not configured');
     }
 
     final ai = AiService(
-      baseUrl: _settings.aiBaseUrl,
-      apiKey: _settings.aiApiKey,
-      model: _settings.aiModel,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
     );
-    final langHint = aiLanguagePrompt(_settings.languageIndex);
-    final verbosity = _settings.summaryVerbosityIndex;
+    final langHint = aiLanguagePrompt(settings.languageIndex);
+    final verbosity = settings.summaryVerbosityIndex;
 
     try {
       final cachedContent = _contentCache.remove(article.id);
@@ -228,9 +241,10 @@ class ProcessingPipeline {
 
   Future<Article> _stageTags(Article article) async {
     _notifyStage(article, ProcessingStage.tags);
-    if (_settings == null ||
-        _settings.aiBaseUrl.trim().isEmpty ||
-        _settings.aiApiKey.trim().isEmpty) {
+    final settings = _settings;
+    if (settings == null ||
+        settings.aiBaseUrl.trim().isEmpty ||
+        settings.aiApiKey.trim().isEmpty) {
       return article;
     }
 
@@ -255,10 +269,11 @@ class ProcessingPipeline {
   }
 
   Future<List<String>> _generateTags(String title, String summary) async {
+    final settings = _settings!;
     final ai = AiService(
-      baseUrl: _settings!.aiBaseUrl,
-      apiKey: _settings.aiApiKey,
-      model: _settings.aiModel,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
     );
 
     final prompt =
@@ -290,20 +305,26 @@ class ProcessingPipeline {
   /// [Article.suggestedFolderId] — the user must confirm before moving.
   Future<Article> _stageFolderSuggestion(Article article) async {
     _notifyStage(article, ProcessingStage.folderSuggestion);
-    if (_folders.isEmpty) return article;
-    if (_settings == null ||
-        _settings.aiBaseUrl.trim().isEmpty ||
-        _settings.aiApiKey.trim().isEmpty) {
+    final settings = _settings;
+    if (settings == null ||
+        settings.aiBaseUrl.trim().isEmpty ||
+        settings.aiApiKey.trim().isEmpty) {
       return article;
     }
 
     try {
       final folderNames = _folders.map((f) => f.name).toList();
+      developer.log('folder suggestion: ${folderNames.length} folders available',
+          name: 'article_hub.pipeline');
+
       final suggested = await _suggestFolder(
         article.title,
         article.summary ?? '',
         folderNames,
       );
+      developer.log('folder suggestion: AI returned "$suggested"',
+          name: 'article_hub.pipeline');
+
       if (suggested == null) return article;
 
       // Match the suggested name back to a folder ID (case-insensitive).
@@ -312,6 +333,17 @@ class ProcessingPipeline {
       ).firstOrNull;
       if (match != null) {
         return article.copyWith(suggestedFolderId: match.id);
+      }
+
+      // No existing folder matched — create a new one if possible.
+      if (_createFolder != null) {
+        developer.log('folder suggestion: creating new folder "$suggested"',
+            name: 'article_hub.pipeline');
+        final newFolder = await _createFolder(suggested);
+        if (newFolder != null) {
+          _folders.add(newFolder);
+          return article.copyWith(suggestedFolderId: newFolder.id);
+        }
       }
       return article;
     } catch (e) {
@@ -323,23 +355,30 @@ class ProcessingPipeline {
 
   Future<String?> _suggestFolder(
       String title, String summary, List<String> folderNames) async {
+    final settings = _settings!;
     final ai = AiService(
-      baseUrl: _settings!.aiBaseUrl,
-      apiKey: _settings.aiApiKey,
-      model: _settings.aiModel,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
     );
 
     final namesList = folderNames.map((n) => '"$n"').join(', ');
-    final prompt =
-        'You are a folder organizer. Given an article title, summary, and a '
-        'list of existing folders, return the single best matching folder name. '
-        'If none fit well, return "none". Return ONLY the folder name or '
-        '"none", nothing else. Available folders: [$namesList]';
+    final systemPrompt = folderNames.isEmpty
+        ? 'You are a folder organizer. Given an article title and summary, '
+            'suggest a concise folder name (2-4 words) to categorize this article. '
+            'Return ONLY the folder name, nothing else.'
+        : 'You are a folder organizer. Given an article title, summary, and a '
+            'list of existing folders, return the single best matching folder name. '
+            'If none fit well, suggest a new concise folder name (2-4 words). '
+            'Return ONLY the folder name, nothing else. '
+            'Available folders: [$namesList]';
 
-    final response = await ai.summarize(
-      title,
-      '$summary\n\n---\n$prompt',
-      languageHint: '',
+    final userMessage = 'Title: $title\n\nSummary: $summary';
+    final response = await ai.chat(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      temperature: 0.1,
+      maxTokens: 50,
     );
     if (response == null) return null;
 
@@ -350,25 +389,36 @@ class ProcessingPipeline {
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
-  void _updateIndex(Article article) {
+  Future<void> _updateIndex(Article article) async {
     final embedding = _embedding;
     final index = _index;
     if (embedding == null || index == null) return;
     if (article.summary == null || article.summary!.isEmpty) return;
 
-    final input = IndexService.buildEmbeddingInput(article);
-    embedding.embed(input).then((result) {
-      if (result == null) return;
-      index.put(IndexRecord(
+    try {
+      final input = IndexService.buildEmbeddingInput(article);
+      final result = await embedding.embed(input);
+      if (result == null) {
+        developer.log(
+          'embedding returned null, skipping index put for ${article.id}',
+          name: 'article_hub.pipeline',
+        );
+        return;
+      }
+      await index.put(IndexRecord(
         articleId: article.id,
         model: result.model,
-        fingerprint: contentFingerprint(
-            article.title, article.summary!, article.tags),
+        fingerprint:
+            contentFingerprint(article.title, article.summary!, article.tags),
         vector: result.vector,
       ));
-    }).catchError((e) {
+      developer.log(
+        'index updated for article ${article.id}',
+        name: 'article_hub.pipeline',
+      );
+    } catch (e) {
       developer.log('index update failed: $e', name: 'article_hub.pipeline');
-    });
+    }
   }
 
   void _notifyStage(Article article, ProcessingStage stage) {
@@ -398,8 +448,6 @@ class ProcessingPipeline {
 
 final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
   final articles = ref.read(articlesProvider.notifier);
-  final settings = ref.read(settingsProvider).valueOrNull;
-  final folders = ref.read(foldersProvider).valueOrNull ?? [];
   final embedding = ref.read(embeddingServiceProvider);
   final index = ref.read(indexServiceProvider);
 
@@ -408,12 +456,20 @@ final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
 
   final pipeline = ProcessingPipeline(
     articles: articles,
-    settings: settings,
-    folders: folders,
+    getSettings: () => ref.read(settingsProvider).valueOrNull,
+    getFolders: () => ref.read(foldersProvider).valueOrNull ?? [],
     metadata: MetadataService(loader: pageLoader, ownsLoader: false),
     extractor: ContentExtractor(loader: pageLoader, ownsLoader: false),
     embedding: embedding,
     index: index,
+    createFolder: (name) async {
+      final folder = Folder(
+        id: const Uuid().v4(),
+        name: name,
+      );
+      await ref.read(foldersProvider.notifier).add(folder);
+      return folder;
+    },
   );
   ref.onDispose(pipeline.dispose);
   return pipeline;

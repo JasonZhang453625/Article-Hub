@@ -846,20 +846,7 @@ class _IndexManagementCard extends ConsumerStatefulWidget {
 
 class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
   bool _rebuilding = false;
-  int? _indexedCount;
   String? _rebuildResult;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCount();
-  }
-
-  Future<void> _loadCount() async {
-    final index = ref.read(indexServiceProvider);
-    final count = await index.count();
-    if (mounted) setState(() => _indexedCount = count);
-  }
 
   Future<void> _rebuild() async {
     setState(() {
@@ -886,7 +873,6 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
 
     setState(() {
       _rebuilding = false;
-      _indexedCount = count;
       _rebuildResult = '${ref.read(stringsProvider).indexedN} $count articles';
     });
   }
@@ -894,6 +880,8 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
   @override
   Widget build(BuildContext context) {
     final s = ref.watch(stringsProvider);
+    final countAsync = ref.watch(indexCountProvider);
+    final indexedCount = countAsync.valueOrNull;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -908,8 +896,8 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
           Text(s.indexManagement, style: widget.theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
-            _indexedCount != null
-                ? '$_indexedCount ${s.nArticlesIndexed}'
+            indexedCount != null
+                ? '$indexedCount ${s.nArticlesIndexed}'
                 : s.loadingIndexStatus,
             style: widget.theme.textTheme.bodySmall?.copyWith(
               color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),

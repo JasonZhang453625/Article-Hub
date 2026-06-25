@@ -199,17 +199,46 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
         await notifier.update(updated);
 
         // Update vector index if embedding is configured.
-        if (embedding != null && result.summary!.isNotEmpty) {
-          final input = IndexService.buildEmbeddingInput(updated);
-          final embedResult = await embedding.embed(input);
-          if (embedResult != null) {
-            await index.put(IndexRecord(
-              articleId: updated.id,
-              model: embedResult.model,
-              fingerprint: contentFingerprint(
-                  updated.title, result.summary!, updated.tags),
-              vector: embedResult.vector,
-            ));
+        if (embedding == null) {
+          developer.log(
+            'skipping index update: embedding not configured',
+            name: 'article_hub.index',
+          );
+        } else if (result.summary!.isEmpty) {
+          developer.log(
+            'skipping index update: empty summary',
+            name: 'article_hub.index',
+          );
+        } else {
+          try {
+            final input = IndexService.buildEmbeddingInput(updated);
+            final embedResult = await embedding.embed(input);
+            if (embedResult == null) {
+              developer.log(
+                'embedding API returned null — index NOT updated for article ${updated.id}',
+                name: 'article_hub.index',
+              );
+            } else {
+              await index.put(IndexRecord(
+                articleId: updated.id,
+                model: embedResult.model,
+                fingerprint: contentFingerprint(
+                    updated.title, result.summary!, updated.tags),
+                vector: embedResult.vector,
+              ));
+              developer.log(
+                'index updated for article ${updated.id} '
+                '(model=${embedResult.model}, vector dim=${embedResult.vector.length})',
+                name: 'article_hub.index',
+              );
+            }
+          } catch (e, st) {
+            developer.log(
+              'index update failed for article ${updated.id}',
+              name: 'article_hub.index',
+              error: e,
+              stackTrace: st,
+            );
           }
         }
       } catch (e, st) {

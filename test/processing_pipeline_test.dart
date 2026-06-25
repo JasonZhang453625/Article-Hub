@@ -73,7 +73,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: null,
+        getSettings: () => null,
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async => htmlResponse(html)),
         ),
@@ -96,7 +97,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: null,
+        getSettings: () => null,
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async => throw Exception('dns failure')),
         ),
@@ -118,7 +120,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: null,
+        getSettings: () => null,
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
@@ -139,7 +142,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: null,
+        getSettings: () => null,
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
@@ -162,7 +166,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        getSettings: () => AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async => htmlResponse(
                 '<html><head><title>X</title></head>'
@@ -187,7 +192,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: null,
+        getSettings: () => null,
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async =>
               htmlResponse('<html><head><title>X</title></head></html>')),
@@ -218,8 +224,8 @@ void main() {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
-        folders: const <Folder>[],
+        getSettings: () => AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(
           http: mockHttp((_) async => htmlResponse(
                 '<html><head><title>X</title></head>'
@@ -253,7 +259,8 @@ void main() {
       );
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        getSettings: () => AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(loader: loader, ownsLoader: false),
         extractor: ContentExtractor(loader: loader, ownsLoader: false),
       );
@@ -281,10 +288,11 @@ void main() {
       );
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        settings: AppSettings(
+        getSettings: () => AppSettings(
           aiBaseUrl: 'https://should-not-be-called.example/v1',
           aiApiKey: 'unused',
         ),
+        getFolders: () => const <Folder>[],
         metadata: MetadataService(loader: loader, ownsLoader: false),
         extractor: ContentExtractor(loader: loader, ownsLoader: false),
       );

@@ -81,19 +81,44 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     String articleId,
     String? generatedTitle,
     String summary,
+    String? coverImageUrl,
   ) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     final current = repo.getById(articleId);
     if (current == null) return;
 
-    await repo.update(
-      current.copyWith(
-        title: generatedTitle ?? current.title,
-        summary: summary,
-        summaryFeedback: Article.clearValue,
-      ),
+    final updated = current.copyWith(
+      title: generatedTitle ?? current.title,
+      summary: summary,
+      summaryFeedback: Article.clearValue,
+      coverImageUrl: coverImageUrl ?? current.coverImageUrl,
     );
+    await repo.update(updated);
     state = AsyncValue.data(repo.getAll());
+
+    // Update vector index with the new summary.
+    _updateIndex(updated);
+  }
+
+  void _updateIndex(Article article) {
+    final embedding = _ref.read(embeddingServiceProvider);
+    final index = _ref.read(indexServiceProvider);
+    if (embedding == null) return;
+    if (article.summary == null || article.summary!.isEmpty) return;
+
+    final input = IndexService.buildEmbeddingInput(article);
+    embedding.embed(input).then((result) {
+      if (result == null) return;
+      index.put(IndexRecord(
+        articleId: article.id,
+        model: result.model,
+        fingerprint: contentFingerprint(
+            article.title, article.summary!, article.tags),
+        vector: result.vector,
+      ));
+    }).catchError((e) {
+      // Index update is best-effort; don't fail the summary save.
+    });
   }
 
   Future<void> delete(String id) async {
@@ -368,6 +393,17 @@ final embeddingConfiguredProvider = Provider<bool>((ref) {
 final indexServiceProvider = Provider<IndexService>((ref) {
   ref.watch(hiveInitProvider);
   return IndexService();
+});
+
+/// Live count of indexed records. Re-emits whenever the vector index box
+/// is mutated (put / delete / clear), so UI surfaces auto-refresh.
+final indexCountProvider = StreamProvider<int>((ref) async* {
+  final index = ref.watch(indexServiceProvider);
+  final box = await index.openBox();
+  yield box.length;
+  await for (final _ in box.watch()) {
+    yield box.length;
+  }
 });
 
 /// Retrieval service for knowledge base queries.

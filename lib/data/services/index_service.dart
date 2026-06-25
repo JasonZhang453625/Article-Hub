@@ -66,6 +66,10 @@ class IndexService {
     return _box!;
   }
 
+  /// Public accessor for the underlying Hive box. Used by providers that
+  /// need to listen for mutations (e.g. `box.watch()` for live UI updates).
+  Future<Box<IndexRecord>> openBox() => _openBox();
+
   /// Get all index records.
   Future<List<IndexRecord>> getAll() async {
     final box = await _openBox();
