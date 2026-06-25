@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'config/theme.dart';
 import 'config/routes.dart';
+import 'shared/providers/locale_provider.dart';
 import 'shared/providers/settings_providers.dart';
 
 class App extends ConsumerWidget {
@@ -11,6 +13,7 @@ class App extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
     final fontSize = ref.watch(fontSizeProvider);
+    final locale = ref.watch(localeProvider);
 
     // Derive a text scale factor relative to the default 14.0
     final textScaleFactor = fontSize / 14.0;
@@ -20,6 +23,16 @@ class App extends ConsumerWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
+      locale: locale,
+      supportedLocales: const [
+        Locale('en'),
+        Locale('zh'),
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       routerConfig: appRouter,
       debugShowCheckedModeBanner: false,
       builder: (context, child) {

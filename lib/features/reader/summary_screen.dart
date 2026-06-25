@@ -3,12 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/models/passage.dart';
-import '../../data/services/ai_service.dart';
-import '../../data/services/content_extractor.dart';
 import '../../config/routes.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/date_formatter.dart';
+import 'summary_regeneration_provider.dart';
 
 class SummaryScreen extends ConsumerWidget {
   final Article article;
@@ -19,6 +19,7 @@ class SummaryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final s = ref.watch(stringsProvider);
 
     // Watch the provider so the page auto-refreshes when the background
     // summarization finishes and updates the article.
@@ -32,19 +33,13 @@ class SummaryScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          a.source.displayName,
-          style: const TextStyle(fontSize: 16),
-        ),
+        title: Text(a.source.displayName, style: const TextStyle(fontSize: 16)),
         actions: [
           IconButton(
             icon: const Icon(Icons.open_in_browser_rounded),
-            tooltip: 'Open in browser',
+            tooltip: s.openInBrowser,
             onPressed: () {
-              context.push(
-                AppRoutes.readerWithId(a.id),
-                extra: a,
-              );
+              context.push(AppRoutes.readerWithId(a.id), extra: a);
             },
           ),
         ],
@@ -80,7 +75,11 @@ class SummaryScreen extends ConsumerWidget {
                 ),
                 if (a.isFavorite) ...[
                   const SizedBox(width: 8),
-                  const Icon(Icons.star_rounded, color: Color(0xFFF5B301), size: 16),
+                  const Icon(
+                    Icons.star_rounded,
+                    color: Color(0xFFF5B301),
+                    size: 16,
+                  ),
                 ],
               ],
             ),
@@ -109,24 +108,26 @@ class SummaryScreen extends ConsumerWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: a.tags
-                    .map((tag) => Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
+                    .map(
+                      (tag) => Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? Colors.white.withValues(alpha: 0.08)
+                              : const Color(0xFFF2F6F9),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          tag,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.08)
-                                : const Color(0xFFF2F6F9),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            tag,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ))
+                        ),
+                      ),
+                    )
                     .toList(),
               ),
               const SizedBox(height: 16),
@@ -183,15 +184,12 @@ class SummaryScreen extends ConsumerWidget {
               width: double.infinity,
               child: FilledButton.icon(
                 onPressed: () {
-                  context.push(
-                    AppRoutes.readerWithId(a.id),
-                    extra: a,
-                  );
+                  context.push(AppRoutes.readerWithId(a.id), extra: a);
                 },
                 icon: const Icon(Icons.chrome_reader_mode_rounded),
-                label: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('Read Original'),
+                label: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(s.readOriginal),
                 ),
               ),
             ),
@@ -220,8 +218,6 @@ class _SummarySection extends ConsumerStatefulWidget {
 }
 
 class _SummarySectionState extends ConsumerState<_SummarySection> {
-  bool _regenerating = false;
-
   Future<void> _regenerate() async {
     final settings = ref.read(settingsProvider).valueOrNull;
     if (settings == null ||
@@ -230,55 +226,28 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
       return;
     }
 
-    setState(() => _regenerating = true);
+    final result = await ref
+        .read(summaryRegenerationProvider.notifier)
+        .regenerate(widget.article, settings);
+    if (!mounted || result.succeeded) return;
 
-    final ai = AiService(
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
+    final s = ref.read(stringsProvider);
+    final detail = result.error;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          detail == null ? s.summaryFailed : '${s.summaryFailed}\n$detail',
+        ),
+      ),
     );
-    final extractor = ContentExtractor();
-    final langHint = aiLanguagePrompt(settings.languageIndex);
-    final verbosity = settings.summaryVerbosityIndex;
+  }
 
-    try {
-      String? summary;
-      final content = await extractor.extract(widget.article.url);
-      if (content != null && content.isNotEmpty) {
-        summary = await ai.summarize(widget.article.title, content,
-            languageHint: langHint, verbosity: verbosity);
-      } else {
-        summary = await ai.summarizeFromUrl(widget.article.title, widget.article.url,
-            languageHint: langHint, verbosity: verbosity);
-      }
-
-      if (summary != null && summary.isNotEmpty && mounted) {
-        // Clear any prior feedback: the content changed on regeneration, so
-        // the old thumbs up/down no longer applies to the new summary.
-        final updated = widget.article.copyWith(
-          summary: summary,
-          summaryFeedback: Article.clearValue,
-        );
-        await ref.read(articlesProvider.notifier).update(updated);
-      } else if (summary == null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Summary generation failed. Check your AI settings.'),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Summary generation failed. Check your AI settings.'),
-          ),
-        );
-      }
-    } finally {
-      extractor.dispose();
-      if (mounted) setState(() => _regenerating = false);
-    }
+  bool _isRegenerating() {
+    return ref.watch(
+      summaryRegenerationProvider.select(
+        (articleIds) => articleIds.contains(widget.article.id),
+      ),
+    );
   }
 
   @override
@@ -287,6 +256,8 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
     final isDark = widget.isDark;
     final summary = widget.article.summary;
     final aiConfigured = ref.watch(aiConfiguredProvider);
+    final s = ref.watch(stringsProvider);
+    final regenerating = _isRegenerating();
 
     if (summary == null || summary.isEmpty) {
       return Container(
@@ -317,8 +288,8 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
                 Expanded(
                   child: Text(
                     aiConfigured
-                        ? 'AI summary not yet generated.'
-                        : 'AI summary not available. Configure AI in Settings to enable.',
+                        ? s.aiSummaryNotGenerated
+                        : s.aiSummaryNotAvailable,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: isDark ? Colors.white38 : const Color(0xFF98ADB8),
                     ),
@@ -331,15 +302,15 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _regenerating ? null : _regenerate,
-                  icon: _regenerating
+                  onPressed: regenerating ? null : _regenerate,
+                  icon: regenerating
                       ? const SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.auto_awesome_rounded, size: 18),
-                  label: Text(_regenerating ? 'Generating...' : 'Generate Summary'),
+                  label: Text(regenerating ? s.generating : s.generateSummary),
                 ),
               ),
             ],
@@ -374,7 +345,7 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
               ),
               const SizedBox(width: 8),
               Text(
-                'AI Summary',
+                s.aiSummary,
                 style: theme.textTheme.labelLarge?.copyWith(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w700,
@@ -384,10 +355,10 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
               if (aiConfigured)
                 InkWell(
                   borderRadius: BorderRadius.circular(16),
-                  onTap: _regenerating ? null : _regenerate,
+                  onTap: regenerating ? null : _regenerate,
                   child: Padding(
                     padding: const EdgeInsets.all(4),
-                    child: _regenerating
+                    child: regenerating
                         ? const SizedBox(
                             width: 16,
                             height: 16,
@@ -396,7 +367,9 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
                         : Icon(
                             Icons.refresh_rounded,
                             size: 18,
-                            color: theme.colorScheme.primary.withValues(alpha: 0.6),
+                            color: theme.colorScheme.primary.withValues(
+                              alpha: 0.6,
+                            ),
                           ),
                   ),
                 ),
@@ -441,6 +414,7 @@ class _FolderSuggestionBanner extends ConsumerWidget {
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final s = ref.watch(stringsProvider);
 
     return Container(
       width: double.infinity,
@@ -449,9 +423,7 @@ class _FolderSuggestionBanner extends ConsumerWidget {
       decoration: BoxDecoration(
         color: colorScheme.primaryContainer.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: colorScheme.primary.withValues(alpha: 0.2),
-        ),
+        border: Border.all(color: colorScheme.primary.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
@@ -459,7 +431,7 @@ class _FolderSuggestionBanner extends ConsumerWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Suggested folder: ${folder.name}',
+              '${s.suggestedFolder}: ${folder.name}',
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
@@ -467,15 +439,19 @@ class _FolderSuggestionBanner extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () {
-              ref.read(articlesProvider.notifier).confirmFolderSuggestion(article.id);
+              ref
+                  .read(articlesProvider.notifier)
+                  .confirmFolderSuggestion(article.id);
             },
-            child: const Text('Move'),
+            child: Text(s.move),
           ),
           TextButton(
             onPressed: () {
-              ref.read(articlesProvider.notifier).dismissFolderSuggestion(article.id);
+              ref
+                  .read(articlesProvider.notifier)
+                  .dismissFolderSuggestion(article.id);
             },
-            child: const Text('Dismiss'),
+            child: Text(s.dismiss),
           ),
         ],
       ),

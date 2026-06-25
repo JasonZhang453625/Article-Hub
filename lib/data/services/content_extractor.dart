@@ -1,20 +1,34 @@
 import 'dart:developer' as developer;
 import 'package:html/parser.dart' as html_parser;
 
+import 'default_page_loader.dart';
 import 'http_client.dart';
+import 'page_loader.dart';
 
 class ContentExtractor {
-  final AppHttpClient _http;
+  final PageLoader _loader;
+  final bool _ownsLoader;
 
-  ContentExtractor({AppHttpClient? http}) : _http = http ?? AppHttpClient();
+  ContentExtractor({
+    PageLoader? loader,
+    AppHttpClient? http,
+    bool ownsLoader = true,
+  })  : assert(loader == null || http == null),
+        _loader = loader ?? http ?? createDefaultPageLoader(),
+        _ownsLoader = ownsLoader;
 
   Future<String?> extract(String url) async {
-    final page = await _http.fetch(url);
+    final page = await _loader.fetch(url);
     developer.log(
-      'status: ${page?.statusCode}, url: $url',
+      'status: ${page?.statusCode}, source: ${page?.source.name}, '
+      'finalUrl: ${page?.finalUrl ?? url}',
       name: 'article_hub.extractor',
     );
-    if (page == null || !page.isHtml) return null;
+    if (page == null ||
+        !page.isHtml ||
+        fetchedPageLooksBlocked(page)) {
+      return null;
+    }
 
     final text = _extractText(page.body);
     developer.log(
@@ -26,7 +40,7 @@ class ContentExtractor {
 
   /// Extract content from an already-fetched page (avoids a second HTTP call).
   String? fromFetchedPage(FetchedPage page) {
-    if (!page.isHtml) return null;
+    if (!page.isHtml || fetchedPageLooksBlocked(page)) return null;
     return _extractText(page.body);
   }
 
@@ -42,6 +56,7 @@ class ContentExtractor {
 
     // Try common article containers first
     for (final selector in [
+      '.J-lemma-content', // Baidu Baike
       'article',
       '[role="main"]',
       'main',
@@ -78,5 +93,7 @@ class ContentExtractor {
         .trim();
   }
 
-  void dispose() => _http.dispose();
+  void dispose() {
+    if (_ownsLoader) _loader.dispose();
+  }
 }

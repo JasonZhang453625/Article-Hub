@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/folder.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/utils/locale_strings.dart';
 
 class FoldersScreen extends ConsumerStatefulWidget {
   const FoldersScreen({super.key});
@@ -13,23 +15,24 @@ class FoldersScreen extends ConsumerStatefulWidget {
 
 class _FoldersScreenState extends ConsumerState<FoldersScreen> {
   void _showAddDialog({String? parentId}) {
+    final s = ref.read(stringsProvider);
     final controller = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(parentId == null ? 'New Folder' : 'New Subfolder'),
+        title: Text(parentId == null ? s.newFolder : s.newSubfolder),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Folder name',
-            hintText: 'e.g. Tech, Reading List',
+          decoration: InputDecoration(
+            labelText: s.folderName,
+            hintText: s.folderHint,
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(s.cancel),
           ),
           FilledButton(
             onPressed: () {
@@ -43,7 +46,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
               ref.read(foldersProvider.notifier).add(folder);
               Navigator.pop(context);
             },
-            child: const Text('Create'),
+            child: Text(s.create),
           ),
         ],
       ),
@@ -51,20 +54,21 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
   }
 
   void _showRenameDialog(Folder folder) {
+    final s = ref.read(stringsProvider);
     final controller = TextEditingController(text: folder.name);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Rename Folder'),
+        title: Text(s.renameFolder),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'Folder name'),
+          decoration: InputDecoration(labelText: s.folderName),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(s.cancel),
           ),
           FilledButton(
             onPressed: () {
@@ -73,7 +77,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
               ref.read(foldersProvider.notifier).update(folder.copyWith(name: name));
               Navigator.pop(context);
             },
-            child: const Text('Rename'),
+            child: Text(s.rename),
           ),
         ],
       ),
@@ -81,17 +85,16 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
   }
 
   void _confirmDelete(Folder folder) {
+    final s = ref.read(stringsProvider);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Folder'),
-        content: Text(
-          'Delete "${folder.name}"? Articles in this folder will become unfiled.',
-        ),
+        title: Text(s.deleteFolder),
+        content: Text(s.deleteFolderConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(s.cancel),
           ),
           FilledButton(
             onPressed: () {
@@ -101,7 +104,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
-            child: const Text('Delete'),
+            child: Text(s.delete),
           ),
         ],
       ),
@@ -110,16 +113,17 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final theme = Theme.of(context);
     final foldersAsync = ref.watch(foldersProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Folders'),
+        title: Text(s.foldersTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.create_new_folder_rounded),
-            tooltip: 'New folder',
+            tooltip: s.newFolder,
             onPressed: () => _showAddDialog(),
           ),
         ],
@@ -135,10 +139,10 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
                 children: [
                   Icon(Icons.folder_outlined, size: 48, color: theme.colorScheme.outline),
                   const SizedBox(height: 16),
-                  Text('No folders yet', style: theme.textTheme.bodyLarge),
+                  Text(s.noFoldersYet, style: theme.textTheme.bodyLarge),
                   const SizedBox(height: 8),
                   Text(
-                    'Create folders to organize your articles',
+                    s.createFoldersDesc,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.outline,
                     ),
@@ -160,6 +164,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
               return _FolderTile(
                 folder: folder,
                 children: children,
+                s: s,
                 onRename: () => _showRenameDialog(folder),
                 onDelete: () => _confirmDelete(folder),
                 onAddSubfolder: () => _showAddDialog(parentId: folder.id),
@@ -177,6 +182,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
 class _FolderTile extends StatelessWidget {
   final Folder folder;
   final List<Folder> children;
+  final LocaleStrings s;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onAddSubfolder;
@@ -186,6 +192,7 @@ class _FolderTile extends StatelessWidget {
   const _FolderTile({
     required this.folder,
     required this.children,
+    required this.s,
     required this.onRename,
     required this.onDelete,
     required this.onAddSubfolder,
@@ -218,9 +225,9 @@ class _FolderTile extends StatelessWidget {
               }
             },
             itemBuilder: (_) => [
-              const PopupMenuItem(value: 'add_sub', child: Text('Add subfolder')),
-              const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              PopupMenuItem(value: 'add_sub', child: Text(s.addSubfolder)),
+              PopupMenuItem(value: 'rename', child: Text(s.rename)),
+              PopupMenuItem(value: 'delete', child: Text(s.delete)),
             ],
           ),
         ),
@@ -242,8 +249,8 @@ class _FolderTile extends StatelessWidget {
                   }
                 },
                 itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  PopupMenuItem(value: 'rename', child: Text(s.rename)),
+                  PopupMenuItem(value: 'delete', child: Text(s.delete)),
                 ],
               ),
             ),

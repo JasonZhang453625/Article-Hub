@@ -164,8 +164,10 @@ void main() {
         articles: notifier,
         settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
         metadata: MetadataService(
-          http: mockHttp((_) async =>
-              htmlResponse('<html><head><title>X</title></head></html>')),
+          http: mockHttp((_) async => htmlResponse(
+                '<html><head><title>X</title></head>'
+                '<body><article>$_longArticleText</article></body></html>',
+              )),
         ),
         extractor: ContentExtractor(
           http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
@@ -219,8 +221,10 @@ void main() {
         settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
         folders: const <Folder>[],
         metadata: MetadataService(
-          http: mockHttp((_) async =>
-              htmlResponse('<html><head><title>X</title></head></html>')),
+          http: mockHttp((_) async => htmlResponse(
+                '<html><head><title>X</title></head>'
+                '<body><article>$_longArticleText</article></body></html>',
+              )),
         ),
         extractor: ContentExtractor(
           http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
@@ -231,6 +235,66 @@ void main() {
       expect(result!.processingStatus, ProcessingStatus.failed);
       expect(result.tags, isEmpty);
       expect(result.suggestedFolderId, isNull);
+    });
+  });
+
+  group('Shared resilient page load', () {
+    test('metadata and content stages reuse one fetched page', () async {
+      final notifier = await seedAndGetNotifier(seedArticle());
+      final loader = _CountingPageLoader(
+        FetchedPage(
+          statusCode: 200,
+          contentType: 'text/html',
+          body: '<html><head><title>One Fetch</title></head>'
+              '<body><article>$_longArticleText</article></body></html>',
+          finalUrl: 'https://example.com/final',
+          source: PageLoadSource.webView,
+        ),
+      );
+      final pipeline = ProcessingPipeline(
+        articles: notifier,
+        settings: AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        metadata: MetadataService(loader: loader, ownsLoader: false),
+        extractor: ContentExtractor(loader: loader, ownsLoader: false),
+      );
+
+      final result = await pipeline.process(seedArticle());
+
+      expect(loader.fetchCount, 1);
+      expect(result!.title, 'One Fetch');
+      expect(result.processingError, startsWith('summary:'));
+      pipeline.dispose();
+      loader.dispose();
+    });
+
+    test('verification page fails before the MiMo stage', () async {
+      final notifier = await seedAndGetNotifier(seedArticle());
+      final loader = _CountingPageLoader(
+        const FetchedPage(
+          statusCode: 200,
+          contentType: 'text/html',
+          body: '<html><head><title>安全验证</title></head>'
+              '<body>请输入验证码后继续访问</body></html>',
+          finalUrl: 'https://example.com/verify',
+          source: PageLoadSource.webView,
+        ),
+      );
+      final pipeline = ProcessingPipeline(
+        articles: notifier,
+        settings: AppSettings(
+          aiBaseUrl: 'https://should-not-be-called.example/v1',
+          aiApiKey: 'unused',
+        ),
+        metadata: MetadataService(loader: loader, ownsLoader: false),
+        extractor: ContentExtractor(loader: loader, ownsLoader: false),
+      );
+
+      final result = await pipeline.process(seedArticle());
+
+      expect(loader.fetchCount, 1);
+      expect(result!.processingError, startsWith('content:'));
+      pipeline.dispose();
+      loader.dispose();
     });
   });
 }
@@ -282,10 +346,31 @@ class _InMemoryArticleRepository extends ArticleRepository {
 /// returns a real (non-null) string and the pipeline advances to the summary
 /// stage. The repetition is intentional — it's the deterministic way to clear
 /// the extractor's length threshold without writing fake prose.
-const String _longArticleHtml = '<html><body><article>'
+const String _longArticleText =
     'This is a sufficiently long article body for the content extractor to '
     'consider it real prose. It needs to exceed two hundred characters so '
     'the extractor returns a non-null string and the pipeline proceeds past '
     'the content stage into the summary stage, where we assert the AI-not-'
-    'configured failure. Padding padding padding padding padding padding.'
-    '</article></body></html>';
+    'configured failure. Padding padding padding padding padding padding.';
+
+const String _longArticleHtml =
+    '<html><body><article>$_longArticleText</article></body></html>';
+
+class _CountingPageLoader implements PageLoader {
+  final FetchedPage? page;
+  int fetchCount = 0;
+  bool disposed = false;
+
+  _CountingPageLoader(this.page);
+
+  @override
+  Future<FetchedPage?> fetch(String url) async {
+    fetchCount++;
+    return page;
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
+  }
+}

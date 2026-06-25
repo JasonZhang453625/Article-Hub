@@ -4,10 +4,15 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 
 class AiService {
+  static const int _singlePassLimit = 15000;
+  static const int _chunkSize = 12000;
+  static const int _summaryMaxTokens = 4000;
+
   final String baseUrl;
   final String apiKey;
   final String model;
   final Duration timeout;
+  String? lastError;
 
   AiService({
     required this.baseUrl,
@@ -28,6 +33,18 @@ class AiService {
 
   bool get isConfigured =>
       baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
+
+  Map<String, dynamic> get _summaryOutputOptions {
+    final isMiMo = baseUrl.toLowerCase().contains('xiaomimimo.com') ||
+        model.toLowerCase().startsWith('mimo-');
+    if (isMiMo) {
+      return {
+        'max_completion_tokens': _summaryMaxTokens,
+        'thinking': {'type': 'disabled'},
+      };
+    }
+    return {'max_tokens': _summaryMaxTokens};
+  }
 
   /// Build a language- and length-aware summary instruction.
   ///
@@ -85,19 +102,49 @@ class AiService {
     }
   }
 
-  Future<String?> summarize(String title, String content, {String languageHint = '', int verbosity = 0}) async {
+  Future<String?> summarize(String title, String content,
+      {String languageHint = '', int verbosity = 0}) async {
     if (!isConfigured) return null;
 
-    final uri = _chatUri();
+    if (content.length > _singlePassLimit) {
+      final chunkSummaries = await _summarizeChunks(
+        content,
+        languageHint: languageHint,
+      );
+      if (chunkSummaries.isEmpty) return null;
+      return _summarizeSingle(
+        title,
+        chunkSummaries.join('\n\n---\n\n'),
+        languageHint: languageHint,
+        verbosity: verbosity,
+        sourceLength: content.length,
+      );
+    }
 
-    final truncatedContent = content.length > 15000
-        ? '${content.substring(0, 15000)}...'
-        : content;
+    return _summarizeSingle(
+      title,
+      content,
+      languageHint: languageHint,
+      verbosity: verbosity,
+      sourceLength: content.length,
+    );
+  }
 
-    final isChinese = languageHint.contains('Chinese') ||
-        languageHint.contains('中文');
+  Future<String?> _summarizeSingle(
+    String title,
+    String content, {
+    required String languageHint,
+    required int verbosity,
+    required int sourceLength,
+  }) async {
+    final isChinese =
+        languageHint.contains('Chinese') || languageHint.contains('中文');
 
-    final instruction = summaryInstruction(truncatedContent.length, languageHint, verbosity);
+    final instruction = summaryInstruction(
+      sourceLength,
+      languageHint,
+      verbosity,
+    );
 
     final systemPrompt = isChinese
         ? '你是一个简洁的阅读助手。请用与原文相同的语言总结文章。$instruction'
@@ -106,20 +153,14 @@ class AiService {
     final body = jsonEncode({
       'model': model,
       'messages': [
-        {
-          'role': 'system',
-          'content': systemPrompt,
-        },
-        {
-          'role': 'user',
-          'content': 'Title: $title\n\n$truncatedContent',
-        },
+        {'role': 'system', 'content': systemPrompt},
+        {'role': 'user', 'content': 'Title: $title\n\n$content'},
       ],
       'temperature': 0.3,
-      'max_tokens': 1500,
+      ..._summaryOutputOptions,
     });
 
-    return _postChat(uri, body);
+    return _postChat(_chatUri(), body);
   }
 
   /// Summarize content and also generate a proper article title.
@@ -132,54 +173,132 @@ class AiService {
   }) async {
     if (!isConfigured) return (title: null, summary: null);
 
-    final uri = _chatUri();
+    if (content.length > _singlePassLimit) {
+      final chunkSummaries = await _summarizeChunks(
+        content,
+        languageHint: languageHint,
+      );
+      if (chunkSummaries.isEmpty) return (title: null, summary: null);
+      return _summarizeWithTitleSingle(
+        title,
+        chunkSummaries.join('\n\n---\n\n'),
+        languageHint: languageHint,
+        verbosity: verbosity,
+        sourceLength: content.length,
+      );
+    }
 
-    final truncatedContent = content.length > 15000
-        ? '${content.substring(0, 15000)}...'
-        : content;
+    return _summarizeWithTitleSingle(
+      title,
+      content,
+      languageHint: languageHint,
+      verbosity: verbosity,
+      sourceLength: content.length,
+    );
+  }
 
-    final isChinese = languageHint.contains('Chinese') ||
-        languageHint.contains('中文');
+  Future<({String? title, String? summary})> _summarizeWithTitleSingle(
+    String title,
+    String content, {
+    required String languageHint,
+    required int verbosity,
+    required int sourceLength,
+  }) async {
+    final isChinese =
+        languageHint.contains('Chinese') || languageHint.contains('中文');
 
-    final instruction = summaryInstruction(truncatedContent.length, languageHint, verbosity);
+    final instruction = summaryInstruction(
+      sourceLength,
+      languageHint,
+      verbosity,
+    );
 
     final systemPrompt = isChinese
         ? '你是一个简洁的阅读助手。请用与原文相同的语言阅读文章，然后返回一个JSON对象，包含两个字段：\n'
-            '1. "title"：一个简洁准确的中文文章标题（不是URL或域名，而是能概括文章内容的标题）\n'
-            '2. "summary"：文章摘要。$instruction\n'
-            '请只返回JSON，不要添加其他文字。格式：{"title":"...","summary":"..."}'
+              '1. "title"：一个简洁准确的中文文章标题（不是URL或域名，而是能概括文章内容的标题）\n'
+              '2. "summary"：文章摘要。$instruction\n'
+              '请只返回JSON，不要添加其他文字。格式：{"title":"...","summary":"..."}'
         : 'You are a concise reading assistant. Read the article and return a JSON object with two fields:\n'
-            '1. "title": a concise, descriptive article title (not a URL or domain name)\n'
-            '2. "summary": the article summary. $instruction\n'
-            'Return ONLY the JSON, nothing else. Format: {"title":"...","summary":"..."}';
+              '1. "title": a concise, descriptive article title (not a URL or domain name)\n'
+              '2. "summary": the article summary. $instruction\n'
+              'Return ONLY the JSON, nothing else. Format: {"title":"...","summary":"..."}';
 
     final body = jsonEncode({
       'model': model,
       'messages': [
-        {
-          'role': 'system',
-          'content': systemPrompt,
-        },
-        {
-          'role': 'user',
-          'content': 'Title: $title\n\n$truncatedContent',
-        },
+        {'role': 'system', 'content': systemPrompt},
+        {'role': 'user', 'content': 'Title: $title\n\n$content'},
       ],
       'temperature': 0.3,
-      'max_tokens': 1500,
+      ..._summaryOutputOptions,
     });
 
-    return _postChatWithTitle(uri, body);
+    return _postChatWithTitle(_chatUri(), body);
   }
 
-  Future<({String? title, String? summary})> _postChatWithTitle(Uri uri, String body) async {
+  Future<List<String>> _summarizeChunks(
+    String content, {
+    required String languageHint,
+  }) async {
+    final isChinese =
+        languageHint.contains('Chinese') || languageHint.contains('中文');
+    final instruction = isChinese
+        ? '用120-180个中文字总结以下文章片段的具体事实和关键要点，保留重要数字与专有名词。'
+            '不要使用“文章介绍了”等空泛开头，不要添加原文之外的信息。'
+        : 'Summarize the concrete facts and key points in this article section. '
+            'Use 100-150 words, preserve important numbers and named entities, '
+            'avoid generic introductions, and do not add information outside '
+            'the source.';
+
+    final summaries = <String>[];
+    final chunkCount = (content.length / _chunkSize).ceil();
+
+    for (
+      var start = 0, index = 0;
+      start < content.length;
+      start += _chunkSize, index++
+    ) {
+      final end = (start + _chunkSize).clamp(0, content.length);
+      final chunk = content.substring(start, end);
+      final body = jsonEncode({
+        'model': model,
+        'messages': [
+          {'role': 'system', 'content': instruction},
+          {
+            'role': 'user',
+            'content': 'Section ${index + 1} of $chunkCount:\n\n$chunk',
+          },
+        ],
+        'temperature': 0.2,
+        ..._summaryOutputOptions,
+      });
+
+      final summary = await _postChat(_chatUri(), body);
+      if (summary == null || summary.isEmpty) {
+        developer.log(
+          'long-article chunk ${index + 1}/$chunkCount failed',
+          name: 'article_hub.ai',
+        );
+        return const [];
+      }
+      summaries.add(summary);
+    }
+
+    return summaries;
+  }
+
+  Future<({String? title, String? summary})> _postChatWithTitle(
+    Uri uri,
+    String body,
+  ) async {
     final text = await _postChat(uri, body);
     if (text == null || text.isEmpty) return (title: null, summary: null);
 
     try {
       // Strip markdown code block wrappers if present (many LLMs wrap JSON in ```json ... ```)
       var jsonStr = text.trim();
-      final codeBlockPattern = RegExp(r'^```(?:json)?\s*\n?(.*?)\n?```$', dotAll: true);
+      final codeBlockPattern =
+          RegExp(r'^```(?:json)?\s*\n?(.*?)\n?```$', dotAll: true);
       final match = codeBlockPattern.firstMatch(jsonStr);
       if (match != null) {
         jsonStr = match.group(1)!.trim();
@@ -224,6 +343,7 @@ class AiService {
   }
 
   Future<String?> _postChat(Uri uri, String body) async {
+    lastError = null;
     try {
       final response = await http
           .post(
@@ -241,6 +361,8 @@ class AiService {
         name: 'article_hub.ai',
       );
       if (response.statusCode != 200) {
+        lastError =
+            'HTTP ${response.statusCode}: ${_responseError(response.body)}';
         developer.log(
           'response body: ${response.body.substring(0, response.body.length.clamp(0, 500))}',
           name: 'article_hub.ai',
@@ -250,7 +372,10 @@ class AiService {
 
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final choices = json['choices'] as List?;
-      if (choices == null || choices.isEmpty) return null;
+      if (choices == null || choices.isEmpty) {
+        lastError = 'AI response did not contain any choices';
+        return null;
+      }
 
       final message = choices[0]['message'] as Map<String, dynamic>?;
       final text = message?['content'] as String?;
@@ -264,14 +389,17 @@ class AiService {
       }
 
       if (text != null && text.trim().isNotEmpty) return text.trim();
+      lastError = 'AI response content was empty';
       return null;
     } on TimeoutException {
+      lastError = 'AI request timed out after ${timeout.inSeconds} seconds';
       developer.log(
         'AI API timeout ($timeout), url: $uri',
         name: 'article_hub.ai',
       );
       return null;
     } catch (e, st) {
+      lastError = 'AI request failed: $e';
       developer.log(
         'API call error',
         name: 'article_hub.ai',
@@ -280,5 +408,28 @@ class AiService {
       );
       return null;
     }
+  }
+
+  String _responseError(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final error = decoded['error'];
+        if (error is Map<String, dynamic>) {
+          final message = error['message'];
+          if (message is String && message.trim().isNotEmpty) {
+            return message.trim();
+          }
+        }
+        final message = decoded['message'];
+        if (message is String && message.trim().isNotEmpty) {
+          return message.trim();
+        }
+      }
+    } catch (_) {}
+
+    final compact = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (compact.isEmpty) return 'empty error response';
+    return compact.substring(0, compact.length.clamp(0, 200));
   }
 }

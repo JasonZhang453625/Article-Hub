@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../../data/models/filter_group.dart';
 import '../../../shared/providers/filter_providers.dart';
+import '../../../shared/providers/locale_provider.dart';
 import '../../../shared/providers/settings_providers.dart';
+import '../../../shared/utils/locale_strings.dart';
 
 /// A full-screen dialog for creating or editing a filter group.
 class FilterEditDialog extends ConsumerStatefulWidget {
@@ -51,10 +53,11 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
   }
 
   Future<void> _save() async {
+    final s = ref.read(stringsProvider);
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a filter name')),
+        SnackBar(content: Text(s.pleaseEnterName)),
       );
       return;
     }
@@ -77,17 +80,18 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isEditing ? 'Edit Filter' : 'New Filter'),
+        title: Text(isEditing ? s.editFilter : s.newFilter),
         actions: [
           TextButton(
             onPressed: _save,
-            child: const Text('Save'),
+            child: Text(s.save),
           ),
         ],
       ),
@@ -99,20 +103,20 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
             // Name field
             TextFormField(
               controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Filter Name',
-                hintText: 'e.g. "Tech Articles", "Favorites"',
-                prefixIcon: Icon(Icons.filter_alt_rounded),
+              decoration: InputDecoration(
+                labelText: s.filterName,
+                hintText: s.filterNameHint,
+                prefixIcon: const Icon(Icons.filter_alt_rounded),
               ),
             ),
             const SizedBox(height: 20),
 
             // Tag patterns
-            Text('Tag Keywords',
+            Text(s.tagKeywords,
                 style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
-              'Articles matching any of these tags will be included.',
+              s.tagKeywordsDesc,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: isDark ? Colors.white54 : const Color(0xFF6C8594),
               ),
@@ -121,7 +125,7 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
             TextFormField(
               controller: _tagController,
               decoration: InputDecoration(
-                labelText: 'Add tag keyword',
+                labelText: s.addTagKeyword,
                 prefixIcon: const Icon(Icons.tag),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.add),
@@ -152,11 +156,11 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
             const SizedBox(height: 24),
 
             // Source platforms
-            Text('Source Platforms',
+            Text(s.sourcePlatformsFilter,
                 style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
-              'Leave empty to include all sources, or select specific ones.',
+              s.sourcePlatformsDesc,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: isDark ? Colors.white54 : const Color(0xFF6C8594),
               ),
@@ -200,6 +204,7 @@ class FilterManagementSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     final filtersAsync = ref.watch(filterGroupsProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -235,7 +240,7 @@ class FilterManagementSheet extends ConsumerWidget {
                 child: Row(
                   children: [
                     Text(
-                      'Manage Filters',
+                      s.manageFilters,
                       style: theme.textTheme.titleLarge,
                     ),
                     const Spacer(),
@@ -249,7 +254,7 @@ class FilterManagementSheet extends ConsumerWidget {
                         );
                       },
                       icon: const Icon(Icons.add, size: 18),
-                      label: const Text('New'),
+                      label: Text(s.newButton),
                     ),
                   ],
                 ),
@@ -273,7 +278,7 @@ class FilterManagementSheet extends ConsumerWidget {
                                     : const Color(0xFFB0C6D0)),
                             const SizedBox(height: 12),
                             Text(
-                              'No custom filters yet',
+                              s.noCustomFilters,
                               style: theme.textTheme.bodyMedium,
                             ),
                           ],
@@ -317,7 +322,7 @@ class FilterManagementSheet extends ConsumerWidget {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      _buildSubtitle(group),
+                                      _buildSubtitle(group, s),
                                       style: theme.textTheme.bodySmall
                                           ?.copyWith(
                                         color: isDark
@@ -369,7 +374,7 @@ class FilterManagementSheet extends ConsumerWidget {
     );
   }
 
-  String _buildSubtitle(FilterGroup group) {
+  String _buildSubtitle(FilterGroup group, LocaleStrings s) {
     final parts = <String>[];
     if (group.tagPatterns.isNotEmpty) {
       parts.add('Tags: ${group.tagPatterns.join(", ")}');
@@ -377,7 +382,7 @@ class FilterManagementSheet extends ConsumerWidget {
     if (group.sourcePlatforms.isNotEmpty) {
       parts.add('Sources: ${group.sourcePlatforms.length}');
     }
-    if (parts.isEmpty) return 'All articles';
+    if (parts.isEmpty) return s.allArticles;
     return parts.join('  •  ');
   }
 }

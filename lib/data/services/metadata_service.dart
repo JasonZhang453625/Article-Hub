@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:html/parser.dart' as html_parser;
 
+import 'default_page_loader.dart';
 import 'http_client.dart';
+import 'page_loader.dart';
 
 /// Lightweight page metadata extracted from a URL's HTML.
 class PageMetadata {
@@ -64,21 +66,44 @@ String? _resolveUrl(String? raw, String baseUrl) {
 /// [PageMetadata] on any network error, timeout, non-HTML response, or
 /// non-200 status, so callers can fall back gracefully.
 class MetadataService {
-  final AppHttpClient _http;
+  final PageLoader _loader;
+  final bool _ownsLoader;
 
-  MetadataService({AppHttpClient? http}) : _http = http ?? AppHttpClient();
+  MetadataService({
+    PageLoader? loader,
+    AppHttpClient? http,
+    bool ownsLoader = true,
+  })  : assert(loader == null || http == null),
+        _loader = loader ?? http ?? createDefaultPageLoader(),
+        _ownsLoader = ownsLoader;
+
+  Future<FetchedPage?> fetchPage(String url) async {
+    try {
+      return await _loader.fetch(url);
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<PageMetadata> fetch(String url) async {
-    final page = await _http.fetch(url);
-    if (page == null || !page.isHtml) return const PageMetadata();
-    return parseHtmlMetadata(page.body, url);
+    final page = await fetchPage(url);
+    if (page == null ||
+        !page.isHtml ||
+        fetchedPageLooksBlocked(page)) {
+      return const PageMetadata();
+    }
+    return parseHtmlMetadata(page.body, page.finalUrl);
   }
 
   /// Extract metadata from an already-fetched page (avoids a second HTTP call).
-  PageMetadata fromFetchedPage(FetchedPage page, String baseUrl) {
-    if (!page.isHtml) return const PageMetadata();
-    return parseHtmlMetadata(page.body, baseUrl);
+  PageMetadata fromFetchedPage(FetchedPage page, [String? baseUrl]) {
+    if (!page.isHtml || fetchedPageLooksBlocked(page)) {
+      return const PageMetadata();
+    }
+    return parseHtmlMetadata(page.body, page.finalUrl);
   }
 
-  void dispose() => _http.dispose();
+  void dispose() {
+    if (_ownsLoader) _loader.dispose();
+  }
 }

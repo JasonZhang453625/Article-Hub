@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/processing_pipeline.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
@@ -150,6 +151,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   /// Immediately save the URL as a pending article and kick off processing.
   /// If the URL already exists, navigate to the existing article instead.
   Future<void> _quickSave(String url) async {
+    final s = ref.read(stringsProvider);
     final cleaned = cleanUrl(url);
     if (!isValidUrl(cleaned)) return;
 
@@ -159,7 +161,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (duplicate != null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Already saved: ${duplicate.title}')),
+        SnackBar(content: Text('${s.alreadySaved}: ${duplicate.title}')),
       );
       return;
     }
@@ -176,7 +178,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Saved — processing in background')),
+      SnackBar(content: Text(s.savedProcessing)),
     );
 
     // Fire-and-forget processing pipeline.
@@ -184,6 +186,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _processArticle(Article article) {
+    final s = ref.read(stringsProvider);
     final pipeline = ref.read(processingPipelineProvider);
     pipeline.process(article).then((result) {
       if (result != null && mounted) {
@@ -191,8 +194,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           SnackBar(
             content: Text(
               result.processingStatus == ProcessingStatus.completed
-                  ? 'Processed: ${result.title}'
-                  : 'Failed: ${result.processingError ?? "unknown error"}',
+                  ? '${s.processed}: ${result.title}'
+                  : '${s.failed}: ${result.processingError ?? "unknown error"}',
             ),
             duration: const Duration(seconds: 3),
           ),
@@ -232,14 +235,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _showClipboardSuggestion(String url) {
+    final s = ref.read(stringsProvider);
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     messenger.showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 6),
-        content: Text('Link found on clipboard: ${extractDomain(url)}'),
+        content: Text('${s.clipboardLink}: ${extractDomain(url)}'),
         action: SnackBarAction(
-          label: 'Save',
+          label: s.clipboardSave,
           onPressed: () => _quickSave(url),
         ),
       ),
@@ -248,6 +252,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final filteredArticles = ref.watch(filteredArticlesProvider);
     final headerVisibilityAsync = ref.watch(homeHeaderVisibilityProvider);
     final showHeader = headerVisibilityAsync.maybeWhen(
@@ -264,7 +269,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             context.push(AppRoutes.addArticle);
           },
           icon: const Icon(Icons.add_rounded),
-          label: const Text('Add'),
+          label: Text(s.add),
         ),
       ),
       body: SafeArea(
@@ -297,13 +302,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     error: (error, stack) => Center(
                       child: Padding(
                         padding: const EdgeInsets.all(24),
-                        child: Text('Failed to load articles: $error'),
+                        child: Text('${s.failedToLoad}: $error'),
                       ),
                     ),
                     data: (articles) {
                       if (articles.isEmpty) {
-                        return const EmptyState(
-                          message: 'No articles match the current filters',
+                        return EmptyState(
+                          message: s.noArticlesMatch,
                         );
                       }
                       return RefreshIndicator(

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../../config/theme.dart';
+import '../../../shared/providers/locale_provider.dart';
 
-class HomeHeader extends StatefulWidget {
+class HomeHeader extends ConsumerStatefulWidget {
   final VoidCallback onClose;
 
   const HomeHeader({
@@ -12,10 +14,10 @@ class HomeHeader extends StatefulWidget {
   });
 
   @override
-  State<HomeHeader> createState() => _HomeHeaderState();
+  ConsumerState<HomeHeader> createState() => _HomeHeaderState();
 }
 
-class _HomeHeaderState extends State<HomeHeader> {
+class _HomeHeaderState extends ConsumerState<HomeHeader> {
   late final Future<PackageInfo> _packageInfoFuture;
 
   @override
@@ -26,6 +28,7 @@ class _HomeHeaderState extends State<HomeHeader> {
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final theme = Theme.of(context);
 
     return Container(
@@ -108,7 +111,7 @@ class _HomeHeaderState extends State<HomeHeader> {
           ),
           const SizedBox(height: 18),
           Text(
-            'Save articles from X, Bilibili, Rednote, ChatGPT, WeChat and the wider web in one clean place.',
+            s.homeDescription,
             style: theme.textTheme.bodyLarge?.copyWith(
               color: Colors.white.withValues(alpha: 0.9),
             ),

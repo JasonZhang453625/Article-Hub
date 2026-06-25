@@ -41,6 +41,20 @@ void main() {
       expect(isValidUrl('not a url'), isFalse);
       expect(isValidUrl(''), isFalse);
     });
+
+    test('rejects hosts without dots', () {
+      expect(isValidUrl('https://localhost'), isFalse);
+      expect(isValidUrl('https://myserver/path'), isFalse);
+    });
+
+    test('rejects percent-encoded text as host', () {
+      expect(isValidUrl('https://%E4%BC%98%E5%8C%96%E6%91%98%E8%A6%81'), isFalse);
+    });
+
+    test('rejects hosts with invalid TLD', () {
+      expect(isValidUrl('https://example.c'), isFalse); // TLD too short
+      expect(isValidUrl('https://example.123'), isFalse); // non-alpha TLD
+    });
   });
 
   group('extractDomain', () {

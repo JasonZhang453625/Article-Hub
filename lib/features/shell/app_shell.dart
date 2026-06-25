@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 
 class AppShell extends ConsumerWidget {
@@ -11,6 +12,7 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     final pendingCount = ref.watch(pendingArticlesProvider).maybeWhen(
           data: (articles) => articles.length,
           orElse: () => 0,
@@ -27,15 +29,15 @@ class AppShell extends ConsumerWidget {
           );
         },
         destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            selectedIcon: Icon(Icons.chat_bubble_rounded),
-            label: 'Chat',
+          NavigationDestination(
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            selectedIcon: const Icon(Icons.chat_bubble_rounded),
+            label: s.tabChat,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.library_books_outlined),
-            selectedIcon: Icon(Icons.library_books_rounded),
-            label: 'Knowledge',
+          NavigationDestination(
+            icon: const Icon(Icons.library_books_outlined),
+            selectedIcon: const Icon(Icons.library_books_rounded),
+            label: s.tabKnowledge,
           ),
           NavigationDestination(
             icon: Badge(
@@ -48,12 +50,12 @@ class AppShell extends ConsumerWidget {
               label: Text('$pendingCount'),
               child: const Icon(Icons.inbox_rounded),
             ),
-            label: 'Inbox',
+            label: s.tabInbox,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings_rounded),
-            label: 'Settings',
+          NavigationDestination(
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: const Icon(Icons.settings_rounded),
+            label: s.tabSettings,
           ),
         ],
       ),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/passage.dart';
+import '../../data/services/headless_webview_page_loader.dart';
 import '../../shared/providers/settings_providers.dart';
 
 class ReaderScreen extends ConsumerStatefulWidget {
@@ -70,8 +71,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             child: InAppWebView(
               initialUrlRequest: URLRequest(url: WebUri(widget.article.url)),
               initialSettings: InAppWebViewSettings(
-                userAgent:
-                    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                userAgent: articleHubMobileUserAgent,
                 javaScriptEnabled: true,
                 supportZoom: true,
                 useWideViewPort: true,

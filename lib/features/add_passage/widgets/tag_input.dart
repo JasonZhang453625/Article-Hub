@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../shared/providers/locale_provider.dart';
 
-class TagInput extends StatelessWidget {
+class TagInput extends ConsumerWidget {
   final TextEditingController controller;
   final List<String> tags;
   final ValueChanged<String> onAdd;
@@ -15,15 +17,16 @@ class TagInput extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TextFormField(
           controller: controller,
           decoration: InputDecoration(
-            labelText: 'Tags',
-            hintText: 'Type and press Enter to add',
+            labelText: s.tags,
+            hintText: s.typeAndPressEnter,
             prefixIcon: const Icon(Icons.tag),
             suffixIcon: IconButton(
               icon: const Icon(Icons.add),

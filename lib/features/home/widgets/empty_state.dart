@@ -1,19 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../config/theme.dart';
+import '../../../shared/providers/locale_provider.dart';
 
-class EmptyState extends StatelessWidget {
+class EmptyState extends ConsumerWidget {
   final String message;
   final IconData icon;
 
   const EmptyState({
     super.key,
-    this.message = 'No articles yet',
+    this.message = '',
     this.icon = Icons.article_outlined,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     final theme = Theme.of(context);
+    final displayMessage = message.isEmpty ? s.noArticlesYet : message;
 
     return Center(
       child: Padding(
@@ -42,13 +46,13 @@ class EmptyState extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               Text(
-                message,
+                displayMessage,
                 style: theme.textTheme.titleLarge,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
               Text(
-                'Add your first article to build a calmer, better organized reading queue.',
+                s.addFirstArticle,
                 style: theme.textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ),

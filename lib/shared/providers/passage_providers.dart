@@ -75,6 +75,27 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     state = AsyncValue.data(repo.getAll());
   }
 
+  /// Applies only generated-summary fields to the latest stored article.
+  /// This avoids overwriting edits made while a background AI job was running.
+  Future<void> updateGeneratedSummary(
+    String articleId,
+    String? generatedTitle,
+    String summary,
+  ) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    final current = repo.getById(articleId);
+    if (current == null) return;
+
+    await repo.update(
+      current.copyWith(
+        title: generatedTitle ?? current.title,
+        summary: summary,
+        summaryFeedback: Article.clearValue,
+      ),
+    );
+    state = AsyncValue.data(repo.getAll());
+  }
+
   Future<void> delete(String id) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.delete(id);
@@ -222,13 +243,16 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
       final group = groups.where((g) => g.id == selectedFilterId).firstOrNull;
       if (group != null) {
         filtered = filtered.where((article) {
-          bool matchesTags = group.tagPatterns.isEmpty ||
+          bool matchesTags =
+              group.tagPatterns.isEmpty ||
               group.tagPatterns.any((pattern) {
                 final lower = pattern.toLowerCase();
-                return article.tags
-                    .any((tag) => tag.toLowerCase().contains(lower));
+                return article.tags.any(
+                  (tag) => tag.toLowerCase().contains(lower),
+                );
               });
-          bool matchesSource = group.sourcePlatforms.isEmpty ||
+          bool matchesSource =
+              group.sourcePlatforms.isEmpty ||
               group.sourcePlatforms.contains(article.source.name);
           return matchesTags && matchesSource;
         }).toList();
@@ -301,7 +325,9 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
 }
 
 /// Articles that have completed processing — shown in the knowledge base tab.
-final knowledgeBaseArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
+final knowledgeBaseArticlesProvider = Provider<AsyncValue<List<Article>>>((
+  ref,
+) {
   final filtered = ref.watch(filteredArticlesProvider);
   return filtered.whenData(
     (articles) => articles
@@ -321,18 +347,15 @@ final pendingArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
 });
 
 /// Embedding service configured from user settings.
+/// Falls back to built-in defaults (SiliconFlow BGE-M3) when the user hasn't
+/// provided their own config.
 final embeddingServiceProvider = Provider<EmbeddingService?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null) return null;
-  if (settings.embeddingBaseUrl.trim().isEmpty ||
-      settings.embeddingApiKey.trim().isEmpty ||
-      settings.embeddingModel.trim().isEmpty) {
-    return null;
-  }
   return EmbeddingService(
-    baseUrl: settings.embeddingBaseUrl,
-    apiKey: settings.embeddingApiKey,
-    model: settings.embeddingModel,
+    baseUrl: settings.effectiveEmbeddingBaseUrl,
+    apiKey: settings.effectiveEmbeddingApiKey,
+    model: settings.effectiveEmbeddingModel,
   );
 });
 

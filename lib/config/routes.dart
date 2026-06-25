@@ -11,6 +11,7 @@ import '../features/reader/summary_screen.dart';
 import '../features/detail/detail_screen.dart';
 import '../features/folders/folders_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/settings/source_platforms_screen.dart';
 import '../features/shell/app_shell.dart';
 
 class AppRoutes {
@@ -18,6 +19,7 @@ class AppRoutes {
   static const String knowledge = '/knowledge';
   static const String inbox = '/inbox';
   static const String settings = '/settings';
+  static const String sourcePlatforms = '/settings/source-platforms';
   static const String addArticle = '/add';
   static const String summary = '/summary';
   static const String reader = '/reader';
@@ -174,6 +176,11 @@ final appRouter = GoRouter(
       path: AppRoutes.folders,
       pageBuilder: (context, state) =>
           _buildPage(state: state, child: const FoldersScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.sourcePlatforms,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const SourcePlatformsScreen()),
     ),
   ],
 );

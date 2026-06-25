@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/source_platform.dart';
 import '../../../shared/providers/filter_providers.dart';
+import '../../../shared/providers/locale_provider.dart';
 import '../../../shared/providers/passage_providers.dart';
 import '../../../shared/providers/settings_providers.dart';
 import 'filter_management_dialog.dart';
@@ -35,6 +36,7 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final selectedSource = ref.watch(selectedSourceProvider);
     final selectedFilterId = ref.watch(selectedFilterGroupProvider);
     final filtersAsync = ref.watch(filterGroupsProvider);
@@ -73,12 +75,12 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
             ),
             child: TextField(
               controller: _searchController,
-              decoration: const InputDecoration(
-                hintText: 'Search articles, tags or notes...',
-                prefixIcon: Icon(Icons.search_rounded),
-                suffixIcon: Icon(Icons.tune_rounded),
+              decoration: InputDecoration(
+                hintText: s.searchHint,
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: const Icon(Icons.tune_rounded),
                 border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(vertical: 16),
+                contentPadding: const EdgeInsets.symmetric(vertical: 16),
               ),
               onChanged: (value) {
                 ref.read(searchQueryProvider.notifier).state = value;
@@ -93,10 +95,11 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             children: [
               _SourceChip(
-                label: 'All',
+                label: s.filterAll,
                 icon: Icons.grid_view_rounded,
                 color: theme.colorScheme.onSurface,
                 chipBg: chipBg,
+                isAllChip: true,
                 isSelected:
                     selectedSource.isEmpty && selectedFilterId.isEmpty,
                 onTap: () {
@@ -143,7 +146,8 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
               if (_draggingPlatformName != null && visiblePlatforms.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _SourceDropZone(
+                      child: _SourceDropZone(
+                    endLabel: s.end,
                     onAccept: () async {
                       final draggingPlatformName = _draggingPlatformName;
                       if (draggingPlatformName == null) return;
@@ -226,7 +230,7 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            'Manage',
+                            s.manage,
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -323,9 +327,10 @@ class _SourcePlatformDragTarget extends StatelessWidget {
 }
 
 class _SourceDropZone extends StatelessWidget {
+  final String endLabel;
   final Future<void> Function() onAccept;
 
-  const _SourceDropZone({required this.onAccept});
+  const _SourceDropZone({required this.endLabel, required this.onAccept});
 
   @override
   Widget build(BuildContext context) {
@@ -366,7 +371,7 @@ class _SourceDropZone extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                'End',
+                endLabel,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -390,6 +395,7 @@ class _SourceChip extends StatelessWidget {
   final Color chipBg;
   final bool isSelected;
   final bool isDropTargetActive;
+  final bool isAllChip;
   final VoidCallback onTap;
 
   const _SourceChip({
@@ -400,6 +406,7 @@ class _SourceChip extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     this.isDropTargetActive = false,
+    this.isAllChip = false,
   });
 
   @override
@@ -466,7 +473,6 @@ class _SourceChip extends StatelessWidget {
   }
 
   Color _selectedFillColor(bool isDark) {
-    final isAllChip = label.toLowerCase() == 'all';
     if (isDark && isAllChip) {
       return const Color(0xFF384654);
     }

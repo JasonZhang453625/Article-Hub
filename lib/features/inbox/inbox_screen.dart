@@ -2,17 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/passage.dart';
 import '../../data/services/processing_pipeline.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/utils/locale_strings.dart';
 
 class InboxScreen extends ConsumerWidget {
   const InboxScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     final pendingAsync = ref.watch(pendingArticlesProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Inbox')),
+      appBar: AppBar(title: Text(s.tabInbox)),
       body: pendingAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
@@ -32,21 +35,21 @@ class InboxScreen extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(vertical: 8),
             children: [
               if (processing.isNotEmpty) ...[
-                _SectionHeader('Processing', processing.length),
+                _SectionHeader(s.processing, processing.length),
                 for (final article in processing)
                   _InboxTile(
                     article: article,
-                    subtitle: _stageLabel(article.processingStage),
+                    subtitle: _stageLabel(article.processingStage, s),
                     showRetry: false,
                   ),
               ],
               if (pending.isNotEmpty) ...[
-                _SectionHeader('Waiting', pending.length),
+                _SectionHeader(s.waiting, pending.length),
                 for (final article in pending)
-                  _InboxTile(article: article, subtitle: 'Queued', showRetry: false),
+                  _InboxTile(article: article, subtitle: s.queued, showRetry: false),
               ],
               if (failed.isNotEmpty) ...[
-                _SectionHeader('Failed', failed.length),
+                _SectionHeader(s.failedSection, failed.length),
                 for (final article in failed)
                   _InboxTile(
                     article: article,
@@ -61,22 +64,22 @@ class InboxScreen extends ConsumerWidget {
     );
   }
 
-  String _stageLabel(ProcessingStage? stage) {
+  String _stageLabel(ProcessingStage? stage, LocaleStrings s) {
     switch (stage) {
       case ProcessingStage.metadata:
-        return 'Fetching metadata';
+        return s.fetchingMetadata;
       case ProcessingStage.content:
-        return 'Extracting content';
+        return s.extractingContent;
       case ProcessingStage.summary:
-        return 'Generating summary';
+        return s.generatingSummary;
       case ProcessingStage.tags:
-        return 'Generating tags';
+        return s.generatingTags;
       case ProcessingStage.folderSuggestion:
-        return 'Suggesting folder';
+        return s.suggestingFolder;
       case ProcessingStage.indexing:
-        return 'Indexing';
+        return s.indexing;
       default:
-        return 'Processing';
+        return s.processing;
     }
   }
 }
@@ -129,6 +132,7 @@ class _InboxTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
     return ListTile(
@@ -167,28 +171,28 @@ class _InboxTile extends ConsumerWidget {
           if (showRetry)
             IconButton(
               icon: const Icon(Icons.refresh_rounded),
-              tooltip: 'Retry',
+              tooltip: s.retry,
               onPressed: () {
                 ref.read(processingPipelineProvider).retry(article);
               },
             ),
           IconButton(
             icon: const Icon(Icons.delete_outline_rounded),
-            tooltip: 'Delete',
+            tooltip: s.delete,
             onPressed: () async {
               final confirmed = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  title: const Text('Delete article?'),
-                  content: Text('Remove "${article.title}" from inbox?'),
+                  title: Text(s.deleteArticleQ),
+                  content: Text('${s.removeFromInbox} "${article.title}"'),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('Cancel'),
+                      child: Text(s.cancel),
                     ),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Delete'),
+                      child: Text(s.delete),
                     ),
                   ],
                 ),
@@ -230,11 +234,12 @@ class _InboxTile extends ConsumerWidget {
   }
 }
 
-class _EmptyInbox extends StatelessWidget {
+class _EmptyInbox extends ConsumerWidget {
   const _EmptyInbox();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -246,12 +251,12 @@ class _EmptyInbox extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            'Inbox is empty',
+            s.inboxEmpty,
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
           Text(
-            'Shared links will appear here while processing.',
+            s.inboxEmptyDesc,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),

@@ -52,6 +52,12 @@ app.*.map.json
 # Playwright MCP working dir (local tooling artifacts)
 .playwright-mcp/
 
+# Local AI coding assistant state
+/.agents/
+/.claude/
+/.codex/
+/.mimocode/
+
 # Local scratch / working dir
 /tmp/
 

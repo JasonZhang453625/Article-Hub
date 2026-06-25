@@ -10,6 +10,7 @@ import '../../data/services/ai_service.dart';
 import '../../data/services/content_extractor.dart';
 import '../../data/services/metadata_service.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
 import 'widgets/url_input_field.dart';
@@ -98,7 +99,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
     final cleanedUrl = cleanUrl(_urlController.text.trim());
     final title = _titleController.text.trim().isEmpty
-        ? extractDomain(cleanedUrl)
+        ? cleanedUrl
         : _titleController.text.trim();
 
     final article = Article(
@@ -154,33 +155,41 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
     () async {
       try {
-        String? summary;
-
-        // Try content extraction first (works on native, may fail on web due to CORS).
         final content = await extractor.extract(article.url);
-        if (content != null && content.isNotEmpty) {
-          developer.log(
-            'extracted ${content.length} chars, calling AI',
-            name: 'article_hub.ai',
-          );
-          summary = await ai.summarize(article.title, content, languageHint: langHint);
-        } else {
-          developer.log(
-            'content extraction failed, falling back to URL-based summary',
-            name: 'article_hub.ai',
-          );
-          summary = await ai.summarizeFromUrl(article.title, article.url, languageHint: langHint);
+        if (content == null || content.isEmpty) {
+          developer.log('content extraction failed, skipping summary', name: 'article_hub.ai');
+          return;
         }
 
-        if (summary == null || summary.isEmpty) {
+        developer.log(
+          'extracted ${content.length} chars, calling AI',
+          name: 'article_hub.ai',
+        );
+        final result = await ai.summarizeWithTitle(article.title, content, languageHint: langHint);
+
+        if (result.summary == null || result.summary!.isEmpty) {
           developer.log('AI returned null/empty summary', name: 'article_hub.ai');
           return;
         }
         developer.log(
-          'got summary (${summary.length} chars), saving',
+          'got summary (${result.summary!.length} chars), saving',
           name: 'article_hub.ai',
         );
-        final updated = article.copyWith(summary: summary);
+
+        // Update title if AI provided a meaningful one (not just the domain).
+        String? newTitle;
+        if (result.title != null && result.title!.isNotEmpty) {
+          final looksLikeDomain = result.title!.contains('.') &&
+              !result.title!.contains(' ');
+          if (!looksLikeDomain) {
+            newTitle = result.title;
+          }
+        }
+
+        final updated = article.copyWith(
+          title: newTitle ?? article.title,
+          summary: result.summary,
+        );
         await notifier.update(updated);
       } catch (e, st) {
         developer.log(
@@ -206,8 +215,9 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
     final count = await ref.read(articlesProvider.notifier).addMany(urls);
     if (!mounted) return;
+    final s = ref.read(stringsProvider);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Added $count article${count == 1 ? '' : 's'}')),
+      SnackBar(content: Text('${s.addedNArticles} $count${count == 1 ? '' : ''}')),
     );
     Navigator.of(context).pop();
   }
@@ -215,17 +225,18 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   @override
   Widget build(BuildContext context) {
     final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
+    final s = ref.watch(stringsProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add Article'),
+        title: Text(s.addArticle),
         actions: [
           IconButton(
             icon: const Icon(Icons.playlist_add_rounded),
-            tooltip: 'Add multiple URLs',
+            tooltip: s.addMultipleUrls,
             onPressed: _openBulkImport,
           ),
-          TextButton(onPressed: _save, child: const Text('Save')),
+          TextButton(onPressed: _save, child: Text(s.save)),
         ],
       ),
       body: SingleChildScrollView(
@@ -245,16 +256,16 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Supported sources',
-                      style: TextStyle(
+                    Text(
+                      s.supportedSources,
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Paste links from your enabled platforms and the app will detect the source automatically.',
+                    Text(
+                      s.supportedSourcesDesc,
                     ),
                     const SizedBox(height: 14),
                     Wrap(
@@ -302,8 +313,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 onPasteError: () {
                   if (!mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Could not read from clipboard'),
+                    SnackBar(
+                      content: Text(s.clipboardReadError),
                     ),
                   );
                 },
@@ -312,10 +323,10 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
               TextFormField(
                 controller: _titleController,
                 decoration: InputDecoration(
-                  labelText: 'Title (optional)',
+                  labelText: s.titleOptional,
                   hintText: _fetchingMetadata
-                      ? 'Fetching title...'
-                      : 'Enter a title for this article',
+                      ? s.fetchingTitle
+                      : s.enterTitle,
                   prefixIcon: const Icon(Icons.title),
                   suffixIcon: _fetchingMetadata
                       ? const Padding(
@@ -349,10 +360,10 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _notesController,
-                decoration: const InputDecoration(
-                  labelText: 'Notes (optional)',
-                  hintText: 'Add any notes about this article',
-                  prefixIcon: Icon(Icons.notes),
+                decoration: InputDecoration(
+                  labelText: s.notesOptional,
+                  hintText: s.addNotes,
+                  prefixIcon: const Icon(Icons.notes),
                 ),
                 maxLines: 3,
               ),
@@ -367,9 +378,9 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 child: FilledButton.icon(
                   onPressed: _save,
                   icon: const Icon(Icons.save_rounded),
-                  label: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text('Save article'),
+                  label: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(s.saveArticle),
                   ),
                 ),
               ),
@@ -390,6 +401,7 @@ class _FolderDropdown extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final foldersAsync = ref.watch(foldersProvider);
+    final s = ref.watch(stringsProvider);
 
     return foldersAsync.when(
       loading: () => const SizedBox.shrink(),
@@ -397,14 +409,14 @@ class _FolderDropdown extends ConsumerWidget {
       data: (folders) {
         return DropdownButtonFormField<String?>(
           initialValue: selectedFolderId,
-          decoration: const InputDecoration(
-            labelText: 'Folder (optional)',
-            prefixIcon: Icon(Icons.folder_rounded),
+          decoration: InputDecoration(
+            labelText: s.folderOptional,
+            prefixIcon: const Icon(Icons.folder_rounded),
           ),
           items: [
-            const DropdownMenuItem<String?>(
+            DropdownMenuItem<String?>(
               value: null,
-              child: Text('No folder'),
+              child: Text(s.noFolder),
             ),
             for (final folder in folders)
               DropdownMenuItem<String?>(
@@ -421,14 +433,14 @@ class _FolderDropdown extends ConsumerWidget {
 
 /// Bottom sheet for pasting multiple URLs at once. Pops with the parsed,
 /// validated, de-duplicated URL list (or null if cancelled).
-class _BulkImportSheet extends StatefulWidget {
+class _BulkImportSheet extends ConsumerStatefulWidget {
   const _BulkImportSheet();
 
   @override
-  State<_BulkImportSheet> createState() => _BulkImportSheetState();
+  ConsumerState<_BulkImportSheet> createState() => _BulkImportSheetState();
 }
 
-class _BulkImportSheetState extends State<_BulkImportSheet> {
+class _BulkImportSheetState extends ConsumerState<_BulkImportSheet> {
   final _controller = TextEditingController();
   int _validCount = 0;
 
@@ -458,6 +470,7 @@ class _BulkImportSheetState extends State<_BulkImportSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -471,12 +484,11 @@ class _BulkImportSheetState extends State<_BulkImportSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Add multiple URLs',
+            Text(s.bulkImportTitle,
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              'Paste one URL per line (or separated by spaces/commas). '
-              'Sources are detected automatically.',
+              s.bulkImportDesc,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
@@ -501,8 +513,8 @@ class _BulkImportSheetState extends State<_BulkImportSheet> {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(
                     _validCount == 0
-                        ? 'Add'
-                        : 'Add $_validCount URL${_validCount == 1 ? '' : 's'}',
+                        ? s.addNUrls
+                        : '${s.addNUrls} $_validCount URL${_validCount == 1 ? '' : 's'}',
                   ),
                 ),
               ),

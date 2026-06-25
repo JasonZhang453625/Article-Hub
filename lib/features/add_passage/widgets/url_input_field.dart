@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/source_platform.dart';
+import '../../../shared/providers/locale_provider.dart';
 
-class UrlInputField extends StatelessWidget {
+class UrlInputField extends ConsumerWidget {
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
   final SourcePlatform detectedPlatform;
@@ -20,22 +22,23 @@ class UrlInputField extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TextFormField(
           controller: controller,
           decoration: InputDecoration(
-            labelText: 'URL',
-            hintText: 'https://x.com/... or https://www.bilibili.com/...',
+            labelText: s.urlLabel,
+            hintText: s.urlHint,
             prefixIcon: const Icon(Icons.link),
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
                   icon: const Icon(Icons.content_paste),
-                  tooltip: 'Paste from clipboard',
+                  tooltip: s.pasteFromClipboard,
                   onPressed: () async {
                     try {
                       final data = await Clipboard.getData('text/plain');
@@ -45,9 +48,6 @@ class UrlInputField extends StatelessWidget {
                         onChanged(text);
                       }
                     } catch (_) {
-                      // Clipboard access can throw (e.g. PlatformException when
-                      // permission is denied). Surface it via the callback
-                      // instead of crashing.
                       onPasteError?.call();
                     }
                   },
@@ -60,12 +60,12 @@ class UrlInputField extends StatelessWidget {
           onChanged: onChanged,
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
-              return 'Please enter a URL';
+              return s.pleaseEnterUrl;
             }
             final uri = Uri.tryParse(value.trim());
             if (uri == null ||
                 (uri.scheme != 'http' && uri.scheme != 'https')) {
-              return 'Please enter a valid URL';
+              return s.pleaseEnterValidUrl;
             }
             return null;
           },
@@ -100,7 +100,7 @@ class UrlInputField extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          'Detected: ${detectedPlatform.displayName}',
+                          '${s.detected}: ${detectedPlatform.displayName}',
                           style: TextStyle(
                             fontSize: 12,
                             color: detectedPlatform.accentColor,

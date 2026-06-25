@@ -12,9 +12,23 @@ String cleanUrl(String input) {
 
 bool isValidUrl(String url) {
   final uri = Uri.tryParse(url);
-  return uri != null &&
-      (uri.scheme == 'http' || uri.scheme == 'https') &&
-      uri.host.isNotEmpty;
+  if (uri == null) return false;
+  if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+  if (uri.host.isEmpty) return false;
+
+  // Host must contain at least one dot (e.g. "example.com")
+  if (!uri.host.contains('.')) return false;
+
+  // Reject hosts that are mostly percent-encoded (not real domains)
+  final percentCount = '%'.allMatches(uri.host).length;
+  if (percentCount > 2) return false;
+
+  // TLD must be at least 2 chars and alphabetic
+  final parts = uri.host.split('.');
+  final tld = parts.last;
+  if (tld.length < 2 || !RegExp(r'^[a-zA-Z]+$').hasMatch(tld)) return false;
+
+  return true;
 }
 
 String extractDomain(String url) {

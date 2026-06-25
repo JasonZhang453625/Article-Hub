@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/passage.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/date_formatter.dart';
 
@@ -75,22 +76,21 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   }
 
   Future<void> _confirmDelete() async {
+    final s = ref.read(stringsProvider);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Article'),
-        content: const Text(
-          'Are you sure you want to delete this article? This action cannot be undone.',
-        ),
+        title: Text(s.deleteArticle),
+        content: Text(s.deleteConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(s.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
+            child: Text(s.delete),
           ),
         ],
       ),
@@ -107,6 +107,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final s = ref.watch(stringsProvider);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
@@ -119,9 +120,9 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
             onPressed: _handleBack,
-            tooltip: 'Back',
+            tooltip: s.back,
           ),
-          title: const Text('Article Details'),
+          title: Text(s.articleDetails),
           actions: [
             IconButton(
               icon: Icon(
@@ -135,13 +136,13 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 });
               },
               tooltip: _isFavorite
-                  ? 'Remove from favorites'
-                  : 'Add to favorites',
+                  ? s.removeFromFavorites
+                  : s.addToFavorites,
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline, color: Colors.red),
               onPressed: _confirmDelete,
-              tooltip: 'Delete',
+              tooltip: s.delete,
             ),
           ],
         ),
@@ -179,7 +180,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                         ),
                         const Spacer(),
                         Text(
-                          'Added ${formatRelative(widget.article.createdAt)}',
+                          '${s.addedRelative} ${formatRelative(widget.article.createdAt)}',
                           style: theme.textTheme.bodySmall,
                         ),
                       ],
@@ -196,9 +197,9 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
               TextFormField(
                 controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Title',
-                  prefixIcon: Icon(Icons.title),
+                decoration: InputDecoration(
+                  labelText: s.title,
+                  prefixIcon: const Icon(Icons.title),
                 ),
               ),
               const SizedBox(height: 16),
@@ -206,7 +207,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
               TextFormField(
                 controller: _tagController,
                 decoration: InputDecoration(
-                  labelText: 'Add tag',
+                  labelText: s.addTag,
                   prefixIcon: const Icon(Icons.tag),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.add),
@@ -257,8 +258,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
               TextFormField(
                 controller: _notesController,
-                decoration: const InputDecoration(
-                  labelText: 'Notes',
+                decoration: InputDecoration(
+                  labelText: s.notes,
                   prefixIcon: Icon(Icons.notes),
                 ),
                 maxLines: 4,
@@ -290,12 +291,12 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Created: ${formatDateTime(widget.article.createdAt)}',
+                      '${s.created}: ${formatDateTime(widget.article.createdAt)}',
                       style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Updated: ${formatDateTime(widget.article.updatedAt)}',
+                      '${s.updated}: ${formatDateTime(widget.article.updatedAt)}',
                       style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
                     ),
                   ],
@@ -318,6 +319,7 @@ class _FolderDropdown extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final foldersAsync = ref.watch(foldersProvider);
+    final s = ref.watch(stringsProvider);
 
     return foldersAsync.when(
       loading: () => const SizedBox.shrink(),
@@ -325,14 +327,14 @@ class _FolderDropdown extends ConsumerWidget {
       data: (folders) {
         return DropdownButtonFormField<String?>(
           initialValue: selectedFolderId,
-          decoration: const InputDecoration(
-            labelText: 'Folder',
-            prefixIcon: Icon(Icons.folder_rounded),
+          decoration: InputDecoration(
+            labelText: s.folder,
+            prefixIcon: const Icon(Icons.folder_rounded),
           ),
           items: [
-            const DropdownMenuItem<String?>(
+            DropdownMenuItem<String?>(
               value: null,
-              child: Text('No folder'),
+              child: Text(s.noFolder),
             ),
             for (final folder in folders)
               DropdownMenuItem<String?>(

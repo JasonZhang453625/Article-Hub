@@ -1,0 +1,154 @@
+import 'dart:developer' as developer;
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../data/models/passage.dart';
+import '../../data/models/settings.dart';
+import '../../data/services/ai_service.dart';
+import '../../data/services/content_extractor.dart';
+import '../../shared/providers/page_loader_provider.dart';
+import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/settings_providers.dart';
+
+class SummaryRegenerationResult {
+  final String? title;
+  final String? summary;
+  final String? error;
+
+  const SummaryRegenerationResult({this.title, this.summary, this.error});
+
+  bool get succeeded => summary != null && summary!.isNotEmpty;
+}
+
+typedef SummaryRegenerationRunner =
+    Future<SummaryRegenerationResult> Function(
+      Article article,
+      AppSettings settings,
+    );
+
+typedef SaveGeneratedSummary =
+    Future<void> Function(String articleId, String? title, String summary);
+
+class SummaryRegenerationController extends StateNotifier<Set<String>> {
+  final SummaryRegenerationRunner _runner;
+  final SaveGeneratedSummary _save;
+  final Map<String, Future<SummaryRegenerationResult>> _jobs = {};
+
+  SummaryRegenerationController({
+    required SummaryRegenerationRunner runner,
+    required SaveGeneratedSummary save,
+  }) : _runner = runner,
+       _save = save,
+       super(const <String>{});
+
+  Future<SummaryRegenerationResult> regenerate(
+    Article article,
+    AppSettings settings,
+  ) {
+    final existing = _jobs[article.id];
+    if (existing != null) return existing;
+
+    state = {...state, article.id};
+    final job = _runAndSave(article, settings);
+    _jobs[article.id] = job;
+    job.whenComplete(() {
+      _jobs.remove(article.id);
+      if (mounted) {
+        state = {...state}..remove(article.id);
+      }
+    });
+    return job;
+  }
+
+  Future<SummaryRegenerationResult> _runAndSave(
+    Article article,
+    AppSettings settings,
+  ) async {
+    try {
+      developer.log(
+        'background summary started, articleId: ${article.id}',
+        name: 'article_hub.ai',
+      );
+      final result = await _runner(article, settings);
+      if (result.succeeded) {
+        await _save(article.id, result.title, result.summary!);
+        developer.log(
+          'background summary saved, articleId: ${article.id}',
+          name: 'article_hub.ai',
+        );
+      }
+      return result;
+    } catch (error, stackTrace) {
+      developer.log(
+        'background summary save failed',
+        name: 'article_hub.ai',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return SummaryRegenerationResult(error: error.toString());
+    }
+  }
+}
+
+final summaryRegenerationProvider =
+    StateNotifierProvider<SummaryRegenerationController, Set<String>>((ref) {
+      final articles = ref.read(articlesProvider.notifier);
+      final pageLoader = ref.read(pageLoaderProvider);
+
+      return SummaryRegenerationController(
+        runner: (article, settings) async {
+          final extractor = ContentExtractor(
+            loader: pageLoader,
+            ownsLoader: false,
+          );
+          final ai = AiService(
+            baseUrl: settings.aiBaseUrl,
+            apiKey: settings.aiApiKey,
+            model: settings.aiModel,
+          );
+
+          try {
+            final content = await extractor.extract(article.url);
+            if (content == null || content.isEmpty) {
+              return const SummaryRegenerationResult(
+                error: 'Could not extract page content',
+              );
+            }
+
+            final result = await ai.summarizeWithTitle(
+              article.title,
+              content,
+              languageHint: aiLanguagePrompt(settings.languageIndex),
+              verbosity: settings.summaryVerbosityIndex,
+            );
+            final summary = result.summary;
+            if (summary == null || summary.isEmpty) {
+              return SummaryRegenerationResult(
+                error: ai.lastError ?? 'AI returned an empty summary',
+              );
+            }
+
+            String? newTitle;
+            final generatedTitle = result.title;
+            if (generatedTitle != null && generatedTitle.isNotEmpty) {
+              final looksLikeDomain =
+                  generatedTitle.contains('.') && !generatedTitle.contains(' ');
+              if (!looksLikeDomain) newTitle = generatedTitle;
+            }
+
+            return SummaryRegenerationResult(title: newTitle, summary: summary);
+          } catch (error, stackTrace) {
+            developer.log(
+              'background summary regeneration failed',
+              name: 'article_hub.ai',
+              error: error,
+              stackTrace: stackTrace,
+            );
+            return SummaryRegenerationResult(error: error.toString());
+          } finally {
+            extractor.dispose();
+          }
+        },
+        save: articles.updateGeneratedSummary,
+      );
+    });

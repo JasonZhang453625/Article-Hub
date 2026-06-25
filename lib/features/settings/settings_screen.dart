@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../config/routes.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
-import '../../data/models/source_platform.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/processing_pipeline.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 
@@ -39,6 +41,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final settingsAsync = ref.watch(settingsProvider);
+    final s = ref.watch(stringsProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final cardColor = theme.colorScheme.surface;
@@ -46,7 +49,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Settings'),
+        title: Text(s.tabSettings),
       ),
       body: settingsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -56,16 +59,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             delayMs: 40,
             beginOffset: const Offset(0, 0.035),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                 // ── Appearance Section ──
-                _SectionLabel(label: 'Appearance', theme: theme),
+                _SectionLabel(label: s.appearance, theme: theme),
                 const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(24),
@@ -75,15 +78,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Theme Mode',
+                        s.themeMode,
                         style: theme.textTheme.titleMedium,
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           _ThemeModeButton(
                             icon: Icons.brightness_auto_rounded,
-                            label: 'System',
+                            label: s.system,
                             isSelected: settings.themeModeIndex == 0,
                             onTap: () => ref
                                 .read(settingsProvider.notifier)
@@ -93,7 +96,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           const SizedBox(width: 10),
                           _ThemeModeButton(
                             icon: Icons.light_mode_rounded,
-                            label: 'Light',
+                            label: s.light,
                             isSelected: settings.themeModeIndex == 1,
                             onTap: () => ref
                                 .read(settingsProvider.notifier)
@@ -103,7 +106,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           const SizedBox(width: 10),
                           _ThemeModeButton(
                             icon: Icons.dark_mode_rounded,
-                            label: 'Dark',
+                            label: s.dark,
                             isSelected: settings.themeModeIndex == 2,
                             onTap: () => ref
                                 .read(settingsProvider.notifier)
@@ -112,17 +115,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 10),
                       Text(
-                        'Language',
+                        s.language,
                         style: theme.textTheme.titleMedium,
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           _ThemeModeButton(
                             icon: Icons.language_rounded,
-                            label: 'System',
+                            label: s.system,
                             isSelected: settings.languageIndex == 0,
                             onTap: () => ref
                                 .read(settingsProvider.notifier)
@@ -155,62 +158,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 20),
-
-                // ── Summary Style Section ──
-                _SectionLabel(label: 'Summary Style', theme: theme),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Summary Style',
-                        style: theme.textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          _ThemeModeButton(
-                            icon: Icons.short_text_rounded,
-                            label: 'Brief',
-                            isSelected: settings.summaryVerbosityIndex == 0,
-                            onTap: () => ref
-                                .read(settingsProvider.notifier)
-                                .setSummaryVerbosity(0),
-                            theme: theme,
-                          ),
-                          const SizedBox(width: 10),
-                          _ThemeModeButton(
-                            icon: Icons.notes_rounded,
-                            label: 'Detailed',
-                            isSelected: settings.summaryVerbosityIndex == 1,
-                            onTap: () => ref
-                                .read(settingsProvider.notifier)
-                                .setSummaryVerbosity(1),
-                            theme: theme,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
                 // ── Font Size Section ──
-                _SectionLabel(label: 'Font Size', theme: theme),
+                _SectionLabel(label: s.fontSizeSection, theme: theme),
                 const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(24),
@@ -226,7 +181,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               color: theme.colorScheme.primary),
                           const SizedBox(width: 10),
                           Text(
-                            'Text Size',
+                            s.textSize,
                             style: theme.textTheme.titleMedium,
                           ),
                           const Spacer(),
@@ -282,30 +237,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          'Preview: The quick brown fox jumps over the lazy dog.',
+                          s.preview,
                           style: theme.textTheme.bodyMedium,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ── Web Zoom Section ──
-                _SectionLabel(label: 'Reader', theme: theme),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                      const SizedBox(height: 12),
+                      Divider(
+                        height: 1,
+                        color: outlineColor.withValues(alpha: 0.25),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Icon(Icons.zoom_in_rounded,
@@ -313,7 +254,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               color: theme.colorScheme.primary),
                           const SizedBox(width: 10),
                           Text(
-                            'Default Web Zoom',
+                            s.defaultWebZoom,
                             style: theme.textTheme.titleMedium,
                           ),
                           const Spacer(),
@@ -355,7 +296,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         },
                       ),
                       Text(
-                        'Controls the initial zoom level when opening articles in the built-in browser.',
+                        s.webZoomDesc,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: isDark
                               ? Colors.white54
@@ -366,102 +307,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
-                _SectionLabel(label: 'Source Platforms', theme: theme),
+                // ── Summary Style Section ──
+                _SectionLabel(label: s.summaryStyle, theme: theme),
                 const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
-                      color: outlineColor.withValues(alpha: 0.3),
-                    ),
+                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Reorder And Hide',
+                        s.summaryStyle,
                         style: theme.textTheme.titleMedium,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Drag to change the chip order. Turn off platforms you do not want to see in filters.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: isDark
-                              ? Colors.white54
-                              : const Color(0xFF6C8594),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      ReorderableListView.builder(
-                        shrinkWrap: true,
-                        buildDefaultDragHandles: false,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: settings.orderedSourcePlatforms.length,
-                        onReorder: (oldIndex, newIndex) async {
-                          final reordered = settings.orderedSourcePlatforms
-                              .map((platform) => platform.name)
-                              .toList();
-                          if (newIndex > oldIndex) {
-                            newIndex -= 1;
-                          }
-                          final moved = reordered.removeAt(oldIndex);
-                          reordered.insert(newIndex, moved);
-                          await ref
-                              .read(settingsProvider.notifier)
-                              .updateSourcePlatformOrder(reordered);
-                        },
-                        itemBuilder: (context, index) {
-                          final platform = settings.orderedSourcePlatforms[index];
-                          final isVisible = !settings
-                              .hiddenSourcePlatformNameSet
-                              .contains(platform.name);
-
-                          return Padding(
-                            key: ValueKey(platform.name),
-                            padding: EdgeInsets.only(
-                              bottom: index ==
-                                      settings.orderedSourcePlatforms.length - 1
-                                  ? 0
-                                  : 10,
-                            ),
-                            child: _SourcePlatformSettingRow(
-                              platform: platform,
-                              isVisible: isVisible,
-                              theme: theme,
-                              onVisibilityChanged: (value) {
-                                ref
-                                    .read(settingsProvider.notifier)
-                                    .setSourcePlatformVisibility(
-                                      platform.name,
-                                      value,
-                                    );
-                              },
-                              dragHandle: ReorderableDragStartListener(
-                                index: index,
-                                child: Icon(
-                                  Icons.drag_indicator_rounded,
-                                  color: isDark
-                                      ? Colors.white38
-                                      : const Color(0xFF8AA1AF),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          _ThemeModeButton(
+                            icon: Icons.short_text_rounded,
+                            label: s.brief,
+                            isSelected: settings.summaryVerbosityIndex == 0,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setSummaryVerbosity(0),
+                            theme: theme,
+                          ),
+                          const SizedBox(width: 10),
+                          _ThemeModeButton(
+                            icon: Icons.notes_rounded,
+                            label: s.detailed,
+                            isSelected: settings.summaryVerbosityIndex == 1,
+                            onTap: () => ref
+                                .read(settingsProvider.notifier)
+                                .setSummaryVerbosity(1),
+                            theme: theme,
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
                 // ── Behavior Section ──
-                _SectionLabel(label: 'Behavior', theme: theme),
+                _SectionLabel(label: s.behavior, theme: theme),
                 const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
@@ -475,10 +372,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   child: SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Detect links from clipboard'),
+                    title: Text(s.detectClipboard),
                     subtitle: Text(
-                      'When you open the app, offer to save a link you have '
-                      'copied.',
+                      s.detectClipboardDesc,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: isDark
                             ? Colors.white54
@@ -494,35 +390,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
                 // ── AI Section ──
-                _SectionLabel(label: 'AI Summary', theme: theme),
+                _SectionLabel(label: s.aiSummarySection, theme: theme),
                 const SizedBox(height: 8),
                 _AiSettingsCard(settings: settings, theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
                 // ── Batch Knowledge-ification ──
                 _BatchProcessCard(cardColor: cardColor, outlineColor: outlineColor, isDark: isDark, theme: theme),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
 
                 // ── Embedding & Index Section ──
-                _SectionLabel(label: 'Embedding & Index', theme: theme),
+                _SectionLabel(label: s.embeddingSection, theme: theme),
                 const SizedBox(height: 8),
                 _EmbeddingSettingsCard(settings: settings, theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark),
                 const SizedBox(height: 12),
                 _IndexManagementCard(cardColor: cardColor, outlineColor: outlineColor, isDark: isDark, theme: theme),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
+
+                // ── Source Platforms Section ──
+                _SectionLabel(label: s.sourcePlatforms, theme: theme),
+                const SizedBox(height: 8),
+                _NavTile(
+                  icon: Icons.dynamic_feed_rounded,
+                  title: s.reorderAndHide,
+                  subtitle: s.reorderDesc,
+                  cardColor: cardColor,
+                  outlineColor: outlineColor,
+                  isDark: isDark,
+                  theme: theme,
+                  onTap: () =>
+                      context.push(AppRoutes.sourcePlatforms),
+                ),
+
+                const SizedBox(height: 14),
 
                 // ── Data / Backup Section ──
-                _SectionLabel(label: 'Data', theme: theme),
+                _SectionLabel(label: s.data, theme: theme),
                 const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(24),
@@ -532,19 +445,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Backup & Restore', style: theme.textTheme.titleMedium),
+                      Text(s.backupRestore, style: theme.textTheme.titleMedium),
                       const SizedBox(height: 4),
                       Text(
-                        'Export all your articles, filters and settings to a '
-                        'JSON file, or import a backup. Importing merges into '
-                        'your current data.',
+                        s.backupDesc,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: isDark
                               ? Colors.white54
                               : const Color(0xFF6C8594),
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(
@@ -559,7 +470,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                     )
                                   : const Icon(Icons.ios_share_rounded,
                                       size: 18),
-                              label: const Text('Export'),
+                              label: Text(s.export),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -575,7 +486,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                     )
                                   : const Icon(Icons.file_download_rounded,
                                       size: 18),
-                              label: const Text('Import'),
+                              label: Text(s.import),
                             ),
                           ),
                         ],
@@ -584,7 +495,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 32),
+                const SizedBox(height: 16),
 
                 // ── About Section ──
                 FutureBuilder<PackageInfo>(
@@ -606,7 +517,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     );
                   },
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 ],
               ),
             ),
@@ -637,7 +548,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       await ref.read(backupServiceProvider).exportBackup();
     } catch (e) {
-      _showSnack('Export failed: $e');
+      _showSnack('${ref.read(stringsProvider).exportFailed}: $e');
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
@@ -646,23 +557,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _handleImport() async {
     if (_isImporting) return;
 
+    final s = ref.read(stringsProvider);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Import backup'),
-        content: const Text(
-          'Articles and filters from the backup will be merged into your '
-          'current data (entries with the same id are updated). App settings '
-          'will be replaced. Continue?',
-        ),
+        title: Text(s.importBackup),
+        content: Text(s.importConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(s.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Import'),
+            child: Text(s.import),
           ),
         ],
       ),
@@ -674,15 +582,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final result = await ref.read(backupServiceProvider).importBackup();
       if (result == null) return; // cancelled at file picker
       _showSnack(
-        'Imported ${result.articles} articles, '
+        '${s.imported} ${result.articles} articles, '
         '${result.filterGroups} filters'
         '${result.folders > 0 ? ', ${result.folders} folders' : ''}'
         '${result.settingsImported ? ', settings' : ''}.',
       );
     } on FormatException catch (e) {
-      _showSnack('Invalid backup file: ${e.message}');
+      _showSnack('${s.invalidBackup}: ${e.message}');
     } catch (e) {
-      _showSnack('Import failed: $e');
+      _showSnack('${s.importFailed}: $e');
     } finally {
       if (mounted) setState(() => _isImporting = false);
     }
@@ -753,7 +661,22 @@ class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> 
     );
   }
 
+  Future<void> _resetToDefaults() async {
+    setState(() {
+      _baseUrlController.text = '';
+      _apiKeyController.text = '';
+      _modelController.text = '';
+      _testResult = null;
+    });
+    await ref.read(settingsProvider.notifier).setEmbeddingConfig(
+      baseUrl: '',
+      apiKey: '',
+      model: '',
+    );
+  }
+
   Future<void> _testConnection() async {
+    final s = ref.read(stringsProvider);
     setState(() {
       _testing = true;
       _testResult = null;
@@ -763,22 +686,25 @@ class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> 
     if (service == null) {
       setState(() {
         _testing = false;
-        _testResult = 'Fill in all fields first';
+        _testResult = s.fillAllFields;
       });
       return;
     }
     final ok = await service.testConnection();
     setState(() {
       _testing = false;
-      _testResult = ok ? 'Connection successful' : 'Connection failed — check config';
+      _testResult = ok ? s.connectionSuccessful : s.connectionFailed;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final isUsingDefaults = !widget.settings.hasCustomEmbeddingConfig;
+    final s = ref.watch(stringsProvider);
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: widget.cardColor,
         borderRadius: BorderRadius.circular(24),
@@ -787,22 +713,44 @@ class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> 
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Embedding Configuration', style: widget.theme.textTheme.titleMedium),
+          Row(
+            children: [
+              Expanded(
+                child: Text(s.embeddingConfig, style: widget.theme.textTheme.titleMedium),
+              ),
+              if (isUsingDefaults)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: widget.theme.colorScheme.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    s.defaultLabel,
+                    style: widget.theme.textTheme.bodySmall?.copyWith(
+                      color: widget.theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 4),
           Text(
-            'Configure an OpenAI-compatible embeddings endpoint. '
-            'Used to convert article summaries into vectors for semantic search.',
+            isUsingDefaults
+                ? s.usingBuiltIn
+                : s.usingCustom,
             style: widget.theme.textTheme.bodySmall?.copyWith(
               color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           TextField(
             controller: _baseUrlController,
-            decoration: const InputDecoration(
-              labelText: 'Embedding Base URL',
-              hintText: 'https://api.openai.com/v1',
-              prefixIcon: Icon(Icons.link_rounded),
+            decoration: InputDecoration(
+              labelText: s.embeddingBaseUrl,
+              hintText: AppSettings.defaultEmbeddingBaseUrl,
+              prefixIcon: const Icon(Icons.link_rounded),
             ),
             onSubmitted: (_) => _save(),
           ),
@@ -810,8 +758,8 @@ class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> 
           TextField(
             controller: _apiKeyController,
             obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Embedding API Key',
+            decoration: InputDecoration(
+              labelText: s.embeddingApiKey,
               prefixIcon: Icon(Icons.key_rounded),
             ),
             onSubmitted: (_) => _save(),
@@ -819,14 +767,14 @@ class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> 
           const SizedBox(height: 12),
           TextField(
             controller: _modelController,
-            decoration: const InputDecoration(
-              labelText: 'Embedding Model',
-              hintText: 'text-embedding-3-small',
-              prefixIcon: Icon(Icons.smart_toy_rounded),
+            decoration: InputDecoration(
+              labelText: s.embeddingModel,
+              hintText: AppSettings.defaultEmbeddingModel,
+              prefixIcon: const Icon(Icons.smart_toy_rounded),
             ),
             onSubmitted: (_) => _save(),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -839,18 +787,29 @@ class _EmbeddingSettingsCardState extends ConsumerState<_EmbeddingSettingsCard> 
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.wifi_tethering_rounded),
-                  label: Text(_testing ? 'Testing...' : 'Test Connection'),
+                  label: Text(_testing ? s.testing : s.testConnection),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton(
                   onPressed: _save,
-                  child: const Text('Save'),
+                  child: Text(s.save),
                 ),
               ),
             ],
           ),
+          if (!isUsingDefaults) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _resetToDefaults,
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                label: Text(s.resetToDefaults),
+              ),
+            ),
+          ],
           if (_testResult != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -912,7 +871,7 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
     if (embedding == null) {
       setState(() {
         _rebuilding = false;
-        _rebuildResult = 'Configure embedding first';
+        _rebuildResult = ref.read(stringsProvider).configureEmbeddingFirst;
       });
       return;
     }
@@ -928,15 +887,16 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
     setState(() {
       _rebuilding = false;
       _indexedCount = count;
-      _rebuildResult = 'Indexed $count articles';
+      _rebuildResult = '${ref.read(stringsProvider).indexedN} $count articles';
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: widget.cardColor,
         borderRadius: BorderRadius.circular(24),
@@ -945,17 +905,17 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Index Management', style: widget.theme.textTheme.titleMedium),
+          Text(s.indexManagement, style: widget.theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
             _indexedCount != null
-                ? '$_indexedCount articles indexed'
-                : 'Loading index status...',
+                ? '$_indexedCount ${s.nArticlesIndexed}'
+                : s.loadingIndexStatus,
             style: widget.theme.textTheme.bodySmall?.copyWith(
               color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
@@ -968,8 +928,8 @@ class _IndexManagementCardState extends ConsumerState<_IndexManagementCard> {
                     )
                   : const Icon(Icons.build_rounded),
               label: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(_rebuilding ? 'Rebuilding...' : 'Rebuild Index'),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(_rebuilding ? s.rebuilding : s.rebuildIndex),
               ),
             ),
           ),
@@ -1005,6 +965,7 @@ class _BatchProcessCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final articlesAsync = ref.watch(articlesProvider);
     final aiConfigured = ref.watch(aiConfiguredProvider);
+    final s = ref.watch(stringsProvider);
 
     final articles = articlesAsync.valueOrNull ?? [];
     final needsProcessing = articles
@@ -1015,7 +976,7 @@ class _BatchProcessCard extends ConsumerWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(24),
@@ -1024,18 +985,17 @@ class _BatchProcessCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Batch Processing', style: theme.textTheme.titleMedium),
+          Text(s.batchProcessing, style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
             unprocessedCount == 0
-                ? 'All articles have been processed.'
-                : '$unprocessedCount article${unprocessedCount == 1 ? '' : 's'} without a summary. '
-                    'Process them to generate AI summaries and tags.',
+                ? s.allProcessed
+                : '$unprocessedCount ${s.nWithoutSummary}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: isDark ? Colors.white54 : const Color(0xFF6C8594),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
@@ -1044,13 +1004,13 @@ class _BatchProcessCard extends ConsumerWidget {
                   : () => _startBatchProcess(context, ref, needsProcessing),
               icon: const Icon(Icons.auto_fix_high_rounded),
               label: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
                   !aiConfigured
-                      ? 'Configure AI first'
+                      ? s.configureAiFirstBtn
                       : unprocessedCount == 0
-                          ? 'Nothing to process'
-                          : 'Process $unprocessedCount article${unprocessedCount == 1 ? '' : 's'}',
+                          ? s.nothingToProcess
+                          : s.processNArticles.replaceFirst('article(s)', unprocessedCount.toString()),
                 ),
               ),
             ),
@@ -1058,7 +1018,7 @@ class _BatchProcessCard extends ConsumerWidget {
           if (!aiConfigured) ...[
             const SizedBox(height: 8),
             Text(
-              'Set up your AI provider above to enable batch processing.',
+              s.setupAiProvider,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
               ),
@@ -1074,23 +1034,22 @@ class _BatchProcessCard extends ConsumerWidget {
     WidgetRef ref,
     List<Article> articles,
   ) async {
+    final s = ref.read(stringsProvider);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Batch Processing'),
+        title: Text(s.batchProcessing),
         content: Text(
-          'Process ${articles.length} article${articles.length == 1 ? '' : 's'}? '
-          'This will call your AI provider for each article to generate '
-          'summaries and tags.',
+          s.batchProcessConfirm.replaceFirst('article(s)', articles.length.toString()),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(s.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Start'),
+            child: Text(s.start),
           ),
         ],
       ),
@@ -1108,7 +1067,7 @@ class _BatchProcessCard extends ConsumerWidget {
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Processed $processed of ${articles.length} articles')),
+        SnackBar(content: Text('${s.processedN} $processed/${articles.length} articles')),
       );
     }
   }
@@ -1165,7 +1124,7 @@ class _ThemeModeButton extends StatelessWidget {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: const EdgeInsets.symmetric(vertical: 11),
             decoration: BoxDecoration(
               color: isSelected
                   ? primaryColor.withValues(alpha: 0.12)
@@ -1210,84 +1169,80 @@ class _ThemeModeButton extends StatelessWidget {
   }
 }
 
-class _SourcePlatformSettingRow extends StatelessWidget {
-  final SourcePlatform platform;
-  final bool isVisible;
+class _NavTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color cardColor;
+  final Color outlineColor;
+  final bool isDark;
   final ThemeData theme;
-  final ValueChanged<bool> onVisibilityChanged;
-  final Widget dragHandle;
+  final VoidCallback onTap;
 
-  const _SourcePlatformSettingRow({
-    required this.platform,
-    required this.isVisible,
+  const _NavTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.cardColor,
+    required this.outlineColor,
+    required this.isDark,
     required this.theme,
-    required this.onVisibilityChanged,
-    required this.dragHandle,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor.withValues(
-          alpha: isDark ? 0.5 : 0.9,
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: theme.colorScheme.outline.withValues(alpha: 0.22),
-        ),
-      ),
-      child: Row(
-        children: [
-          const SizedBox(width: 10),
-          dragHandle,
-          const SizedBox(width: 8),
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: platform.accentColor.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              platform.icon,
-              size: 18,
-              color: platform.accentColor,
-            ),
+    return Material(
+      color: cardColor,
+      borderRadius: BorderRadius.circular(24),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border:
+                Border.all(color: outlineColor.withValues(alpha: 0.3)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  platform.displayName,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: isVisible
-                        ? theme.colorScheme.onSurface
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                  ),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                Text(
-                  isVisible ? 'Visible in filters' : 'Hidden from filters',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: isDark
-                        ? Colors.white54
-                        : const Color(0xFF6C8594),
-                  ),
+                child: Icon(icon,
+                    size: 20, color: theme.colorScheme.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: isDark ? Colors.white38 : const Color(0xFF8AA1AF),
+              ),
+            ],
           ),
-          Switch(
-            value: isVisible,
-            onChanged: onVisibilityChanged,
-          ),
-          const SizedBox(width: 6),
-        ],
+        ),
       ),
     );
   }
@@ -1360,15 +1315,16 @@ class _AiSettingsCardState extends ConsumerState<_AiSettingsCard> {
       model: _modelController.text.trim(),
     );
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('AI settings saved')),
+      SnackBar(content: Text(ref.read(stringsProvider).aiSettingsSaved)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: widget.cardColor,
         borderRadius: BorderRadius.circular(24),
@@ -1377,53 +1333,51 @@ class _AiSettingsCardState extends ConsumerState<_AiSettingsCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('API Configuration', style: widget.theme.textTheme.titleMedium),
+          Text(s.apiConfig, style: widget.theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
-            'Enter your OpenAI-compatible API credentials. Your key is stored '
-            'on this device only and is never included in exported backups. '
-            'It is sent only to your own AI provider when generating summaries.',
+            s.apiConfigDesc,
             style: widget.theme.textTheme.bodySmall?.copyWith(
               color: widget.isDark ? Colors.white54 : const Color(0xFF6C8594),
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           TextField(
             controller: _baseUrlController,
-            decoration: const InputDecoration(
-              labelText: 'Base URL',
+            decoration: InputDecoration(
+              labelText: s.baseUrl,
               hintText: 'https://api.openai.com/v1',
-              prefixIcon: Icon(Icons.link_rounded),
+              prefixIcon: const Icon(Icons.link_rounded),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _apiKeyController,
             obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'API Key',
+            decoration: InputDecoration(
+              labelText: s.apiKey,
               hintText: 'sk-...',
-              prefixIcon: Icon(Icons.key_rounded),
+              prefixIcon: const Icon(Icons.key_rounded),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _modelController,
-            decoration: const InputDecoration(
-              labelText: 'Model',
+            decoration: InputDecoration(
+              labelText: s.model,
               hintText: 'gpt-4o-mini',
-              prefixIcon: Icon(Icons.smart_toy_rounded),
+              prefixIcon: const Icon(Icons.smart_toy_rounded),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               onPressed: _save,
               icon: const Icon(Icons.save_rounded),
-              label: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Save AI Settings'),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(s.saveAiSettings),
               ),
             ),
           ),
