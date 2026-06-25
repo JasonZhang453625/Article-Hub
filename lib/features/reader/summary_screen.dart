@@ -43,7 +43,7 @@ class SummaryScreen extends ConsumerWidget {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.delete_outline_rounded),
+            icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
             tooltip: s.delete,
             onPressed: () async {
               final confirmed = await showDialog<bool>(
