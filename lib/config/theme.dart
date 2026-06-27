@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class AppTheme {
   static const Color capriBlue = Color(0xFF00AEEF);
@@ -22,12 +23,13 @@ class AppTheme {
         shadow: Color(0x200C3554),
       ),
       scaffoldBackgroundColor: mist,
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         centerTitle: true,
         elevation: 0,
         scrolledUnderElevation: 0,
         backgroundColor: Colors.transparent,
         foregroundColor: deepSea,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
       ),
       cardTheme: CardThemeData(
         color: paper,
@@ -149,12 +151,13 @@ class AppTheme {
         shadow: Color(0x40000000),
       ),
       scaffoldBackgroundColor: _darkSurface,
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         centerTitle: true,
         elevation: 0,
         scrolledUnderElevation: 0,
         backgroundColor: Colors.transparent,
         foregroundColor: _darkOnSurface,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
       ),
       cardTheme: CardThemeData(
         color: _darkCard,
@@ -254,3 +257,4 @@ class AppTheme {
     );
   }
 }
+

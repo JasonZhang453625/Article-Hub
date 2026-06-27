@@ -129,6 +129,8 @@ class LocaleStrings {
   final String behavior;
   final String detectClipboard;
   final String detectClipboardDesc;
+  final String hideInboxTab;
+  final String hideInboxTabDesc;
   final String aiSummarySection;
   final String apiConfig;
   final String apiConfigDesc;
@@ -137,6 +139,21 @@ class LocaleStrings {
   final String model;
   final String saveAiSettings;
   final String aiSettingsSaved;
+  final String settingsAppearance;
+  final String settingsAppearanceDesc;
+  final String settingsOperations;
+  final String settingsOperationsDesc;
+  final String settingsOther;
+  final String settingsOtherDesc;
+  final String settingsDev;
+  final String settingsDevDesc;
+  final String fontWeight;
+  final String operations;
+  final String knowledgeSectionLabel;
+  final String knowledgeBatchTitle;
+  final String knowledgeify;
+  final String knowledgeifyDesc;
+  final String processAll;
   final String batchProcessing;
   final String allProcessed;
   final String nWithoutSummary;
@@ -179,6 +196,7 @@ class LocaleStrings {
   final String invalidBackup;
   final String exportFailed;
   final String importFailed;
+  final String saveFailed;
   final String editFilter;
   final String newFilter;
   final String filterName;
@@ -329,6 +347,8 @@ class LocaleStrings {
     required this.behavior,
     required this.detectClipboard,
     required this.detectClipboardDesc,
+    required this.hideInboxTab,
+    required this.hideInboxTabDesc,
     required this.aiSummarySection,
     required this.apiConfig,
     required this.apiConfigDesc,
@@ -337,6 +357,21 @@ class LocaleStrings {
     required this.model,
     required this.saveAiSettings,
     required this.aiSettingsSaved,
+    required this.settingsAppearance,
+    required this.settingsAppearanceDesc,
+    required this.settingsOperations,
+    required this.settingsOperationsDesc,
+    required this.settingsOther,
+    required this.settingsOtherDesc,
+    required this.settingsDev,
+    required this.settingsDevDesc,
+    required this.fontWeight,
+    required this.operations,
+    required this.knowledgeSectionLabel,
+    required this.knowledgeBatchTitle,
+    required this.knowledgeify,
+    required this.knowledgeifyDesc,
+    required this.processAll,
     required this.batchProcessing,
     required this.allProcessed,
     required this.nWithoutSummary,
@@ -379,6 +414,7 @@ class LocaleStrings {
     required this.invalidBackup,
     required this.exportFailed,
     required this.importFailed,
+    required this.saveFailed,
     required this.editFilter,
     required this.newFilter,
     required this.filterName,
@@ -544,6 +580,8 @@ class LocaleStrings {
     behavior: 'Behavior',
     detectClipboard: 'Detect links from clipboard',
     detectClipboardDesc: 'When you open the app, offer to save a link you have copied.',
+    hideInboxTab: 'Hide "Progress" Tab',
+    hideInboxTabDesc: 'Remove the Progress tab from the bottom navigation bar',
     aiSummarySection: 'AI Summary',
     apiConfig: 'API Configuration',
     apiConfigDesc: 'Enter your OpenAI-compatible API credentials. Your key is stored on this device only and is never included in exported backups.',
@@ -552,6 +590,21 @@ class LocaleStrings {
     model: 'Model',
     saveAiSettings: 'Save AI Settings',
     aiSettingsSaved: 'AI settings saved',
+    settingsAppearance: 'Appearance',
+    settingsAppearanceDesc: 'Theme, language, font size & more',
+    settingsOperations: 'Summary',
+    settingsOperationsDesc: 'Summary style, batch processing, index & more',
+    settingsOther: 'Other',
+    settingsOtherDesc: 'Source platforms, backup & restore',
+    settingsDev: 'Feedback Stats',
+    settingsDevDesc: 'Response feedback data (dev)',
+    fontWeight: 'Font Weight',
+    operations: 'Operations',
+    knowledgeSectionLabel: 'Knowledge Management',
+    knowledgeBatchTitle: 'Backfill Summaries',
+    knowledgeify: 'Knowledge-ify Old Articles',
+    knowledgeifyDesc: 'Generate summaries for all articles that are missing them.',
+    processAll: 'Process All',
     batchProcessing: 'Batch Processing',
     allProcessed: 'All articles have been processed.',
     nWithoutSummary: 'article(s) without a summary',
@@ -594,6 +647,7 @@ class LocaleStrings {
     invalidBackup: 'Invalid backup file',
     exportFailed: 'Export failed',
     importFailed: 'Import failed',
+    saveFailed: 'Save failed',
     editFilter: 'Edit Filter',
     newFilter: 'New Filter',
     filterName: 'Filter Name',
@@ -705,7 +759,7 @@ class LocaleStrings {
     askKnowledgeBase: '向知识库提问',
     tryExamples: '试试：「关于 AI 的核心观点是什么？」或「总结我保存的 Flutter 文章」',
     processFirst: '请先处理一些文章，然后再来提问。',
-    askHint: '提问关于你的知识库…',
+    askHint: '你想知道些什么？',
     tryBroaderTerm: '试试更宽泛的词：',
     browseKnowledgeBase: '浏览知识库',
     possiblyRelated: '可能相关：',
@@ -745,14 +799,31 @@ class LocaleStrings {
     behavior: '行为',
     detectClipboard: '检测剪贴板链接',
     detectClipboardDesc: '打开应用时，提示保存已复制的链接。',
+    hideInboxTab: '隐藏"进程"标签',
+    hideInboxTabDesc: '从底部导航栏移除进程入口',
     aiSummarySection: 'AI 摘要',
     apiConfig: 'API 配置',
-    apiConfigDesc: '输入你的 OpenAI 兼容 API 凭据。密钥仅存储在本地，不会包含在导出的备份中。',
+    apiConfigDesc: '输入你的OpenAI兼容API配置。密钥仅存储在本地。',
     baseUrl: '基础 URL',
     apiKey: 'API 密钥',
     model: '模型',
     saveAiSettings: '保存 AI 设置',
     aiSettingsSaved: 'AI 设置已保存',
+    settingsAppearance: '界面',
+    settingsAppearanceDesc: '主题、语言、字体大小等',
+    settingsOperations: '知识',
+    settingsOperationsDesc: '批量处理、索引、剪贴板等',
+    settingsOther: '其他',
+    settingsOtherDesc: '来源平台、备份与恢复',
+    settingsDev: '反馈统计',
+    settingsDevDesc: '对话反馈数据（开发用）',
+    fontWeight: '字体粗细',
+    operations: '操作',
+    knowledgeSectionLabel: '知识管理',
+    knowledgeBatchTitle: '补充生成摘要',
+    knowledgeify: '批量知识化旧文章',
+    knowledgeifyDesc: '为所有未生成摘要的文章生成摘要',
+    processAll: '全部处理',
     batchProcessing: '批量处理',
     allProcessed: '所有文章已处理完毕。',
     nWithoutSummary: '篇文章没有摘要',
@@ -795,6 +866,7 @@ class LocaleStrings {
     invalidBackup: '无效备份文件',
     exportFailed: '导出失败',
     importFailed: '导入失败',
+    saveFailed: '保存失败',
     editFilter: '编辑筛选',
     newFilter: '新建筛选',
     filterName: '筛选名称',
