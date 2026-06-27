@@ -59,6 +59,12 @@ class AppSettings {
   /// Chat knowledge source: 0 = knowledge base only, 1 = knowledge base + general knowledge
   int chatKnowledgeSourceIndex;
 
+  /// When true, the Inbox/Progress tab is hidden in the bottom navigation bar.
+  bool hideInboxTab;
+
+  /// Font weight: 0 = normal (w400), 1 = medium (w500), 2 = semibold (w600), 3 = bold (w700)
+  int fontWeightIndex;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
@@ -74,6 +80,8 @@ class AppSettings {
     this.summaryVerbosityIndex = 0,
     this.chatAnswerLengthIndex = 0,
     this.chatKnowledgeSourceIndex = 0,
+    this.hideInboxTab = false,
+    this.fontWeightIndex = 0,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -171,6 +179,15 @@ class AppSettings {
     }
   }
 
+  FontWeight get fontWeight {
+    switch (fontWeightIndex) {
+      case 1: return FontWeight.w500;
+      case 2: return FontWeight.w600;
+      case 3: return FontWeight.w700;
+      default: return FontWeight.w400;
+    }
+  }
+
   AppSettings copyWith({
     double? fontSize,
     int? webZoomPercent,
@@ -186,6 +203,8 @@ class AppSettings {
     int? summaryVerbosityIndex,
     int? chatAnswerLengthIndex,
     int? chatKnowledgeSourceIndex,
+    bool? hideInboxTab,
+    int? fontWeightIndex,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -205,6 +224,8 @@ class AppSettings {
       summaryVerbosityIndex: summaryVerbosityIndex ?? this.summaryVerbosityIndex,
       chatAnswerLengthIndex: chatAnswerLengthIndex ?? this.chatAnswerLengthIndex,
       chatKnowledgeSourceIndex: chatKnowledgeSourceIndex ?? this.chatKnowledgeSourceIndex,
+      hideInboxTab: hideInboxTab ?? this.hideInboxTab,
+      fontWeightIndex: fontWeightIndex ?? this.fontWeightIndex,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
@@ -214,11 +235,9 @@ class AppSettings {
 
   /// Serializes to JSON for the backup/export path.
   ///
-  /// The API key is deliberately omitted: a backup file is a portable,
-  /// shareable artifact, so it must never carry a live secret even though the
-  /// key is stored locally on the device. This is the one protection that
-  /// actually matters for this threat model. Importers will prompt the user to
-  /// re-enter the key.
+  /// Includes both API keys so that a backup serves as a complete portable
+  /// configuration — the user can export on one device and import on another
+  /// without re-entering provider credentials.
   Map<String, dynamic> toJson() {
     return {
       'fontSize': fontSize,
@@ -226,14 +245,17 @@ class AppSettings {
       'themeModeIndex': themeModeIndex,
       'clipboardDetectionEnabled': clipboardDetectionEnabled,
       'aiBaseUrl': aiBaseUrl,
+      'aiApiKey': aiApiKey,
       'aiModel': aiModel,
       'embeddingBaseUrl': embeddingBaseUrl,
+      'embeddingApiKey': embeddingApiKey,
       'embeddingModel': embeddingModel,
-      // embeddingApiKey deliberately omitted — same rationale as aiApiKey above.
       'languageIndex': languageIndex,
       'summaryVerbosityIndex': summaryVerbosityIndex,
       'chatAnswerLengthIndex': chatAnswerLengthIndex,
       'chatKnowledgeSourceIndex': chatKnowledgeSourceIndex,
+      'hideInboxTab': hideInboxTab,
+      'fontWeightIndex': fontWeightIndex,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -249,19 +271,17 @@ class AppSettings {
               ? json['clipboardDetectionEnabled'] as bool
               : true,
       aiBaseUrl: json['aiBaseUrl'] is String ? json['aiBaseUrl'] as String : '',
-      // Backups never contain the key (see toJson), so this is almost always
-      // empty on import — the user re-enters it. Read defensively anyway.
       aiApiKey: json['aiApiKey'] is String ? json['aiApiKey'] as String : '',
       aiModel: json['aiModel'] is String ? json['aiModel'] as String : 'gpt-4o-mini',
       embeddingBaseUrl: json['embeddingBaseUrl'] is String ? json['embeddingBaseUrl'] as String : '',
-      // Backups never contain the key (see toJson), so this is almost always
-      // empty on import — the user re-enters it. Read defensively anyway.
       embeddingApiKey: json['embeddingApiKey'] is String ? json['embeddingApiKey'] as String : '',
       embeddingModel: json['embeddingModel'] is String ? json['embeddingModel'] as String : '',
       languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
       summaryVerbosityIndex: (json['summaryVerbosityIndex'] as num?)?.toInt() ?? 0,
       chatAnswerLengthIndex: (json['chatAnswerLengthIndex'] as num?)?.toInt() ?? 0,
       chatKnowledgeSourceIndex: (json['chatKnowledgeSourceIndex'] as num?)?.toInt() ?? 0,
+      hideInboxTab: json['hideInboxTab'] is bool ? json['hideInboxTab'] as bool : false,
+      fontWeightIndex: (json['fontWeightIndex'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
@@ -298,6 +318,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       summaryVerbosityIndex: (fields[13] as num?)?.toInt() ?? 0,
       chatAnswerLengthIndex: (fields[14] as num?)?.toInt() ?? 0,
       chatKnowledgeSourceIndex: (fields[15] as num?)?.toInt() ?? 0,
+      hideInboxTab: (fields[16] as bool?) ?? false,
+      fontWeightIndex: (fields[17] as num?)?.toInt() ?? 0,
       embeddingBaseUrl: (fields[10] as String?) ?? '',
       embeddingApiKey: (fields[11] as String?) ?? '',
       embeddingModel: (fields[12] as String?) ?? '',
@@ -307,7 +329,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(16)
+      ..writeByte(18)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -339,6 +361,10 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(14)
       ..write(obj.chatAnswerLengthIndex)
       ..writeByte(15)
-      ..write(obj.chatKnowledgeSourceIndex);
+      ..write(obj.chatKnowledgeSourceIndex)
+      ..writeByte(16)
+      ..write(obj.hideInboxTab)
+      ..writeByte(17)
+      ..write(obj.fontWeightIndex);
   }
 }

@@ -11,6 +11,11 @@ import '../features/reader/summary_screen.dart';
 import '../features/detail/detail_screen.dart';
 import '../features/folders/folders_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/settings/appearance_screen.dart';
+import '../features/settings/api_config_screen.dart';
+import '../features/settings/operations_screen.dart';
+import '../features/settings/other_screen.dart';
+import '../features/settings/developer_screen.dart';
 import '../features/settings/source_platforms_screen.dart';
 import '../features/shell/app_shell.dart';
 
@@ -19,6 +24,11 @@ class AppRoutes {
   static const String knowledge = '/knowledge';
   static const String inbox = '/inbox';
   static const String settings = '/settings';
+  static const String settingsAppearance = '/settings/appearance';
+  static const String settingsApiConfig = '/settings/api-config';
+  static const String settingsOperations = '/settings/operations';
+  static const String settingsOther = '/settings/other';
+  static const String settingsDeveloper = '/settings/developer';
   static const String sourcePlatforms = '/settings/source-platforms';
   static const String addArticle = '/add';
   static const String summary = '/summary';
@@ -181,6 +191,31 @@ final appRouter = GoRouter(
       path: AppRoutes.sourcePlatforms,
       pageBuilder: (context, state) =>
           _buildPage(state: state, child: const SourcePlatformsScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsAppearance,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const AppearanceScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsApiConfig,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const ApiConfigScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsOperations,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const OperationsScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsOther,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const OtherScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsDeveloper,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const DeveloperScreen()),
     ),
   ],
 );

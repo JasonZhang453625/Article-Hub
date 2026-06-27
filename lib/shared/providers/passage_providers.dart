@@ -53,6 +53,9 @@ final articlesProvider =
 
 class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   final Ref _ref;
+  /// In-memory cache sorted by updatedAt desc.
+  /// Mutated in place so mutations avoid a full Hive scan.
+  List<Article> _cached = [];
 
   ArticlesNotifier(this._ref) : super(const AsyncValue.loading()) {
     _load();
@@ -60,19 +63,31 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
 
   Future<void> _load() async {
     final repo = await _ref.read(articleRepositoryProvider.future);
-    state = AsyncValue.data(repo.getAll());
+    _cached = repo.getAll();
+    state = AsyncValue.data(List.unmodifiable(_cached));
+  }
+
+  void _emit() {
+    state = AsyncValue.data(List.unmodifiable(_cached));
   }
 
   Future<void> add(Article article) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.add(article);
-    state = AsyncValue.data(repo.getAll());
+    _cached.add(article);
+    _cached.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    _emit();
   }
 
   Future<void> update(Article article) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.update(article);
-    state = AsyncValue.data(repo.getAll());
+    final idx = _cached.indexWhere((a) => a.id == article.id);
+    if (idx != -1) {
+      _cached[idx] = article;
+      _cached.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }
+    _emit();
   }
 
   /// Applies only generated-summary fields to the latest stored article.
@@ -94,7 +109,13 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
       coverImageUrl: coverImageUrl ?? current.coverImageUrl,
     );
     await repo.update(updated);
-    state = AsyncValue.data(repo.getAll());
+
+    final idx = _cached.indexWhere((a) => a.id == articleId);
+    if (idx != -1) {
+      _cached[idx] = updated;
+      _cached.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }
+    _emit();
 
     // Update vector index with the new summary.
     _updateIndex(updated);
@@ -126,7 +147,8 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     await repo.delete(id);
     // Also remove the vector index entry if one exists.
     _ref.read(indexServiceProvider).delete(id).catchError((_) {});
-    state = AsyncValue.data(repo.getAll());
+    _cached.removeWhere((a) => a.id == id);
+    _emit();
   }
 
   /// Imports a batch of articles (merge by id) and refreshes state.
@@ -134,7 +156,16 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<int> importAll(Iterable<Article> articles) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     final count = await repo.importAll(articles);
-    state = AsyncValue.data(repo.getAll());
+    for (final article in articles) {
+      final idx = _cached.indexWhere((a) => a.id == article.id);
+      if (idx != -1) {
+        _cached[idx] = article;
+      } else {
+        _cached.add(article);
+      }
+    }
+    _cached.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    _emit();
     return count;
   }
 
@@ -158,6 +189,20 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     }
     if (articles.isEmpty) return 0;
     return importAll(articles);
+  }
+
+  /// Batch-unassigns [folderId] from all cached articles that have it.
+  /// Persists via the repository then flips the in-memory list so callers
+  /// (e.g. FoldersNotifier.delete) avoid a full Hive reload.
+  Future<void> clearFolder(String folderId) async {
+    final repo = await _ref.read(articleRepositoryProvider.future);
+    await repo.unsetFolderBatch(folderId);
+    for (final article in _cached) {
+      if (article.folderId == folderId) {
+        article.folderId = null;
+      }
+    }
+    _emit();
   }
 
   void refresh() {
@@ -208,8 +253,13 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final query = ref.watch(searchQueryProvider);
   final sourceName = ref.watch(selectedSourceProvider);
   final selectedFilterId = ref.watch(selectedFilterGroupProvider);
-  final filterGroupsAsync = ref.watch(filterGroupsProvider);
   final folderId = ref.watch(selectedFolderIdProvider);
+
+  // Only subscribe to filter groups when a filter is actually selected,
+  // avoiding an unnecessary Hive read + provider cascade on every change.
+  final filterGroupsAsync = selectedFilterId.isNotEmpty
+      ? ref.watch(filterGroupsProvider)
+      : const AsyncValue.data(<FilterGroup>[]);
 
   return articlesAsync.whenData((articles) {
     var filtered = articles;
@@ -316,11 +366,10 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
         await folder.save();
       }
     }
-    // Move articles in this folder to unfiled.
-    final repo = await _ref.read(articleRepositoryProvider.future);
-    await repo.unsetFolder(id);
+    // Move articles in this folder to unfiled — uses batch putAll + cache
+    // instead of per-article save() + full reload.
+    await _ref.read(articlesProvider.notifier).clearFolder(id);
     await _load();
-    _ref.read(articlesProvider.notifier).refresh();
   }
 
   void refresh() => _load();

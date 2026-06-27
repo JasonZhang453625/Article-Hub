@@ -110,6 +110,8 @@ class ArticleCard extends StatelessWidget {
                         width: 48,
                         height: 48,
                         fit: BoxFit.cover,
+                        cacheWidth: 144,
+                        cacheHeight: 144,
                         errorBuilder: (_, e, s) => const SizedBox.shrink(),
                       ),
                     ),

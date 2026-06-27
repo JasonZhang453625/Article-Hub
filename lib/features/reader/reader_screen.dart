@@ -19,6 +19,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   double _progress = 0;
   InAppWebViewController? _webViewController;
   String? _currentUrl;
+  String? _loadError;
+  bool _reloading = false;
 
   @override
   void initState() {
@@ -31,6 +33,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _loadError = null;
+      _reloading = true;
+      _progress = 0;
+    });
+    await _webViewController?.reload();
+    if (mounted) setState(() => _reloading = false);
   }
 
   @override
@@ -46,10 +58,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              _webViewController?.reload();
-            },
+            icon: _reloading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            onPressed: _reloading ? null : _reload,
             tooltip: 'Refresh',
           ),
           IconButton(
@@ -59,7 +75,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: Column(
         children: [
           if (_progress < 1.0)
             LinearProgressIndicator(
@@ -68,7 +87,51 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               color: widget.article.source.accentColor,
             ),
           Expanded(
-            child: InAppWebView(
+            child: _loadError != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.cloud_off_rounded,
+                              size: 48,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .error
+                                  .withValues(alpha: 0.6)),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Failed to load page',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _loadError!,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6),
+                                ),
+                          ),
+                          const SizedBox(height: 16),
+                          OutlinedButton.icon(
+                            onPressed: _reload,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : InAppWebView(
               initialUrlRequest: URLRequest(url: WebUri(widget.article.url)),
               initialSettings: InAppWebViewSettings(
                 userAgent: articleHubMobileUserAgent,
@@ -92,6 +155,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               onUpdateVisitedHistory: (controller, uri, isReload) {
                 setState(() {
                   _currentUrl = uri?.toString();
+                });
+              },
+              onReceivedError: (controller, request, error) {
+                setState(() {
+                  _loadError = error.description;
                 });
               },
               shouldOverrideUrlLoading: (controller, navigationAction) async {
@@ -131,6 +199,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             ),
           ),
         ],
+      ),
+      ),
       ),
     );
   }

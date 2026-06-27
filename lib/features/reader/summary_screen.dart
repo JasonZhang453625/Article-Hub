@@ -65,8 +65,16 @@ class SummaryScreen extends ConsumerWidget {
                 ),
               );
               if (confirmed == true && context.mounted) {
-                await ref.read(articlesProvider.notifier).delete(a.id);
-                if (context.mounted) Navigator.of(context).pop();
+                try {
+                  await ref.read(articlesProvider.notifier).delete(a.id);
+                  if (context.mounted) Navigator.of(context).pop();
+                } catch (e) {
+                  if (!context.mounted) return;
+                  final s2 = ref.read(stringsProvider);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('${s2.saveFailed}: $e')),
+                  );
+                }
               }
             },
           ),

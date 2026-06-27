@@ -95,6 +95,16 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(chatKnowledgeSourceIndex: index));
   }
 
+  Future<void> setHideInboxTab(bool hidden) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(hideInboxTab: hidden));
+  }
+
+  Future<void> setFontWeightIndex(int index) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(fontWeightIndex: index));
+  }
+
   Future<void> setEmbeddingConfig({
     String? baseUrl,
     String? apiKey,
@@ -240,3 +250,17 @@ String aiLanguagePrompt(int languageIndex) {
       return 'Respond in the same language as the article title. If the title is in Chinese, respond in Chinese. If in English, respond in English.';
   }
 }
+
+final hideInboxTabProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.hideInboxTab,
+    orElse: () => false,
+  );
+});
+
+final fontWeightIndexProvider = Provider<int>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.fontWeightIndex,
+    orElse: () => 0,
+  );
+});

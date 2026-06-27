@@ -68,25 +68,28 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-          child: Container(
-            decoration: BoxDecoration(
-              color: chipBg,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: s.searchHint,
-                prefixIcon: const Icon(Icons.search_rounded),
-                suffixIcon: const Icon(Icons.tune_rounded),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 16),
+        GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          behavior: HitTestBehavior.translucent,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+            child: Container(
+              decoration: BoxDecoration(
+                color: chipBg,
+                borderRadius: BorderRadius.circular(24),
               ),
-              onChanged: (value) {
-                ref.read(searchQueryProvider.notifier).state = value;
-              },
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: s.searchHint,
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                onChanged: (value) {
+                  ref.read(searchQueryProvider.notifier).state = value;
+                },
+              ),
             ),
           ),
         ),

@@ -18,7 +18,23 @@ class InboxScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(s.tabInbox)),
       body: pendingAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Error: $e'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () => ref.invalidate(articlesProvider),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
         data: (articles) {
           if (articles.isEmpty) {
             return const _EmptyInbox();
@@ -173,7 +189,14 @@ class _InboxTile extends ConsumerWidget {
               icon: const Icon(Icons.refresh_rounded),
               tooltip: s.retry,
               onPressed: () {
-                ref.read(processingPipelineProvider).retry(article);
+                try {
+                  ref.read(processingPipelineProvider).retry(article);
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('${s.saveFailed}: $e')),
+                  );
+                }
               },
             ),
           IconButton(
@@ -198,7 +221,14 @@ class _InboxTile extends ConsumerWidget {
                 ),
               );
               if (confirmed == true) {
-                ref.read(articlesProvider.notifier).delete(article.id);
+                try {
+                  await ref.read(articlesProvider.notifier).delete(article.id);
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('${s.saveFailed}: $e')),
+                  );
+                }
               }
             },
           ),

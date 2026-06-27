@@ -55,7 +55,11 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
   Future<void> _saveAndPop() async {
     FocusScope.of(context).unfocus();
-    if (_hasChanges) {
+    if (!_hasChanges) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    try {
       final updated = widget.article.copyWith(
         title: _titleController.text.trim(),
         notes: _notesController.text.trim(),
@@ -64,9 +68,15 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         folderId: _selectedFolderId,
       );
       await ref.read(articlesProvider.notifier).update(updated);
-    }
-    if (mounted) {
-      Navigator.of(context).pop();
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final s = ref.read(stringsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${s.saveFailed}: $e')),
+      );
     }
   }
 
@@ -97,9 +107,16 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     );
 
     if (confirmed == true) {
-      await ref.read(articlesProvider.notifier).delete(widget.article.id);
-      if (mounted) {
-        Navigator.of(context).pop();
+      try {
+        await ref.read(articlesProvider.notifier).delete(widget.article.id);
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${s.saveFailed}: $e')),
+        );
       }
     }
   }
@@ -146,7 +163,11 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             ),
           ],
         ),
-        body: SingleChildScrollView(
+        body: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -303,6 +324,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 ),
               ),
             ],
+          ),
+          ),
           ),
         ),
       ),

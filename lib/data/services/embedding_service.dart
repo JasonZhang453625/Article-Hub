@@ -97,6 +97,77 @@ class EmbeddingService {
     }
   }
 
+  /// Embed multiple texts in a single API call. Returns a list parallel to
+  /// [texts] — a null entry means that text failed.
+  /// This is far more efficient than calling [embed] in a loop because it
+  /// avoids N TLS handshakes and HTTP round-trips.
+  Future<List<EmbeddingResult?>> embedBatch(List<String> texts) async {
+    if (!isConfigured || texts.isEmpty) return List.filled(texts.length, null);
+    try {
+      final uri = _embeddingsUri();
+      final body = jsonEncode({
+        'model': model,
+        'input': texts,
+      });
+
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: body,
+          )
+          .timeout(Duration(seconds: timeout.inSeconds * 2));
+
+      if (response.statusCode != 200) {
+        developer.log(
+          'batch embedding failed: ${response.statusCode}',
+          name: 'article_hub.embedding',
+        );
+        return List.filled(texts.length, null);
+      }
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final dataList = json['data'] as List?;
+      if (dataList == null || dataList.isEmpty) {
+        return List.filled(texts.length, null);
+      }
+
+      final modelUsed = json['model'] as String? ?? model;
+      final usage = json['usage'] as Map<String, dynamic>?;
+      final totalTokens = usage?['total_tokens'] as int? ?? 0;
+
+      // Build index → result map from the response.
+      final results = <int, EmbeddingResult>{};
+      for (final item in dataList) {
+        final idx = item['index'] as int;
+        final raw = item['embedding'] as List?;
+        if (raw == null) continue;
+        final vector = raw.map((e) => (e as num).toDouble()).toList();
+        results[idx] = EmbeddingResult(
+          vector: vector,
+          model: modelUsed,
+          tokenCount: totalTokens ~/ texts.length,
+        );
+      }
+
+      // Map back in the same order as [texts].
+      return [
+        for (int i = 0; i < texts.length; i++) results[i],
+      ];
+    } catch (e, st) {
+      developer.log(
+        'batch embedding error',
+        name: 'article_hub.embedding',
+        error: e,
+        stackTrace: st,
+      );
+      return List.filled(texts.length, null);
+    }
+  }
+
   /// Test the embedding endpoint. Returns true if a valid vector is returned.
   Future<bool> testConnection() async {
     final result = await embed('test connection');

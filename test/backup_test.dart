@@ -70,19 +70,20 @@ void main() {
       expect(restored.clipboardDetectionEnabled, isTrue);
     });
 
-    test('AppSettings.toJson never leaks an API key (security regression)',
+    test('AppSettings.toJson includes API keys for portable config',
         () {
-      // The API key lives in the platform secure store, never on AppSettings.
-      // Its JSON must never contain an `aiApiKey` field, or a plaintext key
-      // could escape via an exported backup. See ROADMAP AI-8.
+      // API keys are included so the backup can serve as a complete portable
+      // configuration across devices.
       final settings = AppSettings(
         fontSize: 16,
         aiBaseUrl: 'https://api.openai.com/v1',
+        aiApiKey: 'sk-test-key',
         aiModel: 'gpt-4o-mini',
       );
       final json = settings.toJson();
-      expect(json.containsKey('aiApiKey'), isFalse,
-          reason: 'API key must not appear in AppSettings JSON (export path)');
+      expect(json.containsKey('aiApiKey'), isTrue,
+          reason: 'API key must appear in AppSettings JSON (export path)');
+      expect(json['aiApiKey'], 'sk-test-key');
       expect(json['aiBaseUrl'], 'https://api.openai.com/v1');
       expect(json['aiModel'], 'gpt-4o-mini');
     });

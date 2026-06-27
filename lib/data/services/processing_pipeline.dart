@@ -277,13 +277,23 @@ class ProcessingPipeline {
     );
 
     final prompt =
-        'You are a tagging assistant. Given a title and summary, return 2-4 '
-        'short tags (single words or two-word phrases) that categorize this '
-        'content. Return ONLY a JSON array of strings, nothing else. '
-        'Example: ["ai", "productivity", "flutter"]';
+        'You are a precise content classifier.\n\n'
+        'Given a title and summary, generate 2-5 tags that would help a reader '
+        'quickly understand what this article is about and find related content later.\n\n'
+        'Rules:\n'
+        '- Each tag must be a noun phrase, not an adjective (e.g. "GPU架构" not "快")\n'
+        '- Include at least one tag for: subject domain, concrete entity, and difficulty level\n'
+        '- If the article mentions a specific person, product, or company by name, include it as a tag\n'
+        '- Avoid overly broad tags like "科技" or "technology" — prefer "芯片制造" or "semiconductor fabrication"\n'
+        '- Tags must be in the same language as the article content\n\n'
+        'Return ONLY a JSON array of strings. Example: ["大语言模型","OpenAI","推理优化","Transformer"]';
 
-    final response =
-        await ai.summarize(title, '$summary\n\n---\n$prompt', languageHint: '');
+    final response = await ai.chat(
+      systemPrompt: 'You are a precise content classifier.',
+      userMessage: '$prompt\n\nTitle: $title\n\nSummary: $summary',
+      temperature: 0.3,
+      maxTokens: 200,
+    );
     if (response == null) return [];
 
     // Try to extract a JSON array from the response.
@@ -295,7 +305,7 @@ class ProcessingPipeline {
     try {
       final decoded = jsonDecode(text.substring(start, end + 1));
       if (decoded is List) {
-        return decoded.whereType<String>().take(4).toList();
+        return decoded.whereType<String>().take(5).toList();
       }
     } catch (_) {}
     return [];
@@ -383,13 +393,16 @@ class ProcessingPipeline {
 
     final namesList = folderNames.map((n) => '"$n"').join(', ');
     final systemPrompt = folderNames.isEmpty
-        ? 'You categorize articles into folders. Output ONLY a folder name '
-            '(2-4 words). Never output "null", "none", or empty. '
-            'Always invent a real category name.'
-        : 'You categorize articles into folders. Available folders: [$namesList]. '
-            'If one fits, output its exact name. Otherwise invent a new '
-            'category name (2-4 words). Output ONLY the folder name. '
-            'Never output "null", "none", or empty.';
+        ? 'You are a library classifier. Assign this article to a new folder. '
+            'Invent a specific category name (2-4 words). '
+            'Output ONLY the folder name. Nothing else.'
+        : 'You are a library classifier. Your goal is to assign each article '
+            'to ONE existing folder or suggest ONE new folder name. '
+            'Available folders: [$namesList]. '
+            '- If a folder exists that clearly contains this topic, output exactly that name\n'
+            '- If no folder matches well, create a specific new category name (e.g. "半导体行业" not just "科技")\n'
+            '- A "good match" means the topic is a primary child of the folder — not just tenuously related\n'
+            '- Output ONLY the folder name. Nothing else.';
 
     // Few-shot: prime the model with one example so it imitates the format
     // and stops returning "null"/"none" on weak models like gpt-4o-mini.

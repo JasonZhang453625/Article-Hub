@@ -13,7 +13,8 @@ flutter run -d edge          # Run in Edge browser
 flutter analyze              # Static analysis (uses flutter_lints)
 flutter test                 # Run all tests
 flutter test test/foo_test.dart  # Run single test file
-flutter build apk --release  # Build Android APK
+flutter build apk --release  # Build Android APK (run bump_version first)
+dart run tools/bump_version.dart  # Auto-increment patch version in pubspec.yaml
 ```
 
 ## Architecture
@@ -84,6 +85,7 @@ lib/
 - **Article.copyWith uses sentinel values** (`Article.clearValue`) to distinguish "leave field unchanged" from "clear the field". Pass `Article.clearValue` to explicitly null out a nullable field.
 - **Processing pipeline is single-pass and resumable**. Each stage writes `processingStatus` + `processingStage` to Hive so a crash never loses progress. Extracted page content is held in a transient in-memory `_contentCache` keyed by article id — **never** persisted into the user-facing `notes` field. AI-suggested folders write to `suggestedFolderId`; the user must confirm before the article actually moves.
 - **No `build_runner` or codegen** in this project. Everything is manual.
+- **Version bump before release builds**: Run `dart run tools/bump_version.dart` before `flutter build apk --release` (or any release build). This auto-increments the patch version in `pubspec.yaml` (e.g. 2.0.0 → 2.0.1). The tool also preserves any existing build number (`+N` suffix).
 
 ## Testing
 

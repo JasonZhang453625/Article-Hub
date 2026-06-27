@@ -30,6 +30,19 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- Receive JSON backup files shared from other apps -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
+            <!-- Open JSON backup files directly from file managers -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

@@ -35,16 +35,24 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
             child: Text(s.cancel),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               final name = controller.text.trim();
               if (name.isEmpty) return;
-              final folder = Folder(
-                id: const Uuid().v4(),
-                name: name,
-                parentId: parentId,
-              );
-              ref.read(foldersProvider.notifier).add(folder);
-              Navigator.pop(context);
+              try {
+                final folder = Folder(
+                  id: const Uuid().v4(),
+                  name: name,
+                  parentId: parentId,
+                );
+                await ref.read(foldersProvider.notifier).add(folder);
+                if (context.mounted) Navigator.pop(context);
+              } catch (e) {
+                if (!context.mounted) return;
+                final s2 = ref.read(stringsProvider);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('${s2.saveFailed}: $e')),
+                );
+              }
             },
             child: Text(s.create),
           ),
@@ -71,11 +79,19 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
             child: Text(s.cancel),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               final name = controller.text.trim();
               if (name.isEmpty) return;
-              ref.read(foldersProvider.notifier).update(folder.copyWith(name: name));
-              Navigator.pop(context);
+              try {
+                await ref.read(foldersProvider.notifier).update(folder.copyWith(name: name));
+                if (context.mounted) Navigator.pop(context);
+              } catch (e) {
+                if (!context.mounted) return;
+                final s2 = ref.read(stringsProvider);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('${s2.saveFailed}: $e')),
+                );
+              }
             },
             child: Text(s.rename),
           ),
@@ -97,9 +113,17 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
             child: Text(s.cancel),
           ),
           FilledButton(
-            onPressed: () {
-              ref.read(foldersProvider.notifier).delete(folder.id);
-              Navigator.pop(context);
+            onPressed: () async {
+              try {
+                await ref.read(foldersProvider.notifier).delete(folder.id);
+                if (context.mounted) Navigator.pop(context);
+              } catch (e) {
+                if (!context.mounted) return;
+                final s2 = ref.read(stringsProvider);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('${s2.saveFailed}: $e')),
+                );
+              }
             },
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -130,7 +154,23 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
       ),
       body: foldersAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Error: $e'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () => ref.invalidate(foldersProvider),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
         data: (folders) {
           if (folders.isEmpty) {
             return Center(

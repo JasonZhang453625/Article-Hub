@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../../config/routes.dart';
 import '../../data/models/passage.dart';
@@ -10,8 +11,10 @@ import '../../data/services/embedding_service.dart';
 import '../../data/services/rag_citation.dart';
 import '../../data/services/retrieval_log_service.dart';
 import '../../data/services/retrieval_service.dart';
+import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/utils/locale_strings.dart' show LocaleStrings;
 import '../../shared/widgets/delayed_reveal.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -61,10 +64,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
         settings.aiApiKey.trim().isEmpty) {
+      final s = ref.read(stringsProvider);
       setState(() {
         _messages.add(_ChatMessage(
           role: _Role.assistant,
-          text: 'Please configure your AI provider in Settings first.',
+          text: s.configureAiFirst,
         ));
         _loading = false;
       });
@@ -82,11 +86,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .toList();
 
     if (completedArticles.isEmpty) {
+      final s = ref.read(stringsProvider);
       setState(() {
         _messages.add(_ChatMessage(
           role: _Role.assistant,
-          text: 'Your knowledge base is empty. Process some articles first, '
-              'then come back to ask questions.',
+          text: s.knowledgeBaseEmpty,
           isNoResult: true,
         ));
         _loading = false;
@@ -124,12 +128,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ));
 
       final weakCandidates = _getWeakCandidates(query, completedArticles);
+      final s = ref.read(stringsProvider);
 
       setState(() {
         _messages.add(_ChatMessage(
           role: _Role.assistant,
-          text: 'I couldn\'t find enough relevant information in your '
-              'knowledge base to answer this question.',
+          text: s.notEnoughInfo,
           isNoResult: true,
           weakArticleIds: weakCandidates.map((a) => a.id).toList(),
           logId: logId,
@@ -170,8 +174,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     try {
       final knowledgeRule = settings.chatKnowledgeSourceIndex == 0
-          ? 'Use ONLY the provided article summaries. If the summaries don\'t '
-              'contain enough information, say so clearly — do NOT make up answers.'
+          ? 'You MUST answer based ONLY on the provided article summaries below.\n'
+              '- If the answer is clearly found in the summaries, provide it with citations\n'
+              '- If only partial information exists, answer what you can and note what\'s missing\n'
+              '- If none of the summaries address the question, say exactly that and suggest what information would be needed\n'
+              '- NEVER use your own knowledge to fill gaps — this is a hard rule'
           : candidates.isEmpty
               ? 'No relevant articles were found in the knowledge base for this question. '
                   'Answer using your general knowledge. Be thorough and factual.'
@@ -185,9 +192,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           : 'Provide detailed explanations. Include examples, context, and reasoning when relevant.';
 
       final systemPrompt =
-          'You are a knowledge assistant. $knowledgeRule $lengthRule '
-          'When referencing information from the knowledge base, cite the article '
-          'number in brackets like [1], [2].'
+          'You are a personal knowledge assistant answering questions based on saved articles.\n\n'
+          '$knowledgeRule\n\n'
+          '$lengthRule\n\n'
+          'Citation rules:\n'
+          '- Cite relevant article numbers in brackets: [1], [2]\n'
+          '- Only cite articles that directly support or contradict your answer\n'
+          '- If you\'re unsure about a citation, do not include it\n'
+          '- If multiple articles support the same point, group them: [1,3]\n\n'
+          'Format rules:\n'
+          '- Start with the answer, then list supporting citations\n'
+          '- For information gaps, say: "关于X，当前知识库中没有足够信息"\n'
           '${langHint.isNotEmpty ? "\n$langHint" : ""}';
 
       final userMessage =
@@ -216,10 +231,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
 
       if (response == null || response.isEmpty) {
+        final s = ref.read(stringsProvider);
         setState(() {
           _messages.add(_ChatMessage(
             role: _Role.assistant,
-            text: 'The AI service returned an empty response. Please try again.',
+            text: '${s.aiError}: empty response',
             articleIds: candidates.map((a) => a.id).toList(),
             method: result.method.name,
             logId: logId,
@@ -265,10 +281,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ));
       }
     } catch (e) {
+      final s = ref.read(stringsProvider);
       setState(() {
         _messages.add(_ChatMessage(
           role: _Role.assistant,
-          text: 'Error communicating with AI service: $e',
+          text: '${s.aiError}: $e',
           articleIds: candidates.map((a) => a.id).toList(),
           method: result.method.name,
           logId: logId,
@@ -343,10 +360,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           a.processingStatus == ProcessingStatus.completed &&
           a.summary != null,
     );
+    final s = ref.watch(stringsProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Chat'),
+        title: Text(s.tabChat),
         actions: [
           IconButton(
             icon: const Icon(Icons.tune_rounded),
@@ -355,41 +373,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _messages.isEmpty
-                ? _EmptyChatState(hasKnowledge: hasKnowledge)
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    itemCount: _messages.length + (_loading ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (index == _messages.length) {
-                        return const _TypingIndicator();
-                      }
-                      return _ChatBubble(
-                        message: _messages[index],
-                        articles: articles,
-                        onFeedback: (feedback) =>
-                            _onFeedback(_messages[index].logId, feedback),
-                        onCitationClick: (articleId) =>
-                            _onCitationClick(_messages[index].logId, articleId),
-                        onSuggestionTap: _send,
-                        onBrowseKnowledge: () {
-                          context.go(AppRoutes.knowledge);
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: Column(
+            children: [
+              Expanded(
+                child: _messages.isEmpty
+                    ? _EmptyChatState(hasKnowledge: hasKnowledge, s: s)
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        itemCount: _messages.length + (_loading ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == _messages.length) {
+                            return const _TypingIndicator();
+                          }
+                          return _ChatBubble(
+                            message: _messages[index],
+                            articles: articles,
+                            onFeedback: (feedback) =>
+                                _onFeedback(_messages[index].logId, feedback),
+                            onCitationClick: (articleId) =>
+                                _onCitationClick(_messages[index].logId, articleId),
+                            onSuggestionTap: _send,
+                            onBrowseKnowledge: () {
+                              context.go(AppRoutes.knowledge);
+                            },
+                          );
                         },
-                      );
-                    },
-                  ),
+                      ),
+              ),
+              _InputBar(
+                controller: _controller,
+                loading: _loading,
+                s: s,
+                onSend: () => _send(),
+              ),
+            ],
           ),
-          _InputBar(
-            controller: _controller,
-            loading: _loading,
-            onSend: () => _send(),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -428,7 +452,8 @@ class _ChatMessage {
 
 class _EmptyChatState extends StatelessWidget {
   final bool hasKnowledge;
-  const _EmptyChatState({required this.hasKnowledge});
+  final LocaleStrings s;
+  const _EmptyChatState({required this.hasKnowledge, required this.s});
 
   @override
   Widget build(BuildContext context) {
@@ -446,7 +471,7 @@ class _EmptyChatState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'Ask your knowledge base',
+              s.askKnowledgeBase,
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
@@ -454,8 +479,8 @@ class _EmptyChatState extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 40),
               child: Text(
                 hasKnowledge
-                    ? 'Try: "What are the key ideas about AI?" or "Summarize my saved articles on Flutter"'
-                    : 'Process some articles first, then come back to ask questions.',
+                    ? s.tryExamples
+                    : s.knowledgeBaseEmpty,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
@@ -522,14 +547,14 @@ class _ChatBubble extends ConsumerWidget {
                     data: message.text,
                     selectable: true,
                     styleSheet: MarkdownStyleSheet(
-                      p: theme.textTheme.bodyMedium?.copyWith(
+                      p: theme.textTheme.bodyLarge?.copyWith(
                         color: theme.colorScheme.onSurface,
                       ),
-                      strong: theme.textTheme.bodyMedium?.copyWith(
+                      strong: theme.textTheme.bodyLarge?.copyWith(
                         color: theme.colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                       ),
-                      em: theme.textTheme.bodyMedium?.copyWith(
+                      em: theme.textTheme.bodyLarge?.copyWith(
                         color: theme.colorScheme.onSurface,
                         fontStyle: FontStyle.italic,
                       ),
@@ -546,7 +571,7 @@ class _ChatBubble extends ConsumerWidget {
                           color: theme.colorScheme.outline.withValues(alpha: 0.2),
                         ),
                       ),
-                      blockquote: theme.textTheme.bodyMedium?.copyWith(
+                      blockquote: theme.textTheme.bodyLarge?.copyWith(
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                       ),
                       blockquoteDecoration: BoxDecoration(
@@ -599,15 +624,6 @@ class _ChatBubble extends ConsumerWidget {
               _FeedbackRow(
                 message: message,
                 onFeedback: onFeedback,
-              ),
-            ],
-            if (!isUser && message.method != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                'via ${message.method}',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant.withAlpha(120),
-                ),
               ),
             ],
           ],
@@ -709,6 +725,16 @@ class _FeedbackRowState extends State<_FeedbackRow> {
             widget.onFeedback(-1);
           },
         ),
+        const SizedBox(width: 4),
+        _FeedbackButton(
+          icon: Icons.share_outlined,
+          activeIcon: Icons.share_rounded,
+          isActive: false,
+          activeColor: colorScheme.primary,
+          onTap: () {
+            Share.share(widget.message.text, subject: 'Article-Hub');
+          },
+        ),
       ],
     );
   }
@@ -735,10 +761,10 @@ class _FeedbackButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       onTap: isActive ? null : onTap,
       child: Padding(
-        padding: const EdgeInsets.all(6),
+        padding: const EdgeInsets.all(8),
         child: Icon(
           isActive ? activeIcon : icon,
-          size: 16,
+          size: 20,
           color: isActive
               ? activeColor
               : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(150),
@@ -748,7 +774,7 @@ class _FeedbackButton extends StatelessWidget {
   }
 }
 
-class _NoResultActions extends StatelessWidget {
+class _NoResultActions extends ConsumerWidget {
   final String query;
   final List<String> weakArticleIds;
   final List<Article> articles;
@@ -766,9 +792,10 @@ class _NoResultActions extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final s = ref.watch(stringsProvider);
 
     // Derive individual broader terms from the original query so the user can
     // retry with a single keyword instead of the full phrase.
@@ -779,7 +806,7 @@ class _NoResultActions extends StatelessWidget {
       children: [
         if (terms.isNotEmpty) ...[
           Text(
-            'Try a broader term:',
+            s.tryBroaderTerm,
             style: theme.textTheme.labelSmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
@@ -802,15 +829,15 @@ class _NoResultActions extends StatelessWidget {
         ],
         ActionChip(
           avatar: const Icon(Icons.library_books_outlined, size: 14),
-          label: const Text('Browse Knowledge Base',
-              style: TextStyle(fontSize: 11)),
+          label: Text(s.browseKnowledgeBase,
+              style: const TextStyle(fontSize: 11)),
           onPressed: onBrowseKnowledge,
         ),
         // Show weak candidates if available
         if (weakArticleIds.isNotEmpty) ...[
           const SizedBox(height: 12),
           Text(
-            'Possibly related:',
+            s.possiblyRelated,
             style: theme.textTheme.labelSmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
@@ -931,11 +958,13 @@ class _DotsAnimationState extends State<_DotsAnimation>
 class _InputBar extends StatelessWidget {
   final TextEditingController controller;
   final bool loading;
+  final LocaleStrings s;
   final VoidCallback onSend;
 
   const _InputBar({
     required this.controller,
     required this.loading,
+    required this.s,
     required this.onSend,
   });
 
@@ -964,7 +993,7 @@ class _InputBar extends StatelessWidget {
               textInputAction: TextInputAction.send,
               onSubmitted: (_) => onSend(),
               decoration: InputDecoration(
-                hintText: 'Ask about your knowledge...',
+                hintText: s.askHint,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(24),
                   borderSide: BorderSide.none,

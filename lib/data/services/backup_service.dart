@@ -66,6 +66,43 @@ class BackupService {
     return result.status;
   }
 
+  /// Imports a backup from a file path (used when a JSON file is shared or
+  /// opened via file manager). Returns the [ImportResult], or null if the
+  /// file could not be read or was not a valid backup.
+  Future<ImportResult?> importBackupFromFile(String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync()) return null;
+
+    final contents = await file.readAsString();
+    final backup = BackupData.fromJsonString(contents);
+
+    final articleCount =
+        await _ref.read(articlesProvider.notifier).importAll(backup.articles);
+    final groupCount = await _ref
+        .read(filterGroupsProvider.notifier)
+        .importAll(backup.filterGroups);
+
+    int folderCount = 0;
+    if (backup.folders.isNotEmpty) {
+      for (final folder in backup.folders) {
+        await _ref.read(foldersProvider.notifier).add(folder);
+        folderCount++;
+      }
+    }
+
+    final AppSettings? settings = backup.settings;
+    if (settings != null) {
+      await _ref.read(settingsProvider.notifier).replaceWith(settings);
+    }
+
+    return ImportResult(
+      articles: articleCount,
+      filterGroups: groupCount,
+      folders: folderCount,
+      settingsImported: settings != null,
+    );
+  }
+
   /// Lets the user pick a backup JSON file and merges it into current data.
   /// Returns null if the user cancelled, otherwise an [ImportResult].
   /// Throws [FormatException] if the chosen file is not a valid backup.

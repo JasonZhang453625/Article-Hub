@@ -35,6 +35,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   SourcePlatform _detectedPlatform = SourcePlatform.web;
   String? _fetchedCoverUrl;
   bool _fetchingMetadata = false;
+  bool _saving = false;
   Timer? _fetchDebounce;
   String _lastFetchedUrl = '';
   String? _selectedFolderId;
@@ -86,6 +87,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       if (meta.imageUrl != null) {
         setState(() => _fetchedCoverUrl = meta.imageUrl);
       }
+    } catch (_) {
+      // Metadata fetch is best-effort; the user can still save manually.
     } finally {
       if (mounted) setState(() => _fetchingMetadata = false);
     }
@@ -93,36 +96,48 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_saving) return;
+    setState(() => _saving = true);
 
-    final cleanedUrl = cleanUrl(_urlController.text.trim());
-    final title = _titleController.text.trim().isEmpty
-        ? cleanedUrl
-        : _titleController.text.trim();
+    try {
+      final cleanedUrl = cleanUrl(_urlController.text.trim());
+      final title = _titleController.text.trim().isEmpty
+          ? cleanedUrl
+          : _titleController.text.trim();
 
-    final article = Article(
-      id: const Uuid().v4(),
-      url: cleanedUrl,
-      title: title,
-      source: _detectedPlatform,
-      tags: _tags,
-      notes: _notesController.text.trim(),
-      coverImageUrl: _fetchedCoverUrl,
-      folderId: _selectedFolderId,
-      processingStatus: ProcessingStatus.pending,
-    );
+      final article = Article(
+        id: const Uuid().v4(),
+        url: cleanedUrl,
+        title: title,
+        source: _detectedPlatform,
+        tags: _tags,
+        notes: _notesController.text.trim(),
+        coverImageUrl: _fetchedCoverUrl,
+        folderId: _selectedFolderId,
+        processingStatus: ProcessingStatus.pending,
+      );
 
-    final notifier = ref.read(articlesProvider.notifier);
-    await notifier.add(article);
+      final notifier = ref.read(articlesProvider.notifier);
+      await notifier.add(article);
 
-    // Capture pipeline BEFORE popping — ref is invalid after pop.
-    final pipeline = ref.read(processingPipelineProvider);
+      // Capture pipeline BEFORE popping — ref is invalid after pop.
+      final pipeline = ref.read(processingPipelineProvider);
 
-    if (mounted) {
-      Navigator.of(context).pop();
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      // Fire-and-forget: run the full pipeline.
+      pipeline.process(article);
+    } catch (e) {
+      if (!mounted) return;
+      final s = ref.read(stringsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${s.saveFailed}: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    // Fire-and-forget: run the full pipeline (metadata → content → summary → tags → folder).
-    pipeline.process(article);
   }
 
   Future<void> _openBulkImport() async {
@@ -134,13 +149,21 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     );
     if (urls == null || urls.isEmpty) return;
 
-    final count = await ref.read(articlesProvider.notifier).addMany(urls);
-    if (!mounted) return;
-    final s = ref.read(stringsProvider);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${s.addedNArticles} $count${count == 1 ? '' : ''}')),
-    );
-    Navigator.of(context).pop();
+    try {
+      final count = await ref.read(articlesProvider.notifier).addMany(urls);
+      if (!mounted) return;
+      final s = ref.read(stringsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${s.addedNArticles} $count${count == 1 ? '' : ''}')),
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      final s = ref.read(stringsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${s.saveFailed}: $e')),
+      );
+    }
   }
 
   @override

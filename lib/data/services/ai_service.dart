@@ -73,39 +73,48 @@ class AiService {
 
   static String _summaryInstructionChinese(int contentLength, int verbosity) {
     const qualityRules =
-        '每条要点必须包含文章中的具体事实、数字或专有名词。'
+        '每条要点必须可以独立阅读——不要出现"同上""如前所述"等回指。'
+        '每条要点应当尽量包含文章中的具体事实、产品名、时间点、数字或专有名词。'
         '禁止使用"文章介绍了..."、"本文讨论了..."等空泛开头，直接陈述事实。'
         '仅使用文章中的信息，不要添加外部知识或推测。';
 
     if (verbosity == 0) {
-      return '用80-120个中文字写一段概述，然后列出3条要点。$qualityRules';
+      return '用80-120个中文字概括这篇文章的立场、结论或主要发现；然后列出3~5条全篇的要点。$qualityRules';
     }
 
     if (contentLength < 2000) {
-      return '用100-150个中文字写一段概述，然后列出3条要点。$qualityRules';
+      return '用100-150个中文字概括这篇文章的立场、结论或主要发现；然后列出3~5条全篇的要点。$qualityRules';
     } else if (contentLength < 8000) {
-      return '用200-300个中文字写一段概述，然后列出5条要点。$qualityRules';
+      return '用200-300个中文字概括这篇文章的立场、结论或主要发现；然后列出5~8条全篇的要点。$qualityRules';
     } else {
-      return '用300-500个中文字写一段概述，然后列出5-7条要点。$qualityRules';
+      return '用300-500个中文字概括这篇文章的立场、结论或主要发现；然后列出5~7条全篇的要点。$qualityRules';
     }
   }
 
   static String _summaryInstructionEnglish(int contentLength, int verbosity) {
     const qualityRules =
-        'Each bullet point MUST mention a specific fact, number, or entity from the article. '
-        'Do NOT start bullets with "The article discusses...", "This piece covers..." — go straight to the fact. '
+        'Each bullet point MUST be self-contained — avoid back-references like '
+        '"same as above" or "as mentioned earlier". '
+        'Each bullet should include specific facts, product names, dates, '
+        'numbers, or named entities from the article. '
+        'Do NOT start bullets with "The article discusses...", "This piece covers..." '
+        '— go straight to the fact. '
         'Use ONLY information from the article; do not add external knowledge or assumptions.';
 
     if (verbosity == 0) {
-      return 'Write a brief 60-100 word overview followed by 3 key takeaways as bullet points. $qualityRules';
+      return 'Summarize the position, conclusion, or key finding in 60-100 words, '
+          'then list 3-5 key takeaways as bullet points. $qualityRules';
     }
 
     if (contentLength < 1500) {
-      return 'Write a 80-120 word overview followed by 3 key takeaways as bullet points. $qualityRules';
+      return 'Summarize the position, conclusion, or key finding in 80-120 words, '
+          'then list 3-5 key takeaways as bullet points. $qualityRules';
     } else if (contentLength < 6000) {
-      return 'Write a 150-250 word overview followed by 5 key takeaways as bullet points. $qualityRules';
+      return 'Summarize the position, conclusion, or key finding in 150-250 words, '
+          'then list 5-8 key takeaways as bullet points. $qualityRules';
     } else {
-      return 'Write a 250-400 word overview followed by 5-7 key takeaways as bullet points. $qualityRules';
+      return 'Summarize the position, conclusion, or key finding in 250-400 words, '
+          'then list 5-7 key takeaways as bullet points. $qualityRules';
     }
   }
 
@@ -250,12 +259,17 @@ class AiService {
     final isChinese =
         languageHint.contains('Chinese') || languageHint.contains('中文');
     final instruction = isChinese
-        ? '用120-180个中文字总结以下文章片段的具体事实和关键要点，保留重要数字与专有名词。'
-            '不要使用“文章介绍了”等空泛开头，不要添加原文之外的信息。'
-        : 'Summarize the concrete facts and key points in this article section. '
-            'Use 100-150 words, preserve important numbers and named entities, '
-            'avoid generic introductions, and do not add information outside '
-            'the source.';
+        ? '请从这个文章片段中提取以下信息：\n'
+            '1. 这段讲了什么事件/观点？（2-3句）\n'
+            '2. 列出3-5个关键要点\n'
+            '3. 这段与全文的关系：它是介绍背景 / 展开论证 / 给出结论？\n'
+            '要求：只提取片段中的信息，不要猜测上下文，保留重要数字和专有名词。'
+        : 'Extract the following from this article section:\n'
+            '1. What event or viewpoint does this section describe? (2-3 sentences)\n'
+            '2. List 3-5 key takeaways\n'
+            '3. Role in the full article: background / argument / conclusion?\n'
+            'Rules: Only extract information from this section. Do not guess context beyond the section. '
+            'Preserve important numbers and named entities.';
 
     final summaries = <String>[];
     final chunkCount = (content.length / _chunkSize).ceil();

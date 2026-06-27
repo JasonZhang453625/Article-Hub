@@ -13,7 +13,7 @@ description: "Save and organize articles from modern content platforms."
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.0.0
+version: 2.0.3
 
 environment:
   sdk: ^3.11.1
@@ -47,6 +47,8 @@ dependencies:
   html: ^0.15.4
   flutter_markdown: ^0.7.6
   charset: ^2.0.1
+  connectivity_plus: ^6.1.4
+  google_fonts: ^8.1.0
 
 dev_dependencies:
   flutter_test:
@@ -99,10 +101,11 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/branding/Article-Hub_icon.jpg
+  image_path: Article-Hub.png
   web:
     generate: true
   windows:
     generate: true
+    icon_size: 256
   macos:
     generate: true

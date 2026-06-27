@@ -144,6 +144,8 @@ Future<int> rebuildIndex({
   final existingRecords = {for (final r in await index.getAll()) r.articleId: r};
   int count = 0;
 
+  // Collect articles that need a fresh embedding so we can batch them.
+  final toEmbed = <_IndexCandidate>[];
   for (final article in articles) {
     if (article.processingStatus != ProcessingStatus.completed) continue;
     if (article.summary == null || article.summary!.isEmpty) continue;
@@ -160,17 +162,32 @@ Future<int> rebuildIndex({
       continue;
     }
 
-    final input = IndexService.buildEmbeddingInput(article);
-    final result = await embedding.embed(input);
-    if (result == null) continue;
-
-    await index.put(IndexRecord(
-      articleId: article.id,
-      model: result.model,
+    toEmbed.add(_IndexCandidate(
+      article: article,
       fingerprint: currentFp,
-      vector: result.vector,
+      input: IndexService.buildEmbeddingInput(article),
     ));
-    count++;
+  }
+
+  // Batch-send embeddings — far fewer HTTP round-trips.
+  const batchSize = 20;
+  for (int i = 0; i < toEmbed.length; i += batchSize) {
+    final batch = toEmbed.sublist(i, (i + batchSize).clamp(0, toEmbed.length));
+    final inputs = batch.map((c) => c.input).toList();
+    final results = await embedding.embedBatch(inputs);
+
+    for (int j = 0; j < batch.length; j++) {
+      final result = results[j];
+      if (result == null) continue;
+      final candidate = batch[j];
+      await index.put(IndexRecord(
+        articleId: candidate.article.id,
+        model: result.model,
+        fingerprint: candidate.fingerprint,
+        vector: result.vector,
+      ));
+      count++;
+    }
   }
 
   // Clean up orphans — articles that were deleted or are no longer completed.
@@ -189,4 +206,15 @@ Future<int> rebuildIndex({
 
   developer.log('rebuilt index: $count articles', name: 'article_hub.index');
   return count;
+}
+
+class _IndexCandidate {
+  final Article article;
+  final int fingerprint;
+  final String input;
+  const _IndexCandidate({
+    required this.article,
+    required this.fingerprint,
+    required this.input,
+  });
 }

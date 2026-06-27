@@ -264,7 +264,23 @@ class FilterManagementSheet extends ConsumerWidget {
                 child: filtersAsync.when(
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
-                  error: (e, _) => Center(child: Text('Error: $e')),
+                  error: (e, _) => Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text('Error: $e'),
+                        ),
+                        const SizedBox(height: 8),
+                        FilledButton.icon(
+                          onPressed: () => ref.invalidate(filterGroupsProvider),
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
                   data: (groups) {
                     if (groups.isEmpty) {
                       return Center(
