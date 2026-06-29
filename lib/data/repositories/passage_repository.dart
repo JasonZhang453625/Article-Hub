@@ -1,31 +1,31 @@
 import 'package:hive/hive.dart';
 import '../models/passage.dart';
+import 'article_repository.dart';
 
-class ArticleRepository {
-  // Keep the legacy Hive box name so existing local data stays readable.
-  // The class name is `Article`, but the box is still `'passages'` for
-  // backward compatibility with data written by older builds.
+class HiveArticleRepository implements ArticleRepository {
   static const String boxName = 'passages';
   late Box<Article> _box;
 
+  @override
   Future<void> init() async {
     _box = await Hive.openBox<Article>(boxName);
   }
 
+  @override
   List<Article> getAll() {
     return _box.values.toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
+  @override
   Article? getById(String id) => _box.get(id);
 
+  @override
   Future<void> add(Article article) async {
     await _box.put(article.id, article);
   }
 
-  /// Merges a batch of articles into the box, keyed by id. Existing articles
-  /// with the same id are overwritten; others are left untouched. Returns the
-  /// number of articles written.
+  @override
   Future<int> importAll(Iterable<Article> articles) async {
     final entries = {for (final a in articles) a.id: a};
     if (entries.isEmpty) return 0;
@@ -33,15 +33,18 @@ class ArticleRepository {
     return entries.length;
   }
 
+  @override
   Future<void> update(Article article) async {
     article.updatedAt = DateTime.now();
     await _box.put(article.id, article);
   }
 
+  @override
   Future<void> delete(String id) async {
     await _box.delete(id);
   }
 
+  @override
   List<Article> search(String query) {
     if (query.isEmpty) return getAll();
     final lower = query.toLowerCase();
@@ -55,6 +58,7 @@ class ArticleRepository {
     return results;
   }
 
+  @override
   List<Article> filterBySource(String sourceName) {
     if (sourceName.isEmpty) return getAll();
     final results = _box.values
@@ -64,9 +68,7 @@ class ArticleRepository {
     return results;
   }
 
-  /// Moves every article currently in [folderId] to the unfiled state
-  /// (folderId = null). Used when a folder is deleted so its contents
-  /// don't dangle pointing at a non-existent folder.
+  @override
   Future<void> unsetFolder(String folderId) async {
     for (final article in _box.values) {
       if (article.folderId == folderId) {
@@ -76,8 +78,7 @@ class ArticleRepository {
     }
   }
 
-  /// Batch version of [unsetFolder] — single `putAll` instead of per-article
-  /// `.save()`. Also bumps `updatedAt` so the cache sorts correctly.
+  @override
   Future<void> unsetFolderBatch(String folderId) async {
     final updates = <String, Article>{};
     for (final article in _box.values) {

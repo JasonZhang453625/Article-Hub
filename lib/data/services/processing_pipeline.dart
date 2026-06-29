@@ -1,13 +1,10 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 import '../models/passage.dart';
 import '../models/settings.dart';
 import '../models/folder.dart';
-import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/article_providers.dart';
 import '../../shared/providers/settings_providers.dart';
-import '../../shared/providers/page_loader_provider.dart';
 import 'ai_service.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
@@ -79,35 +76,44 @@ class ProcessingPipeline {
 
     var current = article;
 
-    // Mark as processing.
-    current = current.copyWith(
-      processingStatus: ProcessingStatus.processing,
-      processingStage: ProcessingStage.metadata,
-    );
-    await _articles.update(current);
+    final isResume = current.processingStatus == ProcessingStatus.processing;
+    final hasSummary = current.summary != null && current.summary!.isNotEmpty;
 
-    // Stage 1: Metadata
+    // Mark as processing (skip if already processing = resuming).
+    if (!isResume) {
+      current = current.copyWith(
+        processingStatus: ProcessingStatus.processing,
+        processingStage: ProcessingStage.metadata,
+      );
+      await _articles.update(current);
+    }
+
+    // Stage 1: Metadata (always redo — needs _fetchedPageCache for content)
     current = await _stageMetadata(current);
     if (current.processingStatus == ProcessingStatus.failed) {
       await _articles.update(current);
       return current;
     }
 
-    // Stage 2: Content extraction
+    // Stage 2: Content extraction (always redo — _contentCache lost on restart)
     current = await _stageContent(current);
     if (current.processingStatus == ProcessingStatus.failed) {
       await _articles.update(current);
       return current;
     }
 
-    // Stage 3: AI summary
-    current = await _stageSummary(current);
-    if (current.processingStatus == ProcessingStatus.failed) {
-      await _articles.update(current);
-      return current;
+    // Stage 3: AI summary — skip if already persisted (most expensive stage)
+    if (!hasSummary) {
+      current = await _stageSummary(current);
+      if (current.processingStatus == ProcessingStatus.failed) {
+        await _articles.update(current);
+        return current;
+      }
+    } else {
+      _notifyStage(current, ProcessingStage.summary);
     }
 
-    // Stage 4: Tags (AI-generated, auto-written — non-fatal on failure)
+    // Stage 4: Tags (AI-generated, non-fatal on failure)
     current = await _stageTags(current);
 
     // Stage 5: Folder suggestion (auto-classifies to folderId, non-fatal)
@@ -506,32 +512,3 @@ class ProcessingPipeline {
     _extractor.dispose();
   }
 }
-
-final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
-  final articles = ref.read(articlesProvider.notifier);
-  final embedding = ref.read(embeddingServiceProvider);
-  final index = ref.read(indexServiceProvider);
-
-  // Use the shared resilient PageLoader (HTTP → WebView fallback)
-  final pageLoader = ref.read(pageLoaderProvider);
-
-  final pipeline = ProcessingPipeline(
-    articles: articles,
-    getSettings: () => ref.read(settingsProvider).valueOrNull,
-    getFolders: () => ref.read(foldersProvider).valueOrNull ?? [],
-    metadata: MetadataService(loader: pageLoader, ownsLoader: false),
-    extractor: ContentExtractor(loader: pageLoader, ownsLoader: false),
-    embedding: embedding,
-    index: index,
-    createFolder: (name) async {
-      final folder = Folder(
-        id: const Uuid().v4(),
-        name: name,
-      );
-      await ref.read(foldersProvider.notifier).add(folder);
-      return folder;
-    },
-  );
-  ref.onDispose(pipeline.dispose);
-  return pipeline;
-});

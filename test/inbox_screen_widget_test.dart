@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:article_hub/data/models/passage.dart';
 import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/repositories/passage_repository.dart';
+import 'package:article_hub/data/repositories/article_repository.dart';
 import 'package:article_hub/features/inbox/inbox_screen.dart';
 import 'package:article_hub/shared/providers/passage_providers.dart';
 
@@ -155,7 +155,7 @@ void main() {
 }
 
 /// In-memory [ArticleRepository] for widget tests — no Hive, no file I/O.
-class _InMemoryArticleRepository extends ArticleRepository {
+class _InMemoryArticleRepository implements ArticleRepository {
   final List<Article> _articles;
   _InMemoryArticleRepository(this._articles);
 
@@ -189,4 +189,16 @@ class _InMemoryArticleRepository extends ArticleRepository {
   @override
   Future<void> delete(String id) async =>
       _articles.removeWhere((a) => a.id == id);
+
+  @override
+  List<Article> search(String query) => getAll();
+
+  @override
+  List<Article> filterBySource(String sourceName) => getAll();
+
+  @override
+  Future<void> unsetFolder(String folderId) async {}
+
+  @override
+  Future<void> unsetFolderBatch(String folderId) async {}
 }

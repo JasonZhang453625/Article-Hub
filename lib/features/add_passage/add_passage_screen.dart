@@ -5,7 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/metadata_service.dart';
-import '../../data/services/processing_pipeline.dart';
+import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';

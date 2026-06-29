@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
-import 'passage_providers.dart';
+import 'article_providers.dart';
 
 final settingsProvider =
     StateNotifierProvider<SettingsNotifier, AsyncValue<AppSettings>>((ref) {

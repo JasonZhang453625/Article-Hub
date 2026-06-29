@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/filter_group.dart';
-import 'passage_providers.dart';
+import 'article_providers.dart';
 
 final filterGroupsProvider =
     StateNotifierProvider<FilterGroupsNotifier, AsyncValue<List<FilterGroup>>>(

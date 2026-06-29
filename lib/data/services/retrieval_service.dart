@@ -18,12 +18,13 @@ class RetrievalResult {
   });
 }
 
-enum RetrievalMethod { vector, keyword, none }
+enum RetrievalMethod { vector, keyword, hybrid, none }
 
-/// Retrieves relevant articles from the knowledge base.
+/// Retrieves relevant articles from the knowledge base using hybrid search.
 ///
-/// Prefers vector similarity search when embeddings are available;
-/// falls back to keyword search on title, summary, and tags.
+/// When embeddings are configured, vector and keyword retrieval run in
+/// parallel and results are fused via Reciprocal Rank Fusion (RRF).
+/// Falls back to pure keyword when embeddings are unavailable.
 class RetrievalService {
   final EmbeddingService _embedding;
   final IndexService _index;
@@ -47,33 +48,58 @@ class RetrievalService {
       String query, List<Article> articles) async {
     final stopwatch = Stopwatch()..start();
 
-    // Try vector retrieval first.
+    // Run keyword synchronously; it's cheap and requires no I/O.
+    final keywordResults = _keywordRetrieve(query, articles);
+
+    // Try vector retrieval in parallel.
+    List<Article>? vectorResults;
     if (_embedding.isConfigured) {
       try {
-        final result = await _vectorRetrieve(query, articles);
-        if (result != null && result.isNotEmpty) {
-          stopwatch.stop();
-          return RetrievalResult(
-            articles: result,
-            method: RetrievalMethod.vector,
-            duration: stopwatch.elapsed,
-            candidateIds: result.map((a) => a.id).toList(),
-          );
-        }
+        vectorResults = await _vectorRetrieve(query, articles);
       } catch (e) {
         developer.log('vector retrieval failed: $e',
             name: 'article_hub.retrieval');
       }
     }
 
-    // Fall back to keyword retrieval.
-    final result = _keywordRetrieve(query, articles);
     stopwatch.stop();
+
+    // Neither method found anything.
+    if ((vectorResults == null || vectorResults.isEmpty) && keywordResults.isEmpty) {
+      return RetrievalResult(
+        articles: [],
+        method: RetrievalMethod.none,
+        duration: stopwatch.elapsed,
+      );
+    }
+
+    // Only keyword had results.
+    if (vectorResults == null || vectorResults.isEmpty) {
+      return RetrievalResult(
+        articles: keywordResults,
+        method: RetrievalMethod.keyword,
+        duration: stopwatch.elapsed,
+        candidateIds: keywordResults.map((a) => a.id).toList(),
+      );
+    }
+
+    // Only vector had results.
+    if (keywordResults.isEmpty) {
+      return RetrievalResult(
+        articles: vectorResults,
+        method: RetrievalMethod.vector,
+        duration: stopwatch.elapsed,
+        candidateIds: vectorResults.map((a) => a.id).toList(),
+      );
+    }
+
+    // Both methods produced results — fuse via RRF.
+    final fused = rrfFuse(vectorResults, keywordResults, topK: _topK);
     return RetrievalResult(
-      articles: result,
-      method: result.isEmpty ? RetrievalMethod.none : RetrievalMethod.keyword,
+      articles: fused,
+      method: RetrievalMethod.hybrid,
       duration: stopwatch.elapsed,
-      candidateIds: result.map((a) => a.id).toList(),
+      candidateIds: fused.map((a) => a.id).toList(),
     );
   }
 
@@ -143,4 +169,40 @@ class RetrievalService {
     scored.sort((a, b) => b.score.compareTo(a.score));
     return scored.take(_topK).map((s) => s.article).toList();
   }
+}
+
+/// Fuse vector and keyword rankings via Reciprocal Rank Fusion (RRF).
+///
+/// RRF sums 1/(k + rank) for each article across both result lists, where
+/// k=60 dampens extreme rank differences. Articles appearing in both lists
+/// naturally get score-boosted without arbitrary weighting.
+List<Article> rrfFuse(
+    List<Article> vectorResults, List<Article> keywordResults,
+    {int topK = 5}) {
+  const k = 60;
+  final scores = <String, double>{};
+
+  for (int i = 0; i < vectorResults.length; i++) {
+    final id = vectorResults[i].id;
+    scores[id] = (scores[id] ?? 0) + 1 / (k + i);
+  }
+
+  for (int i = 0; i < keywordResults.length; i++) {
+    final id = keywordResults[i].id;
+    scores[id] = (scores[id] ?? 0) + 1 / (k + i);
+  }
+
+  // Build a merged set of unique articles keyed by id.
+  final seen = <String, Article>{};
+  for (final a in vectorResults) {
+    seen[a.id] = a;
+  }
+  for (final a in keywordResults) {
+    seen.putIfAbsent(a.id, () => a);
+  }
+
+  final fused = seen.values.toList()
+    ..sort((a, b) => (scores[b.id] ?? 0).compareTo(scores[a.id] ?? 0));
+
+  return fused.take(topK).toList();
 }

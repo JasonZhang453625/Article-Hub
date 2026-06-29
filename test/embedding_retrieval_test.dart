@@ -3,6 +3,7 @@ import 'package:article_hub/data/services/embedding_service.dart';
 import 'package:article_hub/data/models/passage.dart';
 import 'package:article_hub/data/models/source_platform.dart';
 import 'package:article_hub/data/services/index_service.dart';
+import 'package:article_hub/data/services/retrieval_service.dart';
 
 void main() {
   group('cosineSimilarity', () {
@@ -176,6 +177,120 @@ void main() {
             a.tags.any((t) => t.toLowerCase().contains(lower));
       }).toList();
       expect(results, isEmpty);
+    });
+  });
+
+  group('Hybrid retrieval RRF fusion', () {
+    final articles = [
+      Article(
+        id: 'a1',
+        url: 'https://example.com/1',
+        title: 'Flutter Performance',
+        source: SourcePlatform.web,
+        summary: 'Widget build optimization.',
+        tags: ['flutter'],
+      ),
+      Article(
+        id: 'a2',
+        url: 'https://example.com/2',
+        title: 'Dart Isolates',
+        source: SourcePlatform.web,
+        summary: 'Concurrency in Dart.',
+        tags: ['dart'],
+      ),
+      Article(
+        id: 'a3',
+        url: 'https://example.com/3',
+        title: 'Riverpod State',
+        source: SourcePlatform.web,
+        summary: 'State management with Riverpod.',
+        tags: ['flutter', 'riverpod'],
+      ),
+      Article(
+        id: 'a4',
+        url: 'https://example.com/4',
+        title: 'Neural Networks',
+        source: SourcePlatform.web,
+        summary: 'Backpropagation explained.',
+        tags: ['ai'],
+      ),
+      Article(
+        id: 'a5',
+        url: 'https://example.com/5',
+        title: 'Flutter Widgets',
+        source: SourcePlatform.web,
+        summary: 'Building UIs with widgets.',
+        tags: ['flutter', 'ui'],
+      ),
+      Article(
+        id: 'a6',
+        url: 'https://example.com/6',
+        title: 'Rust Ownership',
+        source: SourcePlatform.web,
+        summary: 'Memory safety without GC.',
+        tags: ['rust'],
+      ),
+    ];
+
+    test('RRF boosts articles appearing in both methods', () {
+      // a1 and a3 appear in both lists. They should rank higher than a5
+      // which appears only in one list.
+      final vector = [articles[0], articles[2], articles[4]]; // a1, a3, a5
+      final keyword = [articles[0], articles[2], articles[1]]; // a1, a3, a2
+      final fused = rrfFuse(vector, keyword, topK: 5);
+      final fusedIds = fused.map((a) => a.id).toList();
+      // a1 and a3 get RRF score from both lists → should be top 2.
+      expect(fusedIds[0], anyOf(equals('a1'), equals('a3')));
+      expect(fusedIds[1], anyOf(equals('a1'), equals('a3')));
+      expect(fusedIds[0], isNot(equals(fusedIds[1])));
+    });
+
+    test('RRF does not produce duplicate articles', () {
+      final vector = [articles[0], articles[1]]; // a1, a2
+      final keyword = [articles[0], articles[2]]; // a1, a3
+      final fused = rrfFuse(vector, keyword, topK: 5);
+      final ids = fused.map((a) => a.id).toList();
+      // a1 appears in both — should only appear once in output.
+      expect(ids.where((id) => id == 'a1').length, 1);
+      expect(ids.toSet().length, ids.length);
+    });
+
+    test('RRF with vector-only input returns vector order', () {
+      final vector = [articles[0], articles[2], articles[4]]; // a1, a3, a5
+      final fused = rrfFuse(vector, [], topK: 5);
+      expect(fused.map((a) => a.id).toList(), ['a1', 'a3', 'a5']);
+    });
+
+    test('RRF with keyword-only input returns keyword order', () {
+      final keyword = [articles[2], articles[1], articles[5]]; // a3, a2, a6
+      final fused = rrfFuse([], keyword, topK: 5);
+      expect(fused.map((a) => a.id).toList(), ['a3', 'a2', 'a6']);
+    });
+
+    test('RRF k=60 dampens rank differences', () {
+      // a1 at rank 0 in vector gets RRF score 1/60 ≈ 0.0167
+      // a4 at rank 0 in keyword gets RRF score 1/60 ≈ 0.0167
+      // a1 at rank 1 in keyword gets additional 1/61 ≈ 0.0164
+      // Total a1 ≈ 0.0331, a4 ≈ 0.0167 → a1 ranks higher.
+      final vector = [articles[0], articles[2]]; // a1 rank=0, a3 rank=1
+      final keyword = [articles[3], articles[0]]; // a4 rank=0, a1 rank=1
+      final fused = rrfFuse(vector, keyword, topK: 5);
+      expect(fused.first.id, 'a1');
+    });
+
+    test('topK limits the number of fused results', () {
+      final vector = [articles[0], articles[1], articles[2], articles[3], articles[4], articles[5]];
+      final keyword = [articles[5], articles[4], articles[3], articles[2], articles[1], articles[0]];
+      final fused = rrfFuse(vector, keyword, topK: 3);
+      expect(fused.length, 3);
+    });
+
+    test('RRF fusion preserves article objects by reference', () {
+      final vector = [articles[0]];
+      final keyword = [articles[0]];
+      final fused = rrfFuse(vector, keyword, topK: 5);
+      expect(fused.length, 1);
+      expect(identical(fused[0], articles[0]), true);
     });
   });
 }

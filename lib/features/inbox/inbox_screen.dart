@@ -1,18 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/passage.dart';
-import '../../data/services/processing_pipeline.dart';
+import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/locale_strings.dart';
 
-class InboxScreen extends ConsumerWidget {
+class InboxScreen extends ConsumerStatefulWidget {
   const InboxScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<InboxScreen> createState() => _InboxScreenState();
+}
+
+class _InboxScreenState extends ConsumerState<InboxScreen> {
+  bool _recoveryStarted = false;
+
+  void _recoverInterrupted(List<Article> articles) {
+    if (_recoveryStarted) return;
+    final interrupted = articles
+        .where((a) => a.processingStatus == ProcessingStatus.processing)
+        .toList();
+    if (interrupted.isEmpty) return;
+    _recoveryStarted = true;
+    Future.microtask(() async {
+      final pipeline = ref.read(processingPipelineProvider);
+      for (final article in interrupted) {
+        await pipeline.process(article);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final s = ref.watch(stringsProvider);
     final pendingAsync = ref.watch(pendingArticlesProvider);
+
+    // Reset recovery flag when data reloads (e.g. after all recovered).
+    pendingAsync.whenData((articles) {
+      if (articles.isEmpty) {
+        _recoveryStarted = false;
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(title: Text(s.tabInbox)),
@@ -37,8 +66,11 @@ class InboxScreen extends ConsumerWidget {
         ),
         data: (articles) {
           if (articles.isEmpty) {
+            _recoveryStarted = false;
             return const _EmptyInbox();
           }
+
+          _recoverInterrupted(articles);
 
           final processing =
               articles.where((a) => a.processingStatus == ProcessingStatus.processing).toList();
