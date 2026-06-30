@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/models/settings.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
@@ -89,9 +90,9 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
             const SizedBox(height: 8),
             _ApiCard(icon: Icons.dataset_rounded, title: s.embeddingConfig,
               fields: [
-                _field(s.embeddingBaseUrl, _embBaseUrlCtrl, 'https://api.siliconflow.cn/v1'),
+                _field(s.embeddingBaseUrl, _embBaseUrlCtrl, AppSettings.defaultEmbeddingBaseUrl),
                 _field(s.embeddingApiKey, _embApiKeyCtrl, 'sk-...', obscured: true),
-                _field(s.embeddingModel, _embModelCtrl, 'BAAI/bge-m3'),
+                _field(s.embeddingModel, _embModelCtrl, AppSettings.defaultEmbeddingModel),
               ],
               saving: _embSaving, onSave: _saveEmb,
               theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark,

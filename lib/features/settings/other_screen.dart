@@ -6,7 +6,7 @@ import '../../config/routes.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
-import '../../data/services/backup_service.dart';
+import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 import 'settings_widgets.dart';
 

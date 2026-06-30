@@ -10,7 +10,6 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
-import '../../data/services/backup_service.dart';
 import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';

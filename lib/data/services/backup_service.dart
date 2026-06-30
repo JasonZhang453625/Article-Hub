@@ -2,18 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../models/settings.dart';
 import 'backup_data.dart';
-import '../../shared/providers/passage_providers.dart';
-import '../../shared/providers/filter_providers.dart';
-import '../../shared/providers/settings_providers.dart';
 
-/// Result of an import operation, for surfacing a summary to the user.
 class ImportResult {
   final int articles;
   final int filterGroups;
@@ -28,27 +22,44 @@ class ImportResult {
   });
 }
 
-/// Orchestrates full-data backup export (share a JSON file) and import (pick a
-/// JSON file and merge it in). Reads/writes go through the existing providers
-/// so state stays consistent.
 class BackupService {
-  final Ref _ref;
+  final List<dynamic> Function() _getAllArticles;
+  final Future<int> Function(Iterable<dynamic>) _importArticles;
+  final List<dynamic> Function() _getFilterGroups;
+  final Future<int> Function(Iterable<dynamic>) _importFilterGroups;
+  final Future<void> Function(dynamic) _addFolder;
+  final Future<void> Function(dynamic) _replaceSettings;
+  final List<dynamic> Function() _getFolders;
+  final dynamic Function() _getSettings;
 
-  BackupService(this._ref);
+  BackupService({
+    required List<dynamic> Function() getAllArticles,
+    required Future<int> Function(Iterable<dynamic>) importArticles,
+    required List<dynamic> Function() getFilterGroups,
+    required Future<int> Function(Iterable<dynamic>) importFilterGroups,
+    required Future<void> Function(dynamic) addFolder,
+    required Future<void> Function(dynamic) replaceSettings,
+    required List<dynamic> Function() getFolders,
+    required dynamic Function() getSettings,
+  })  : _getAllArticles = getAllArticles,
+        _importArticles = importArticles,
+        _getFilterGroups = getFilterGroups,
+        _importFilterGroups = importFilterGroups,
+        _addFolder = addFolder,
+        _replaceSettings = replaceSettings,
+        _getFolders = getFolders,
+        _getSettings = getSettings;
 
-  /// Gathers all data and shares it as a timestamped JSON file. Returns the
-  /// share result status.
   Future<ShareResultStatus> exportBackup() async {
-    final repo = await _ref.read(articleRepositoryProvider.future);
-    final articles = repo.getAll();
-    final filterGroups = _ref.read(filterGroupsProvider).valueOrNull ?? [];
-    final folders = _ref.read(foldersProvider).valueOrNull ?? [];
-    final settings = _ref.read(settingsProvider).valueOrNull;
+    final articles = _getAllArticles();
+    final filterGroups = _getFilterGroups();
+    final folders = _getFolders();
+    final settings = _getSettings();
 
     final backup = BackupData.create(
-      articles: articles,
-      filterGroups: filterGroups,
-      folders: folders,
+      articles: articles.cast(),
+      filterGroups: filterGroups.cast(),
+      folders: folders.cast(),
       settings: settings,
     );
 
@@ -66,55 +77,21 @@ class BackupService {
     return result.status;
   }
 
-  /// Imports a backup from a file path (used when a JSON file is shared or
-  /// opened via file manager). Returns the [ImportResult], or null if the
-  /// file could not be read or was not a valid backup.
   Future<ImportResult?> importBackupFromFile(String filePath) async {
     final file = File(filePath);
     if (!file.existsSync()) return null;
 
     final contents = await file.readAsString();
-    final backup = BackupData.fromJsonString(contents);
-
-    final articleCount =
-        await _ref.read(articlesProvider.notifier).importAll(backup.articles);
-    final groupCount = await _ref
-        .read(filterGroupsProvider.notifier)
-        .importAll(backup.filterGroups);
-
-    int folderCount = 0;
-    if (backup.folders.isNotEmpty) {
-      for (final folder in backup.folders) {
-        await _ref.read(foldersProvider.notifier).add(folder);
-        folderCount++;
-      }
-    }
-
-    final AppSettings? settings = backup.settings;
-    if (settings != null) {
-      await _ref.read(settingsProvider.notifier).replaceWith(settings);
-    }
-
-    return ImportResult(
-      articles: articleCount,
-      filterGroups: groupCount,
-      folders: folderCount,
-      settingsImported: settings != null,
-    );
+    return _import(contents);
   }
 
-  /// Lets the user pick a backup JSON file and merges it into current data.
-  /// Returns null if the user cancelled, otherwise an [ImportResult].
-  /// Throws [FormatException] if the chosen file is not a valid backup.
   Future<ImportResult?> importBackup() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json'],
       withData: true,
     );
-    if (picked == null || picked.files.isEmpty) {
-      return null; // cancelled
-    }
+    if (picked == null || picked.files.isEmpty) return null;
 
     final file = picked.files.first;
     String contents;
@@ -127,25 +104,26 @@ class BackupService {
       throw const FormatException('Could not read the selected file');
     }
 
+    return _import(contents);
+  }
+
+  Future<ImportResult> _import(String contents) async {
     final backup = BackupData.fromJsonString(contents);
 
-    final articleCount =
-        await _ref.read(articlesProvider.notifier).importAll(backup.articles);
-    final groupCount = await _ref
-        .read(filterGroupsProvider.notifier)
-        .importAll(backup.filterGroups);
+    final articleCount = await _importArticles(backup.articles);
+    final groupCount = await _importFilterGroups(backup.filterGroups);
 
     int folderCount = 0;
     if (backup.folders.isNotEmpty) {
       for (final folder in backup.folders) {
-        await _ref.read(foldersProvider.notifier).add(folder);
+        await _addFolder(folder);
         folderCount++;
       }
     }
 
-    final AppSettings? settings = backup.settings;
+    final settings = backup.settings;
     if (settings != null) {
-      await _ref.read(settingsProvider.notifier).replaceWith(settings);
+      await _replaceSettings(settings);
     }
 
     return ImportResult(
@@ -156,7 +134,3 @@ class BackupService {
     );
   }
 }
-
-final backupServiceProvider = Provider<BackupService>((ref) {
-  return BackupService(ref);
-});
