@@ -282,7 +282,7 @@ class _SourceChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
           onTap: onTap,
           child: Ink(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8.5),
             decoration: BoxDecoration(
               color: selectedFillColor,
               borderRadius: BorderRadius.circular(999),
@@ -301,6 +301,7 @@ class _SourceChip extends StatelessWidget {
                 Text(
                   label,
                   style: TextStyle(
+                    fontSize: 13,
                     color: isSelected ? Colors.white : unselectedTextColor,
                     fontWeight: FontWeight.w600,
                   ),

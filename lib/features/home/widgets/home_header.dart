@@ -39,7 +39,7 @@ class _HomeHeaderState extends ConsumerState<HomeHeader> {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [AppTheme.capriBlue, Color(0xFF0079C1)],
+          colors: [AppTheme.seaFace, Color(0xFF0079C1)],
         ),
         boxShadow: const [
           BoxShadow(

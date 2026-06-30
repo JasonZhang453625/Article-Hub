@@ -280,12 +280,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               child: DelayedReveal(
                 delayMs: 260,
                 beginOffset: const Offset(0, 0.18),
-                child: FloatingActionButton(
-                  heroTag: const Object(),
-                  onPressed: () {
-                    context.push(AppRoutes.folders);
-                  },
-                  child: const Icon(Icons.folder_rounded),
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: FloatingActionButton(
+                    heroTag: const Object(),
+                    onPressed: () {
+                      context.push(AppRoutes.folders);
+                    },
+                    child: const Icon(Icons.folder_rounded),
+                  ),
                 ),
               ),
             ),
@@ -295,13 +307,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               child: DelayedReveal(
                 delayMs: 220,
                 beginOffset: const Offset(0, 0.18),
-                child: FloatingActionButton.extended(
-                  heroTag: const Object(),
-                  onPressed: () {
-                    context.push(AppRoutes.addArticle);
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                  label: Text(s.add),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: FloatingActionButton.extended(
+                    heroTag: const Object(),
+                    onPressed: () {
+                      context.push(AppRoutes.addArticle);
+                    },
+                    icon: const Icon(Icons.add_rounded),
+                    label: Text(s.add),
+                  ),
                 ),
               ),
             ),

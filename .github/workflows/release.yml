@@ -1,0 +1,77 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.4'
+          channel: stable
+          cache: true
+
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEY_PROPERTIES_B64: ${{ secrets.KEY_PROPERTIES_B64 }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
+          echo "$KEY_PROPERTIES_B64" | base64 -d > android/key.properties
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Generate release description
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n 2p)
+          if [ -z "$PREV_TAG" ]; then
+            echo "## Artifacts" > /tmp/release_body.md
+            echo "" >> /tmp/release_body.md
+            echo "- Article-Hub v${GITHUB_REF_NAME#v} APK" >> /tmp/release_body.md
+          else
+            echo "## Changes since $PREV_TAG" > /tmp/release_body.md
+            echo "" >> /tmp/release_body.md
+            git log --oneline "${PREV_TAG}..HEAD" | while read -r line; do
+              echo "- $(echo "$line" | sed 's/^[a-f0-9]* //')" >> /tmp/release_body.md
+            done
+          fi
+
+      - name: Get version
+        id: version
+        run: |
+          VER=$(grep "^version:" pubspec.yaml | sed 's/version: *//')
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Article-Hub v${{ steps.version.outputs.version }}
+          body_path: /tmp/release_body.md
+          files: build/app/outputs/flutter-apk/app-release.apk
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

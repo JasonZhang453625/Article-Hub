@@ -39,10 +39,10 @@ class EmptyState extends ConsumerWidget {
                 width: 72,
                 height: 72,
                 decoration: BoxDecoration(
-                  color: AppTheme.capriBlue.withValues(alpha: 0.1),
+                  color: AppTheme.seaFace.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: Icon(icon, size: 36, color: AppTheme.capriBlue),
+                child: Icon(icon, size: 36, color: AppTheme.seaFace),
               ),
               const SizedBox(height: 18),
               Text(

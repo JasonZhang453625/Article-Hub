@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class AppTheme {
-  static const Color capriBlue = Color(0xFF00AEEF);
+  static const Color seaFace = Color(0xFF00AEEF);
   static const Color deepSea = Color(0xFF10273F);
   static const Color mist = Color(0xFFF4F8FB);
   static const Color paper = Colors.white;
@@ -13,7 +13,7 @@ class AppTheme {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: const ColorScheme.light(
-        primary: capriBlue,
+        primary: seaFace,
         onPrimary: Colors.white,
         secondary: dune,
         onSecondary: deepSea,
@@ -72,7 +72,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(20),
-          borderSide: const BorderSide(color: capriBlue, width: 1.4),
+          borderSide: const BorderSide(color: seaFace, width: 1.4),
         ),
         filled: true,
         fillColor: paper,
@@ -141,7 +141,7 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: const ColorScheme.dark(
-        primary: capriBlue,
+        primary: seaFace,
         onPrimary: Colors.white,
         secondary: Color(0xFF3A3024),
         onSecondary: _darkOnSurface,
@@ -165,7 +165,7 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: capriBlue,
+        backgroundColor: seaFace,
         foregroundColor: Colors.white,
         elevation: 0,
         highlightElevation: 0,
@@ -200,7 +200,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(20),
-          borderSide: const BorderSide(color: capriBlue, width: 1.4),
+          borderSide: const BorderSide(color: seaFace, width: 1.4),
         ),
         filled: true,
         fillColor: _darkCard,

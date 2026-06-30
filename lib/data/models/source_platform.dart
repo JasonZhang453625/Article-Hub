@@ -87,7 +87,7 @@ enum SourcePlatform {
       case SourcePlatform.zhihu:
         return const Color(0xFF1677FF);
       case SourcePlatform.web:
-        return const Color(0xFF4A6B7C);
+        return const Color(0xFF00AEEF);
       case SourcePlatform.x:
         return const Color(0xFF0F172A);
       case SourcePlatform.bilibili:
