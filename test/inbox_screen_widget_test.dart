@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/repositories/article_repository.dart';
-import 'package:article_hub/features/inbox/inbox_screen.dart';
-import 'package:article_hub/shared/providers/passage_providers.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/data/repositories/article_repository.dart';
+import 'package:memora/features/inbox/inbox_screen.dart';
+import 'package:memora/shared/providers/passage_providers.dart';
+import 'package:memora/shared/providers/locale_provider.dart';
+import 'package:memora/shared/providers/settings_providers.dart';
 
 /// Phase 1.4 widget tests for [InboxScreen].
 ///
@@ -26,6 +28,7 @@ void main() {
       ProviderScope(
         overrides: [
           hiveInitProvider.overrideWith((ref) => Completer<void>().future),
+          languageIndexProvider.overrideWith((ref) => 2), // force English
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
           ),
@@ -76,22 +79,21 @@ void main() {
     expect(find.text('Article done'), findsNothing);
   });
 
-  testWidgets('processing article shows the current stage label',
-      (tester) async {
+  testWidgets('pending article shows the Waiting section', (tester) async {
     await pumpInbox(
       tester,
       articles: [
         seed(
           id: 'p1',
-          status: ProcessingStatus.processing,
+          status: ProcessingStatus.pending,
           stage: ProcessingStage.summary,
         ),
       ],
     );
-    expect(find.text('Processing'), findsOneWidget);
+    expect(find.text('Waiting'), findsOneWidget);
     expect(find.text('Article p1'), findsOneWidget);
-    expect(find.text('Generating summary'), findsOneWidget);
-    // Processing rows do not expose a retry button.
+    expect(find.text('Queued'), findsOneWidget);
+    // Pending rows do not expose a retry button.
     expect(find.byIcon(Icons.refresh_rounded), findsNothing);
   });
 
@@ -132,11 +134,6 @@ void main() {
     await pumpInbox(
       tester,
       articles: [
-        seed(
-          id: 'p1',
-          status: ProcessingStatus.processing,
-          stage: ProcessingStage.metadata,
-        ),
         seed(id: 'q1', status: ProcessingStatus.pending),
         seed(
           id: 'f1',
@@ -147,7 +144,6 @@ void main() {
         seed(id: 'done', status: ProcessingStatus.completed),
       ],
     );
-    expect(find.text('Processing'), findsOneWidget);
     expect(find.text('Waiting'), findsOneWidget);
     expect(find.text('Failed'), findsOneWidget);
     expect(find.text('Article done'), findsNothing);
@@ -202,3 +198,5 @@ class _InMemoryArticleRepository implements ArticleRepository {
   @override
   Future<void> unsetFolderBatch(String folderId) async {}
 }
+
+

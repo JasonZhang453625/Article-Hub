@@ -15,13 +15,33 @@ import 'share_handler.dart';
 /// desktop (side rail) layout.
 const double _desktopBreakpoint = 720;
 
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   final StatefulNavigationShell navigationShell;
 
   const AppShell({super.key, required this.navigationShell});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
+  bool _redirected = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_redirected) {
+      final settings = ref.watch(settingsProvider).valueOrNull;
+      if (settings != null) {
+        _redirected = true;
+        if (settings.startupTabIndex == 1) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              widget.navigationShell.goBranch(1);
+            }
+          });
+        }
+      }
+    }
     final s = ref.watch(stringsProvider);
     final hideInbox = ref.watch(hideInboxTabProvider);
     final pendingCount = ref.watch(pendingArticlesProvider).maybeWhen(
@@ -106,27 +126,27 @@ class AppShell extends ConsumerWidget {
         // Decide layout based on available width.
         Widget shell = isDesktop
             ? _DesktopShell(
-                navigationShell: navigationShell,
+                navigationShell: widget.navigationShell,
                 destinations: destinations,
-                currentIndex: toRenderedIndex(navigationShell.currentIndex),
+                currentIndex: toRenderedIndex(widget.navigationShell.currentIndex),
                 onDestinationSelected: (i) {
-                  navigationShell.goBranch(
+                  widget.navigationShell.goBranch(
                     toBranchIndex(i),
                     initialLocation:
-                        toBranchIndex(i) == navigationShell.currentIndex,
+                        toBranchIndex(i) == widget.navigationShell.currentIndex,
                   );
                 },
                 offlineBanner: offlineBanner,
               )
             : _MobileShell(
-                navigationShell: navigationShell,
+                navigationShell: widget.navigationShell,
                 destinations: destinations,
-                currentIndex: toRenderedIndex(navigationShell.currentIndex),
+                currentIndex: toRenderedIndex(widget.navigationShell.currentIndex),
                 onDestinationSelected: (i) {
-                  navigationShell.goBranch(
+                  widget.navigationShell.goBranch(
                     toBranchIndex(i),
                     initialLocation:
-                        toBranchIndex(i) == navigationShell.currentIndex,
+                        toBranchIndex(i) == widget.navigationShell.currentIndex,
                   );
                 },
                 offlineBanner: offlineBanner,

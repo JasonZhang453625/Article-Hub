@@ -126,7 +126,22 @@ class LocaleStrings {
   final String reorderDesc;
   final String visibleInFilters;
   final String hiddenFromFilters;
-  final String behavior;
+  final String preferences;
+  final String startupPage;
+  final String startupChat;
+  final String startupKnowledge;
+  final String settingsAccount;
+  final String settingsAccountDesc;
+  final String accountTitle;
+  final String usageDays;
+  final String memoryCount;
+  final String tokenConsumption;
+  final String accountSecurity;
+  final String setPassword;
+  final String changePassword;
+  final String futureMembership;
+  final String daysN;
+  final String entriesN;
   final String detectClipboard;
   final String detectClipboardDesc;
   final String hideInboxTab;
@@ -344,7 +359,22 @@ class LocaleStrings {
     required this.reorderDesc,
     required this.visibleInFilters,
     required this.hiddenFromFilters,
-    required this.behavior,
+    required this.preferences,
+    required this.startupPage,
+    required this.startupChat,
+    required this.startupKnowledge,
+    required this.settingsAccount,
+    required this.settingsAccountDesc,
+    required this.accountTitle,
+    required this.usageDays,
+    required this.memoryCount,
+    required this.tokenConsumption,
+    required this.accountSecurity,
+    required this.setPassword,
+    required this.changePassword,
+    required this.futureMembership,
+    required this.daysN,
+    required this.entriesN,
     required this.detectClipboard,
     required this.detectClipboardDesc,
     required this.hideInboxTab,
@@ -452,9 +482,9 @@ class LocaleStrings {
   }
 
   static const _en = LocaleStrings(
-    appTitle: 'Article-Hub',
+    appTitle: 'Memora',
     tabChat: 'Chat',
-    tabKnowledge: 'Knowledge',
+    tabKnowledge: 'Memora',
     tabInbox: 'Progress',
     tabSettings: 'Settings',
     searchHint: 'Search articles, tags or notes...',
@@ -533,16 +563,16 @@ class LocaleStrings {
     inboxEmpty: 'No articles in progress',
     inboxEmptyDesc: 'Articles being processed will appear here.',
     configureAiFirst: 'Please configure your AI provider in Settings first.',
-    knowledgeBaseEmpty: 'Your knowledge base is empty. Process some articles first, then come back to ask questions.',
-    notEnoughInfo: 'I couldn\'t find enough relevant information in your knowledge base to answer this question.',
+    knowledgeBaseEmpty: 'Your Memora is empty. Process some articles first, then come back to ask questions.',
+    notEnoughInfo: 'I couldn\'t find enough relevant information in your Memora to answer this question.',
     emptyAiResponse: 'The AI service returned an empty response. Please try again.',
     aiError: 'Error communicating with AI service',
-    askKnowledgeBase: 'Ask your knowledge base',
+    askKnowledgeBase: 'Ask your Memora',
     tryExamples: 'Try: "What are the key ideas about AI?" or "Summarize my saved articles on Flutter"',
     processFirst: 'Process some articles first, then come back to ask questions.',
     askHint: 'Ask about your knowledge...',
     tryBroaderTerm: 'Try a broader term:',
-    browseKnowledgeBase: 'Browse Knowledge Base',
+    browseKnowledgeBase: 'Browse Memora',
     possiblyRelated: 'Possibly related:',
     foldersTitle: 'Folders',
     newFolder: 'New Folder',
@@ -577,7 +607,22 @@ class LocaleStrings {
     reorderDesc: 'Drag to change the chip order. Turn off platforms you do not want to see in filters.',
     visibleInFilters: 'Visible in filters',
     hiddenFromFilters: 'Hidden from filters',
-    behavior: 'Behavior',
+    preferences: 'Preferences',
+    startupPage: 'Open on startup',
+    startupChat: 'Chat',
+    startupKnowledge: 'Memora',
+    settingsAccount: 'Account',
+    settingsAccountDesc: 'Usage stats, security settings',
+    accountTitle: 'Account',
+    usageDays: 'Days active',
+    memoryCount: 'Memory items',
+    tokenConsumption: 'Token consumption',
+    accountSecurity: 'Account Security',
+    setPassword: 'Set Password',
+    changePassword: 'Change Password',
+    futureMembership: 'Future membership tiers',
+    daysN: 'days',
+    entriesN: 'entries',
     detectClipboard: 'Detect links from clipboard',
     detectClipboardDesc: 'When you open the app, offer to save a link you have copied.',
     hideInboxTab: 'Hide "Progress" Tab',
@@ -600,7 +645,7 @@ class LocaleStrings {
     settingsDevDesc: 'Response feedback data (dev)',
     fontWeight: 'Font Weight',
     operations: 'Operations',
-    knowledgeSectionLabel: 'Knowledge Management',
+    knowledgeSectionLabel: 'Memory Management',
     knowledgeBatchTitle: 'Backfill Summaries',
     knowledgeify: 'Knowledge-ify Old Articles',
     knowledgeifyDesc: 'Generate summaries for all articles that are missing them.',
@@ -671,9 +716,9 @@ class LocaleStrings {
   );
 
   static const _zh = LocaleStrings(
-    appTitle: '文章中心',
+    appTitle: '记忆海',
     tabChat: '对话',
-    tabKnowledge: '知识库',
+    tabKnowledge: '记忆海',
     tabInbox: '进程',
     tabSettings: '设置',
     searchHint: '搜索文章、标签或笔记…',
@@ -752,16 +797,16 @@ class LocaleStrings {
     inboxEmpty: '无处理中的文章',
     inboxEmptyDesc: '正在处理的文章会显示在此处。',
     configureAiFirst: '请先在设置中配置 AI。',
-    knowledgeBaseEmpty: '知识库为空。请先处理一些文章，然后再来提问。',
-    notEnoughInfo: '在知识库中找不到足够的相关信息来回答此问题。',
+    knowledgeBaseEmpty: '记忆海为空。请先处理一些文章，然后再来提问。',
+    notEnoughInfo: '在记忆海中找不到足够的相关信息来回答此问题。',
     emptyAiResponse: 'AI 服务返回了空响应，请重试。',
     aiError: '与 AI 服务通信出错',
-    askKnowledgeBase: '向知识库提问',
+    askKnowledgeBase: '向记忆海提问',
     tryExamples: '试试：「关于 AI 的核心观点是什么？」或「总结我保存的 Flutter 文章」',
     processFirst: '请先处理一些文章，然后再来提问。',
     askHint: '你想知道些什么？',
     tryBroaderTerm: '试试更宽泛的词：',
-    browseKnowledgeBase: '浏览知识库',
+    browseKnowledgeBase: '浏览记忆海',
     possiblyRelated: '可能相关：',
     foldersTitle: '文件夹',
     newFolder: '新建文件夹',
@@ -796,7 +841,22 @@ class LocaleStrings {
     reorderDesc: '拖动以调整标签顺序。关闭不想在筛选中看到的平台。',
     visibleInFilters: '筛选中可见',
     hiddenFromFilters: '筛选中隐藏',
-    behavior: '行为',
+    preferences: '偏好',
+    startupPage: '启动时打开',
+    startupChat: '对话',
+    startupKnowledge: '记忆海',
+    settingsAccount: '账号',
+    settingsAccountDesc: '使用统计、安全设置',
+    accountTitle: '账号',
+    usageDays: '已使用',
+    memoryCount: '记忆数量',
+    tokenConsumption: 'Token 消耗',
+    accountSecurity: '账号安全',
+    setPassword: '设置密码',
+    changePassword: '修改密码',
+    futureMembership: '未来会员等级勋章',
+    daysN: '天',
+    entriesN: '条',
     detectClipboard: '检测剪贴板链接',
     detectClipboardDesc: '打开应用时，提示保存已复制的链接。',
     hideInboxTab: '隐藏"进程"标签',
@@ -819,7 +879,7 @@ class LocaleStrings {
     settingsDevDesc: '对话反馈数据（开发用）',
     fontWeight: '字体粗细',
     operations: '操作',
-    knowledgeSectionLabel: '知识管理',
+    knowledgeSectionLabel: '记忆管理',
     knowledgeBatchTitle: '补充生成摘要',
     knowledgeify: '批量知识化旧文章',
     knowledgeifyDesc: '为所有未生成摘要的文章生成摘要',

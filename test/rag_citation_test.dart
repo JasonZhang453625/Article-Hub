@@ -1,5 +1,5 @@
-import 'package:flutter_test/flutter_test.dart';
-import 'package:article_hub/data/services/rag_citation.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:memora/data/services/rag_citation.dart';
 
 /// Phase 3.4 adversarial tests: the model must never produce a citation that
 /// points outside the candidate set or to a deleted article. The UI relies on

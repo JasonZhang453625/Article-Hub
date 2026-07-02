@@ -1,11 +1,11 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/settings.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/features/reader/summary_regeneration_provider.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/settings.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/features/reader/summary_regeneration_provider.dart';
 
 void main() {
   final article = Article(

@@ -1,10 +1,10 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:article_hub/data/services/ai_service.dart';
+import 'package:memora/data/services/ai_service.dart';
 
 void main() {
   test(

@@ -1,9 +1,9 @@
-import 'package:flutter_test/flutter_test.dart';
-import 'package:article_hub/data/services/embedding_service.dart';
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/services/index_service.dart';
-import 'package:article_hub/data/services/retrieval_service.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:memora/data/services/embedding_service.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/data/services/index_service.dart';
+import 'package:memora/data/services/retrieval_service.dart';
 
 void main() {
   group('cosineSimilarity', () {

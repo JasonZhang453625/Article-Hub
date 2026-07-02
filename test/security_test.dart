@@ -1,8 +1,8 @@
-import 'package:flutter_test/flutter_test.dart';
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/settings.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/services/backup_data.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/settings.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/data/services/backup_data.dart';
 
 /// Phase 2.4 security tests:
 /// - API Key (chat and embedding) must appear in exported backup JSON — the

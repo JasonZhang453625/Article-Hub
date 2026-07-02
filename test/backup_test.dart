@@ -1,11 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/filter_group.dart';
-import 'package:article_hub/data/models/settings.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/services/backup_data.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/filter_group.dart';
+import 'package:memora/data/models/settings.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/data/services/backup_data.dart';
 
 void main() {
   group('model JSON round-trip', () {
@@ -150,6 +150,75 @@ void main() {
         () => BackupData.fromJsonString('{"schemaVersion": 1}'),
         throwsFormatException,
       );
+    });
+
+    test('imports legacy backup with app="article-hub"', () {
+      const json = '''
+      {
+        "schemaVersion": 2,
+        "app": "article-hub",
+        "exportedAt": "2025-01-01T00:00:00.000",
+        "articles": [
+          {"id": "a1", "url": "https://a.com", "title": "T", "source": 2}
+        ],
+        "filterGroups": []
+      }
+      ''';
+      final backup = BackupData.fromJsonString(json);
+      expect(backup.articles, hasLength(1));
+      expect(backup.articles.first.id, 'a1');
+    });
+
+    test('imports backup with app="memora"', () {
+      const json = '''
+      {
+        "schemaVersion": 2,
+        "app": "memora",
+        "exportedAt": "2025-01-01T00:00:00.000",
+        "articles": [
+          {"id": "a2", "url": "https://b.com", "title": "T2", "source": 2}
+        ],
+        "filterGroups": []
+      }
+      ''';
+      final backup = BackupData.fromJsonString(json);
+      expect(backup.articles, hasLength(1));
+      expect(backup.articles.first.id, 'a2');
+    });
+
+    test('throws on unrecognized app field', () {
+      const json = '''
+      {
+        "schemaVersion": 2,
+        "app": "unknown-app",
+        "articles": [
+          {"id": "a1", "url": "https://a.com", "title": "T", "source": 2}
+        ],
+        "filterGroups": []
+      }
+      ''';
+      expect(
+        () => BackupData.fromJsonString(json),
+        throwsFormatException,
+      );
+    });
+
+    test('new export uses app="memora"', () {
+      final backup = BackupData.create(
+        articles: [
+          Article(
+            id: 'a1',
+            url: 'https://example.com/p/1',
+            title: 'Post',
+            source: SourcePlatform.web,
+          ),
+        ],
+        filterGroups: const [],
+        folders: const [],
+        settings: null,
+      );
+      final json = backup.toJson();
+      expect(json['app'], 'memora');
     });
   });
 

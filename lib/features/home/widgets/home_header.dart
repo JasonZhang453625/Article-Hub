@@ -70,7 +70,7 @@ class _HomeHeaderState extends ConsumerState<HomeHeader> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Article-Hub',
+                      'Memora',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         color: Colors.white,
                         fontSize: 30,

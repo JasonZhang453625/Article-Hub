@@ -1,4 +1,4 @@
-import 'dart:developer' as developer;
+﻿import 'dart:developer' as developer;
 import 'package:html/parser.dart' as html_parser;
 
 import 'default_page_loader.dart';
@@ -22,7 +22,7 @@ class ContentExtractor {
     developer.log(
       'status: ${page?.statusCode}, source: ${page?.source.name}, '
       'finalUrl: ${page?.finalUrl ?? url}',
-      name: 'article_hub.extractor',
+      name: 'memora.extractor',
     );
     if (page == null ||
         !page.isHtml ||
@@ -33,7 +33,7 @@ class ContentExtractor {
     final text = _extractText(page.body);
     developer.log(
       'extracted text length: ${text?.length ?? 0}',
-      name: 'article_hub.extractor',
+      name: 'memora.extractor',
     );
     return text;
   }

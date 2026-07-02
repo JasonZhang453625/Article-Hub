@@ -53,7 +53,7 @@ class ArticleCard extends StatelessWidget {
                     ),
                     child: Icon(
                       article.source.icon,
-                      color: accentColor,
+                      color: article.source.iconColor(isDark: isDark),
                       size: 18,
                     ),
                   ),

@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:developer' as developer;
 import '../models/passage.dart';
 import '../models/settings.dart';
@@ -269,7 +269,7 @@ class ProcessingPipeline {
       }
       return article;
     } catch (e) {
-      developer.log('tag generation failed: $e', name: 'article_hub.pipeline');
+      developer.log('tag generation failed: $e', name: 'memora.pipeline');
       return article;
     }
   }
@@ -326,18 +326,18 @@ class ProcessingPipeline {
         settings.aiBaseUrl.trim().isEmpty ||
         settings.aiApiKey.trim().isEmpty) {
       developer.log('folder suggestion: skipped (AI not configured)',
-          name: 'article_hub.pipeline');
+          name: 'memora.pipeline');
       return article;
     }
 
     try {
       final folderNames = _folders.map((f) => f.name).toList();
       developer.log('folder suggestion: ${folderNames.length} folders available',
-          name: 'article_hub.pipeline');
+          name: 'memora.pipeline');
 
       if (folderNames.isEmpty && _createFolder == null) {
         developer.log('folder suggestion: skipped (no folders and cannot create)',
-            name: 'article_hub.pipeline');
+            name: 'memora.pipeline');
         return article;
       }
 
@@ -347,11 +347,11 @@ class ProcessingPipeline {
         folderNames,
       );
       developer.log('folder suggestion: AI returned "$suggested"',
-          name: 'article_hub.pipeline');
+          name: 'memora.pipeline');
 
       if (suggested == null) {
         developer.log('folder suggestion: AI returned null/none',
-            name: 'article_hub.pipeline');
+            name: 'memora.pipeline');
         return article;
       }
 
@@ -361,29 +361,29 @@ class ProcessingPipeline {
       ).firstOrNull;
       if (match != null) {
         developer.log('folder suggestion: matched existing folder "${match.name}"',
-            name: 'article_hub.pipeline');
+            name: 'memora.pipeline');
         return article.copyWith(folderId: match.id);
       }
 
       // No existing folder matched — create a new one if possible.
       if (_createFolder != null) {
         developer.log('folder suggestion: creating new folder "$suggested"',
-            name: 'article_hub.pipeline');
+            name: 'memora.pipeline');
         final newFolder = await _createFolder(suggested);
         if (newFolder != null) {
           _folders.add(newFolder);
           developer.log('folder suggestion: created and assigned folder "${newFolder.name}"',
-              name: 'article_hub.pipeline');
+              name: 'memora.pipeline');
           return article.copyWith(folderId: newFolder.id);
         } else {
           developer.log('folder suggestion: folder creation failed',
-              name: 'article_hub.pipeline');
+              name: 'memora.pipeline');
         }
       }
       return article;
     } catch (e) {
       developer.log('folder suggestion failed: $e',
-          name: 'article_hub.pipeline');
+          name: 'memora.pipeline');
       return article;
     }
   }
@@ -438,7 +438,7 @@ class ProcessingPipeline {
     if (response == null) return null;
     developer.log(
       'folder suggestion: raw AI response = "$response"',
-      name: 'article_hub.pipeline',
+      name: 'memora.pipeline',
     );
 
     // Strip reasoning-model thinking tags (DeepSeek-R1 style).
@@ -468,7 +468,7 @@ class ProcessingPipeline {
       if (result == null) {
         developer.log(
           'embedding returned null, skipping index put for ${article.id}',
-          name: 'article_hub.pipeline',
+          name: 'memora.pipeline',
         );
         return;
       }
@@ -481,10 +481,10 @@ class ProcessingPipeline {
       ));
       developer.log(
         'index updated for article ${article.id}',
-        name: 'article_hub.pipeline',
+        name: 'memora.pipeline',
       );
     } catch (e) {
-      developer.log('index update failed: $e', name: 'article_hub.pipeline');
+      developer.log('index update failed: $e', name: 'memora.pipeline');
     }
   }
 
@@ -494,7 +494,7 @@ class ProcessingPipeline {
 
   Article _fail(Article article, String stage, Object error) {
     final msg = '$stage: $error';
-    developer.log('pipeline failed: $msg', name: 'article_hub.pipeline');
+    developer.log('pipeline failed: $msg', name: 'memora.pipeline');
     // Drop any cached content for this article — we won't get to use it.
     _fetchedPageCache.remove(article.id);
     _contentCache.remove(article.id);

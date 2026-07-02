@@ -161,6 +161,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       apiKey: settings.aiApiKey,
       model: settings.aiModel,
     );
+    ai.onTokensUsed = (tokens) =>
+        ref.read(settingsProvider.notifier).addTokenUsage(tokens);
     final langHint = aiLanguagePrompt(settings.languageIndex);
 
     try {

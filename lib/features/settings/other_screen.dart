@@ -80,7 +80,7 @@ class OtherScreen extends ConsumerWidget {
                 ]),
               ),
               const SizedBox(height: 14),
-              SectionLabel(label: s.behavior, theme: theme),
+              SectionLabel(label: s.preferences, theme: theme),
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,

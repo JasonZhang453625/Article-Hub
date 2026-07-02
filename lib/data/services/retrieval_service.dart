@@ -1,4 +1,4 @@
-import 'dart:developer' as developer;
+﻿import 'dart:developer' as developer;
 import '../models/passage.dart';
 import 'embedding_service.dart';
 import 'index_service.dart';
@@ -58,7 +58,7 @@ class RetrievalService {
         vectorResults = await _vectorRetrieve(query, articles);
       } catch (e) {
         developer.log('vector retrieval failed: $e',
-            name: 'article_hub.retrieval');
+            name: 'memora.retrieval');
       }
     }
 

@@ -141,26 +141,96 @@ class _AppearanceScreenState extends ConsumerState<AppearanceScreen> {
                   ]),
                 ),
                 const SizedBox(height: 12),
-                SectionLabel(label: s.behavior, theme: theme),
-                const SizedBox(height: 6),
+                SectionLabel(label: s.preferences, theme: theme),
+                const SizedBox(height: 8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   decoration: BoxDecoration(
                     color: cardColor, borderRadius: BorderRadius.circular(24),
                     border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
                   ),
-                  child: SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(s.hideInboxTab, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(s.hideInboxTabDesc,
-                      style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
-                    ),
-                    value: settings.hideInboxTab,
-                    onChanged: (v) => ref.read(settingsProvider.notifier).setHideInboxTab(v),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(s.startupPage, style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        Expanded(
+                          child: _StartupTabButton(
+                            label: s.startupChat,
+                            isSelected: settings.startupTabIndex == 0,
+                            onTap: () => ref.read(settingsProvider.notifier).setStartupTabIndex(0),
+                            theme: theme,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _StartupTabButton(
+                            label: s.startupKnowledge,
+                            isSelected: settings.startupTabIndex == 1,
+                            onTap: () => ref.read(settingsProvider.notifier).setStartupTabIndex(1),
+                            theme: theme,
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 12),
+                      Divider(height: 1, color: outlineColor.withValues(alpha: 0.25)),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(s.hideInboxTab, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(s.hideInboxTabDesc,
+                          style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                        ),
+                        value: settings.hideInboxTab,
+                        onChanged: (v) => ref.read(settingsProvider.notifier).setHideInboxTab(v),
+                      ),
+                    ],
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StartupTabButton extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final ThemeData theme;
+
+  const _StartupTabButton({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+    required this.theme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = theme.brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? theme.colorScheme.primary
+              : (isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.06)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : theme.colorScheme.onSurface,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+              fontSize: 14,
             ),
           ),
         ),

@@ -271,7 +271,11 @@ class _SourceChip extends StatelessWidget {
         ? theme.colorScheme.onSurface.withValues(alpha: 0.9)
         : theme.colorScheme.onSurface;
     final unselectedIconColor =
-        isDark && label == 'X' ? Colors.white : color;
+        isSelected
+            ? Colors.white
+            : (isDark && color.computeLuminance() < 0.3
+                ? Colors.white
+                : color);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),

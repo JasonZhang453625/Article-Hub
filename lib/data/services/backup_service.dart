@@ -64,7 +64,7 @@ class BackupService {
     );
 
     final timestamp = DateFormat('yyyyMMdd-HHmmss').format(DateTime.now());
-    final fileName = 'article-hub-backup-$timestamp.json';
+    final fileName = 'memora-backup-$timestamp.json';
 
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/$fileName');
@@ -72,7 +72,7 @@ class BackupService {
 
     final result = await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/json', name: fileName)],
-      subject: 'Article-Hub backup',
+      subject: 'Memora backup',
     );
     return result.status;
   }

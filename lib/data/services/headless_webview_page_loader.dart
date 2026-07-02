@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:ui';
 
@@ -87,7 +87,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
       if (mainFrameError != null) {
         developer.log(
           'background WebView main document failed: $mainFrameError, url: $url',
-          name: 'article_hub.webview',
+          name: 'memora.webview',
         );
         return null;
       }
@@ -96,7 +96,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
       if (controller == null) {
         developer.log(
           'background WebView controller unavailable, url: $url',
-          name: 'article_hub.webview',
+          name: 'memora.webview',
         );
         return null;
       }
@@ -130,7 +130,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
           if (looksLikeBlockedPage(title, sample)) {
             developer.log(
               'background WebView reached a blocked/verification page, url: $url',
-              name: 'article_hub.webview',
+              name: 'memora.webview',
             );
             return null;
           }
@@ -152,7 +152,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
       if (textLength < 100) {
         developer.log(
           'background WebView body too short: $textLength chars, url: $url',
-          name: 'article_hub.webview',
+          name: 'memora.webview',
         );
         return null;
       }
@@ -163,7 +163,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
       if (html is! String || html.length < 200) {
         developer.log(
           'background WebView returned empty HTML, url: $url',
-          name: 'article_hub.webview',
+          name: 'memora.webview',
         );
         return null;
       }
@@ -171,7 +171,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
       final finalUrl = (await controller.getUrl())?.toString() ?? url;
       developer.log(
         'background WebView loaded ${html.length} HTML chars, finalUrl: $finalUrl',
-        name: 'article_hub.webview',
+        name: 'memora.webview',
       );
       return FetchedPage(
         statusCode: 200,
@@ -183,13 +183,13 @@ class HeadlessWebViewPageLoader implements PageLoader {
     } on TimeoutException {
       developer.log(
         'background WebView timeout ($timeout), url: $url',
-        name: 'article_hub.webview',
+        name: 'memora.webview',
       );
       return null;
     } catch (error, stackTrace) {
       developer.log(
         'background WebView error, url: $url',
-        name: 'article_hub.webview',
+        name: 'memora.webview',
         error: error,
         stackTrace: stackTrace,
       );
@@ -200,13 +200,13 @@ class HeadlessWebViewPageLoader implements PageLoader {
           await webView.dispose();
           developer.log(
             'background WebView disposed, url: $url',
-            name: 'article_hub.webview',
+            name: 'memora.webview',
           );
         }
       } catch (error, stackTrace) {
         developer.log(
           'background WebView dispose failed, url: $url',
-          name: 'article_hub.webview',
+          name: 'memora.webview',
           error: error,
           stackTrace: stackTrace,
         );

@@ -103,6 +103,13 @@ enum SourcePlatform {
     }
   }
 
+  Color iconColor({required bool isDark}) {
+    if (isDark && accentColor.computeLuminance() < 0.3) {
+      return Colors.white;
+    }
+    return accentColor;
+  }
+
   static SourcePlatform fromUrl(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null) return SourcePlatform.web;

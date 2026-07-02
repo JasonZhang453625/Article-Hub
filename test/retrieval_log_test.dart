@@ -1,5 +1,5 @@
-import 'package:flutter_test/flutter_test.dart';
-import 'package:article_hub/data/services/retrieval_log_service.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:memora/data/services/retrieval_log_service.dart';
 
 void main() {
   group('RetrievalLog model', () {

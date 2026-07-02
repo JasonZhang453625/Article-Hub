@@ -1,6 +1,6 @@
 {
-    "name": "Article-Hub",
-    "short_name": "Article-Hub",
+    "name": "Memora",
+    "short_name": "Memora",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -1,4 +1,4 @@
-import 'dart:developer' as developer;
+﻿import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -69,21 +69,21 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
     try {
       developer.log(
         'background summary started, articleId: ${article.id}',
-        name: 'article_hub.ai',
+        name: 'memora.ai',
       );
       final result = await _runner(article, settings);
       if (result.succeeded) {
         await _save(article.id, result.title, result.summary!, result.coverImageUrl);
         developer.log(
           'background summary saved, articleId: ${article.id}',
-          name: 'article_hub.ai',
+          name: 'memora.ai',
         );
       }
       return result;
     } catch (error, stackTrace) {
       developer.log(
         'background summary save failed',
-        name: 'article_hub.ai',
+        name: 'memora.ai',
         error: error,
         stackTrace: stackTrace,
       );
@@ -112,6 +112,8 @@ final summaryRegenerationProvider =
             apiKey: settings.aiApiKey,
             model: settings.aiModel,
           );
+          ai.onTokensUsed = (tokens) =>
+              ref.read(settingsProvider.notifier).addTokenUsage(tokens);
 
           try {
             // Fetch page once, reuse for both metadata and content extraction.
@@ -159,7 +161,7 @@ final summaryRegenerationProvider =
           } catch (error, stackTrace) {
             developer.log(
               'background summary regeneration failed',
-              name: 'article_hub.ai',
+              name: 'memora.ai',
               error: error,
               stackTrace: stackTrace,
             );

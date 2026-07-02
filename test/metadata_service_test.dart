@@ -1,9 +1,9 @@
-import 'package:flutter_test/flutter_test.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:article_hub/data/services/http_client.dart';
-import 'package:article_hub/data/services/metadata_service.dart';
+import 'package:memora/data/services/http_client.dart';
+import 'package:memora/data/services/metadata_service.dart';
 
 /// Helper to create an [AppHttpClient] backed by a [MockClient].
 AppHttpClient mockHttp(Future<http.Response> Function(http.Request) handler) {

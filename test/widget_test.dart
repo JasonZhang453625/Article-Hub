@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:article_hub/app.dart';
+import 'package:memora/app.dart';
 
 void main() {
   testWidgets('App renders shell with navigation', (WidgetTester tester) async {
@@ -8,7 +8,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     // The bottom navigation bar should have all 4 tabs.
-    expect(find.text('Knowledge'), findsOneWidget);
+    expect(find.text('Memora'), findsAtLeastNWidgets(1));
     expect(find.text('Progress'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     // "Chat" appears in both AppBar title and NavigationBar label.

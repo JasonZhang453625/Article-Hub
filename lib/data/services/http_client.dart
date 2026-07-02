@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert' show utf8, latin1;
 import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
@@ -43,7 +43,7 @@ class AppHttpClient implements PageLoader {
       if (response.statusCode != 200) {
         developer.log(
           'non-200 status: ${response.statusCode}, url: $url',
-          name: 'article_hub.http',
+          name: 'memora.http',
         );
         return null;
       }
@@ -52,7 +52,7 @@ class AppHttpClient implements PageLoader {
       if (!ct.contains('html') && ct.isNotEmpty) {
         developer.log(
           'non-HTML content-type: $ct, url: $url',
-          name: 'article_hub.http',
+          name: 'memora.http',
         );
         return null;
       }
@@ -67,10 +67,10 @@ class AppHttpClient implements PageLoader {
         source: PageLoadSource.http,
       );
     } on TimeoutException {
-      developer.log('timeout ($timeout), url: $url', name: 'article_hub.http');
+      developer.log('timeout ($timeout), url: $url', name: 'memora.http');
       return null;
     } catch (e) {
-      developer.log('fetch error: $e, url: $url', name: 'article_hub.http');
+      developer.log('fetch error: $e, url: $url', name: 'memora.http');
       return null;
     }
   }

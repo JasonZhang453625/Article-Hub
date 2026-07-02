@@ -18,17 +18,19 @@ class CitationChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Wrap(
       spacing: 2,
       runSpacing: 0,
       children: articleIds.map((id) {
         final article = articles.where((a) => a.id == id).firstOrNull;
         if (article == null) return const SizedBox.shrink();
+        final source = article.source;
         return ActionChip(
           avatar: Icon(
-            article.source.icon,
+            source.icon,
             size: 14,
-            color: article.source.accentColor,
+            color: source.iconColor(isDark: isDark),
           ),
           label: Text(
             article.title,

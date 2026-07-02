@@ -24,7 +24,12 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   Future<void> _load() async {
     await _ref.read(hiveInitProvider.future);
     _box ??= await Hive.openBox<AppSettings>(_boxName);
-    final settings = _box!.get(_key) ?? AppSettings();
+    var settings = _box!.get(_key) ?? AppSettings();
+    // Set first launch timestamp if not already set.
+    if (settings.firstLaunchMs == null) {
+      settings = settings.copyWith(firstLaunchMs: DateTime.now().millisecondsSinceEpoch);
+      await _box!.put(_key, settings);
+    }
     state = AsyncValue.data(settings);
   }
 
@@ -105,6 +110,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(fontWeightIndex: index));
   }
 
+  Future<void> setStartupTabIndex(int index) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(startupTabIndex: index));
+  }
+
   Future<void> setEmbeddingConfig({
     String? baseUrl,
     String? apiKey,
@@ -166,6 +176,13 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
         _ref.read(selectedSourceProvider.notifier).state == platformName) {
       _ref.read(selectedSourceProvider.notifier).state = '';
     }
+  }
+
+  Future<void> addTokenUsage(int tokens) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(
+      totalTokensUsed: current.totalTokensUsed + tokens,
+    ));
   }
 }
 
@@ -261,6 +278,40 @@ final hideInboxTabProvider = Provider<bool>((ref) {
 final fontWeightIndexProvider = Provider<int>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
     data: (s) => s.fontWeightIndex,
+    orElse: () => 0,
+  );
+});
+
+final startupTabIndexProvider = Provider<int>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.startupTabIndex,
+    orElse: () => 0,
+  );
+});
+
+/// Computed days since first launch.
+final usageDaysProvider = Provider<int>((ref) {
+  final ms = ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.firstLaunchMs,
+    orElse: () => null,
+  );
+  if (ms == null) return 0;
+  final first = DateTime.fromMillisecondsSinceEpoch(ms);
+  return DateTime.now().difference(first).inDays;
+});
+
+/// Total articles count (from the articles provider).
+final articlesCountProvider = Provider<int>((ref) {
+  return ref.watch(articlesProvider).maybeWhen(
+    data: (articles) => articles.length,
+    orElse: () => 0,
+  );
+});
+
+/// Cumulative token usage.
+final totalTokensUsedProvider = Provider<int>((ref) {
+  return ref.watch(settingsProvider).maybeWhen(
+    data: (s) => s.totalTokensUsed,
     orElse: () => 0,
   );
 });

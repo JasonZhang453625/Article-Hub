@@ -56,7 +56,7 @@ class _ChatFeedbackRowState extends State<ChatFeedbackRow> {
           isActive: false,
           activeColor: colorScheme.primary,
           onTap: () {
-            Share.share(widget.message.text, subject: 'Article-Hub');
+            Share.share(widget.message.text, subject: 'Memora');
           },
         ),
       ],

@@ -1,6 +1,6 @@
-import 'package:flutter_test/flutter_test.dart';
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/source_platform.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/source_platform.dart';
 
 void main() {
   group('ProcessingStatus state transitions', () {

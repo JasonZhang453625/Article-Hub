@@ -36,7 +36,7 @@ class App extends ConsumerWidget {
     );
 
     return MaterialApp.router(
-      title: 'Article-Hub',
+      title: 'Memora',
       theme: light,
       darkTheme: dark,
       themeMode: themeMode,

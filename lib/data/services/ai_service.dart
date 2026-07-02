@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
@@ -13,6 +13,9 @@ class AiService {
   final String model;
   final Duration timeout;
   String? lastError;
+
+  /// Called after a successful API response with the total_tokens from usage.
+  void Function(int totalTokens)? onTokensUsed;
 
   AiService({
     required this.baseUrl,
@@ -298,7 +301,7 @@ class AiService {
       if (summary == null || summary.isEmpty) {
         developer.log(
           'long-article chunk ${index + 1}/$chunkCount failed',
-          name: 'article_hub.ai',
+          name: 'memora.ai',
         );
         return const [];
       }
@@ -358,7 +361,7 @@ class AiService {
     final isMiMo = _isMiMo;
     developer.log(
       'chat() isMiMo=$isMiMo model="$model" baseUrl="$baseUrl"',
-      name: 'article_hub.ai',
+      name: 'memora.ai',
     );
     final payload = <String, dynamic>{
       'model': model,
@@ -396,14 +399,14 @@ class AiService {
 
       developer.log(
         'API response status: ${response.statusCode}, url: $uri',
-        name: 'article_hub.ai',
+        name: 'memora.ai',
       );
       if (response.statusCode != 200) {
         lastError =
             'HTTP ${response.statusCode}: ${_responseError(response.body)}';
         developer.log(
           'response body: ${response.body.substring(0, response.body.length.clamp(0, 500))}',
-          name: 'article_hub.ai',
+          name: 'memora.ai',
         );
         return null;
       }
@@ -418,11 +421,20 @@ class AiService {
       final message = choices[0]['message'] as Map<String, dynamic>?;
       final text = message?['content'] as String?;
 
+      // Track token usage if the API returns it.
+      if (onTokensUsed != null) {
+        final usage = json['usage'] as Map<String, dynamic>?;
+        final totalTokens = usage?['total_tokens'] as int?;
+        if (totalTokens != null && totalTokens > 0) {
+          onTokensUsed!(totalTokens);
+        }
+      }
+
       final finishReason = choices[0]['finish_reason'] as String?;
       if (finishReason != null && finishReason != 'stop') {
         developer.log(
           'AI response finish_reason: $finishReason',
-          name: 'article_hub.ai',
+          name: 'memora.ai',
         );
       }
 
@@ -433,14 +445,14 @@ class AiService {
       lastError = 'AI request timed out after ${timeout.inSeconds} seconds';
       developer.log(
         'AI API timeout ($timeout), url: $uri',
-        name: 'article_hub.ai',
+        name: 'memora.ai',
       );
       return null;
     } catch (e, st) {
       lastError = 'AI request failed: $e';
       developer.log(
         'API call error',
-        name: 'article_hub.ai',
+        name: 'memora.ai',
         error: e,
         stackTrace: st,
       );

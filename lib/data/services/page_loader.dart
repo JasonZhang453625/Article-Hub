@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:html/parser.dart' as html_parser;
@@ -93,12 +93,12 @@ class ResilientPageLoader implements PageLoader {
       developer.log(
         'direct HTTP returned unusable HTML; starting background WebView, '
         'url: $url',
-        name: 'article_hub.page_loader',
+        name: 'memora.page_loader',
       );
     } else {
       developer.log(
         'direct HTTP failed; starting background WebView fallback, url: $url',
-        name: 'article_hub.page_loader',
+        name: 'memora.page_loader',
       );
     }
 
@@ -106,7 +106,7 @@ class ResilientPageLoader implements PageLoader {
     if (recovered == null || !fetchedPageHasUsableDocument(recovered)) {
       developer.log(
         'HTTP and background WebView both failed, url: $url',
-        name: 'article_hub.page_loader',
+        name: 'memora.page_loader',
       );
       return null;
     }

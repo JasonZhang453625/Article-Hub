@@ -41,7 +41,7 @@ class BackupData {
     return {
       'schemaVersion': schemaVersion,
       'exportedAt': exportedAt.toIso8601String(),
-      'app': 'article-hub',
+      'app': 'memora',
       'articles': articles.map((a) => a.toJson()).toList(),
       'filterGroups': filterGroups.map((g) => g.toJson()).toList(),
       'folders': folders.map((f) => f.toJson()).toList(),
@@ -55,7 +55,7 @@ class BackupData {
   }
 
   /// Parses a backup from a JSON string. Throws [FormatException] if the
-  /// payload is not a valid Article-Hub backup. Individual malformed entries
+  /// payload is not a valid Memora backup. Individual malformed entries
   /// are skipped rather than failing the whole import.
   factory BackupData.fromJsonString(String source) {
     final dynamic decoded;
@@ -67,6 +67,15 @@ class BackupData {
 
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('Backup root must be a JSON object');
+    }
+
+    // Accept backups from both Memora and the legacy Article-Hub name.
+    final appName = decoded['app'];
+    if (appName != null &&
+        appName is String &&
+        appName != 'memora' &&
+        appName != 'article-hub') {
+      throw const FormatException('Unrecognized backup source');
     }
 
     final rawArticles = decoded['articles'];

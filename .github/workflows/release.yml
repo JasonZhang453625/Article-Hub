@@ -49,7 +49,7 @@ jobs:
           if [ -z "$PREV_TAG" ]; then
             echo "## Artifacts" > /tmp/release_body.md
             echo "" >> /tmp/release_body.md
-            echo "- Article-Hub v${GITHUB_REF_NAME#v} APK" >> /tmp/release_body.md
+            echo "- Memora v${GITHUB_REF_NAME#v} APK" >> /tmp/release_body.md
           else
             echo "## Changes since $PREV_TAG" > /tmp/release_body.md
             echo "" >> /tmp/release_body.md
@@ -68,7 +68,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Article-Hub v${{ steps.version.outputs.version }}
+          name: Memora v${{ steps.version.outputs.version }}
           body_path: /tmp/release_body.md
           files: build/app/outputs/flutter-apk/app-release.apk
           prerelease: false

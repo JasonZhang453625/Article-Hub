@@ -1,18 +1,18 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:article_hub/data/models/folder.dart';
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/settings.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/repositories/article_repository.dart';
-import 'package:article_hub/data/services/content_extractor.dart';
-import 'package:article_hub/data/services/http_client.dart';
-import 'package:article_hub/data/services/metadata_service.dart';
-import 'package:article_hub/data/services/processing_pipeline.dart';
-import 'package:article_hub/shared/providers/passage_providers.dart';
+import 'package:memora/data/models/folder.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/settings.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/data/repositories/article_repository.dart';
+import 'package:memora/data/services/content_extractor.dart';
+import 'package:memora/data/services/http_client.dart';
+import 'package:memora/data/services/metadata_service.dart';
+import 'package:memora/data/services/processing_pipeline.dart';
+import 'package:memora/shared/providers/passage_providers.dart';
 
 /// Helper to create an [AppHttpClient] backed by a [MockClient].
 AppHttpClient mockHttp(Future<http.Response> Function(http.Request) handler) {

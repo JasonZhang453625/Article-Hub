@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math';
 import 'package:http/http.dart' as http;
@@ -65,7 +65,7 @@ class EmbeddingService {
       if (response.statusCode != 200) {
         developer.log(
           'embedding failed: ${response.statusCode}',
-          name: 'article_hub.embedding',
+          name: 'memora.embedding',
         );
         return null;
       }
@@ -89,7 +89,7 @@ class EmbeddingService {
     } catch (e, st) {
       developer.log(
         'embedding error',
-        name: 'article_hub.embedding',
+        name: 'memora.embedding',
         error: e,
         stackTrace: st,
       );
@@ -124,7 +124,7 @@ class EmbeddingService {
       if (response.statusCode != 200) {
         developer.log(
           'batch embedding failed: ${response.statusCode}',
-          name: 'article_hub.embedding',
+          name: 'memora.embedding',
         );
         return List.filled(texts.length, null);
       }
@@ -160,7 +160,7 @@ class EmbeddingService {
     } catch (e, st) {
       developer.log(
         'batch embedding error',
-        name: 'article_hub.embedding',
+        name: 'memora.embedding',
         error: e,
         stackTrace: st,
       );

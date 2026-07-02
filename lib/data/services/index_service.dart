@@ -1,4 +1,4 @@
-import 'dart:developer' as developer;
+﻿import 'dart:developer' as developer;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/passage.dart';
 import 'embedding_service.dart';
@@ -201,10 +201,10 @@ Future<int> rebuildIndex({
   final removedOrphans = await index.removeOrphans(validIds);
   if (removedOrphans > 0) {
     developer.log('removed $removedOrphans orphaned index records',
-        name: 'article_hub.index');
+        name: 'memora.index');
   }
 
-  developer.log('rebuilt index: $count articles', name: 'article_hub.index');
+  developer.log('rebuilt index: $count articles', name: 'memora.index');
   return count;
 }
 

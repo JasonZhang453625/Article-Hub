@@ -1,6 +1,6 @@
-import 'package:flutter_test/flutter_test.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
 
-import 'package:article_hub/data/services/page_loader.dart';
+import 'package:memora/data/services/page_loader.dart';
 
 void main() {
   group('ResilientPageLoader', () {

@@ -1,10 +1,10 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:article_hub/data/models/passage.dart';
-import 'package:article_hub/data/models/source_platform.dart';
-import 'package:article_hub/data/repositories/article_repository.dart';
-import 'package:article_hub/shared/providers/article_providers.dart';
+import 'package:memora/data/models/passage.dart';
+import 'package:memora/data/models/source_platform.dart';
+import 'package:memora/data/repositories/article_repository.dart';
+import 'package:memora/shared/providers/article_providers.dart';
 
 class _InMemoryArticleRepository implements ArticleRepository {
   final List<Article> _articles = [];

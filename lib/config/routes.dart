@@ -17,6 +17,7 @@ import '../features/settings/operations_screen.dart';
 import '../features/settings/other_screen.dart';
 import '../features/settings/developer_screen.dart';
 import '../features/settings/source_platforms_screen.dart';
+import '../features/settings/account_screen.dart';
 import '../features/shell/app_shell.dart';
 
 class AppRoutes {
@@ -30,6 +31,7 @@ class AppRoutes {
   static const String settingsOther = '/settings/other';
   static const String settingsDeveloper = '/settings/developer';
   static const String sourcePlatforms = '/settings/source-platforms';
+  static const String settingsAccount = '/settings/account';
   static const String addArticle = '/add';
   static const String summary = '/summary';
   static const String reader = '/reader';
@@ -216,6 +218,11 @@ final appRouter = GoRouter(
       path: AppRoutes.settingsDeveloper,
       pageBuilder: (context, state) =>
           _buildPage(state: state, child: const DeveloperScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsAccount,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const AccountScreen()),
     ),
   ],
 );

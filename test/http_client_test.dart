@@ -1,10 +1,10 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:article_hub/data/services/content_extractor.dart';
-import 'package:article_hub/data/services/http_client.dart';
+import 'package:memora/data/services/content_extractor.dart';
+import 'package:memora/data/services/http_client.dart';
 
 void main() {
   test('uses Dart-supported gzip and decodes UTF-8 HTML', () async {

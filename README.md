@@ -1,9 +1,9 @@
-# Article-Hub
+﻿# 记忆海
 
-**本地优先的 AI 个人知识收件箱 / A local-first AI personal knowledge inbox**
+**仿生记忆提取 · AI 信息强化 · Agent-friendly 知识存储**
 
-> 分享即知识化，对话即检索，原文始终可追溯。<br>
-> Share into knowledge. Ask to retrieve. Trace every answer back to its source.
+> 一键分享即知识化。对话即联想检索。原文始终可追溯。<br>
+> One share to know. One question to recall. Every answer traceable to its source.
 
 [中文](#中文) · [English](#english) · [产品文档 / Product docs](docs/OVERVIEW.md)
 
@@ -13,9 +13,17 @@
 
 ## 产品介绍
 
-Article-Hub 用来收集散落在微信、知乎、Bilibili、小红书、X、YouTube、Reddit 和普通网页中的文章、视频与帖子链接，并将它们转换为统一、可搜索、可提问的个人知识卡片。
+记忆海把散落在微信、知乎、Bilibili、小红书、X、YouTube、Reddit 和普通网页中的文章、视频与帖子链接收集起来，并自动将它们转化为统一、可搜索、可提问的个人知识卡片。
 
-它不只是保存 URL，而是围绕下面的闭环工作：
+人类的记忆不靠全量保存。大脑自动过滤噪声、提取结构、只在需要时通过联想唤起——一条模糊印象就足以调出整段经历。记忆海模拟这套认知逻辑：
+
+- **仿生记忆提取**：不存整页广告与推荐流，只提取标题、关键观点、标签与原文入口——像大脑记住"这件事很重要"一样，保留信息密度最高的那一层。
+- **信息密度 AI 强化**：原页面信息稀释，AI 摘要将长文压缩为高密度知识颗粒——一条知识卡片就是一个可直接调用的记忆单元。
+- **Agent-friendly 标准化存储**：所有内容统一为"结构化摘要 + 向量索引"的知识卡片，人可浏览，AI Agent 也可语义召回、推理与问答。
+
+> 你不需要记住"保存在哪"，只需要知道自己"学过这个"。
+
+它不只是保存 URL，而是围绕下面的知识化闭环工作：
 
 ```text
 收集链接
@@ -27,7 +35,7 @@ Article-Hub 用来收集散落在微信、知乎、Bilibili、小红书、X、Yo
   → 查看引用卡片并返回原文
 ```
 
-Article-Hub 不提供账号体系、云内容后端或 AI 代理后端。文章、摘要、标签、文件夹、处理状态和向量索引保存在本机；摘要和对话请求直接发送到用户配置的兼容服务，embedding 使用内置默认服务或用户自定义服务。
+记忆海 不提供云内容后端或 AI 代理后端。文章、摘要、标签、文件夹、处理状态和向量索引默认保存在本机，亦可选择端到端加密云端同步；摘要和对话请求直接发送到用户配置的兼容服务，embedding 使用内置默认服务或用户自定义服务。
 
 ## 核心特点
 
@@ -88,6 +96,15 @@ Article-Hub 不提供账号体系、云内容后端或 AI 代理后端。文章�
 - JSON 备份支持文章、标签、文件夹、筛选和设置的导出与恢复。
 - AI API Key 和 embedding API Key 不写入导出的备份文件。
 - 向量索引属于可重建数据，不作为核心备份内容。
+
+### 记忆共享
+
+记忆不应该只锁在一人之脑。
+
+- **导出个人记忆**：一键将知识卡片、标签、文件夹结构导出为标准 JSON 格式，脱离应用仍可用。
+- **社区共享记忆**：把精选的知识卡片集分享给团队或社群——像把你读过、提炼过的认知体系"开源"给他人。
+- **Agent 可直接消费**：导出的记忆包采用 Agent-friendly 格式，可导入其他人的记忆海，也可被外部 AI Agent 直接作为知识库。
+- **所有权永归个人**：导出的内容是你的私有财产，分享授权、范围和用途完全由你决定。
 
 ## 机制设计
 
@@ -220,8 +237,8 @@ flutter test
 
 ## 隐私边界
 
-- Article-Hub 不运营内容服务器或 AI 中转服务器。
-- 本地文章数据不会因为使用应用而自动上传到 Article-Hub。
+- 记忆海 不运营内容服务器或 AI 中转服务器。
+- 本地文章数据不会因为使用应用而自动上传到 记忆海。
 - 生成摘要时，提取后的正文会发送到用户选择的聊天模型服务。
 - 建立语义索引时，标题、摘要和标签会发送到内置默认 embedding 服务，或用户主动配置的自定义服务。
 - 提问时，问题和召回到的摘要会发送到用户选择的聊天模型服务。
@@ -239,7 +256,15 @@ flutter test
 
 ## Overview
 
-Article-Hub collects articles, videos, and post links scattered across WeChat, Zhihu, Bilibili, Rednote, X, YouTube, Reddit, ChatGPT, and the wider web. It turns them into normalized knowledge cards that can be searched, organized, and queried.
+Memora collects articles, videos, and post links scattered across WeChat, Zhihu, Bilibili, Rednote, X, YouTube, Reddit, ChatGPT, and the wider web. It automatically transforms them into unified, searchable, queryable personal knowledge cards.
+
+Human memory doesn't store everything. The brain filters noise, extracts structure, and recalls through association — a faint impression is enough to retrieve an entire experience. Memora maps this cognitive logic onto digital content:
+
+- **Bionic memory extraction**: Instead of saving full pages with ads and recommendation feeds, Memora captures only the skeleton — title, key points, tags, and source link — the highest-density layer, just as the brain remembers "this matters."
+- **AI-enhanced information density**: Raw pages are information-dilute. AI summaries compress long-form content into high-density knowledge granules — each card is a directly retrieve-and-recall memory unit.
+- **Agent-friendly standardized storage**: Everything becomes a "structured summary + vector index" knowledge card. Humans can browse; AI Agents can semantically retrieve, reason, and answer. Your knowledge base is both personal memory and Agent-callable cognitive resource.
+
+> You don't need to remember *where* you saved it. You just need to know you *learned it*.
 
 It is designed around a complete knowledge-reuse loop rather than simple URL storage:
 
@@ -253,7 +278,7 @@ Capture a link
   → inspect cited cards and return to the original source
 ```
 
-Article-Hub has no account system, hosted content backend, or AI proxy backend. Articles, summaries, organization data, processing state, and vector indexes remain on the device. Summary and chat requests go directly to the user-configured service; embeddings use either the built-in default service or a custom endpoint.
+Memora has no hosted content backend or AI proxy backend. Articles, summaries, organization data, processing state, and vector indexes are stored locally by default, with optional end-to-end encrypted cloud sync. Summary and chat requests go directly to the user-configured service; embeddings use either the built-in default service or a custom endpoint.
 
 ## Key Features
 
@@ -314,6 +339,15 @@ Article-Hub has no account system, hosted content backend, or AI proxy backend. 
 - JSON backup and restore covers articles, tags, folders, filters, and settings.
 - Chat and embedding API keys are excluded from exported backups.
 - Vector indexes are treated as rebuildable derived data.
+
+### Memory sharing
+
+Knowledge shouldn't stay locked in one mind.
+
+- **Export personal memory**: One tap to export knowledge cards, tags, and folder structures in standard formats (JSON) — usable outside the app.
+- **Community memory sharing**: Share curated knowledge card collections with teams or communities — effectively open-sourcing the cognitive framework you've read, refined, and organized.
+- **Agent-consumable**: Exported memory packs use Agent-friendly formats. Import them into another Memora instance, or load them into external AI Agents as a knowledge base.
+- **Ownership is yours forever**: Exported content is your private property. You control what to share, with whom, and for what purpose.
 
 ## Design Mechanics
 
@@ -446,8 +480,8 @@ The endpoint must follow an OpenAI-compatible request and response structure. Pa
 
 ## Privacy Boundary
 
-- Article-Hub does not operate a content server or AI relay.
-- Local article data is not automatically uploaded to Article-Hub.
+- Memora does not operate a content server or AI relay.
+- Local article data is not automatically uploaded to Memora.
 - Extracted article text is sent to the selected chat model when generating summaries.
 - Titles, summaries, and tags are sent to the built-in default embedding service or the user-configured custom service when building semantic indexes.
 - Questions and retrieved summaries are sent to the selected chat model during RAG conversations.

@@ -65,6 +65,15 @@ class AppSettings {
   /// Font weight: 0 = normal (w400), 1 = medium (w500), 2 = semibold (w600), 3 = bold (w700)
   int fontWeightIndex;
 
+  /// Startup tab: 0 = Chat, 1 = Knowledge
+  int startupTabIndex;
+
+  /// First time the app was launched (milliseconds since epoch). Null until set.
+  int? firstLaunchMs;
+
+  /// Cumulative tokens consumed across all AI API calls.
+  int totalTokensUsed;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
@@ -82,6 +91,9 @@ class AppSettings {
     this.chatKnowledgeSourceIndex = 0,
     this.hideInboxTab = false,
     this.fontWeightIndex = 0,
+    this.startupTabIndex = 0,
+    this.firstLaunchMs,
+    this.totalTokensUsed = 0,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -205,6 +217,9 @@ class AppSettings {
     int? chatKnowledgeSourceIndex,
     bool? hideInboxTab,
     int? fontWeightIndex,
+    int? startupTabIndex,
+    int? firstLaunchMs,
+    int? totalTokensUsed,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -226,6 +241,9 @@ class AppSettings {
       chatKnowledgeSourceIndex: chatKnowledgeSourceIndex ?? this.chatKnowledgeSourceIndex,
       hideInboxTab: hideInboxTab ?? this.hideInboxTab,
       fontWeightIndex: fontWeightIndex ?? this.fontWeightIndex,
+      startupTabIndex: startupTabIndex ?? this.startupTabIndex,
+      firstLaunchMs: firstLaunchMs ?? this.firstLaunchMs,
+      totalTokensUsed: totalTokensUsed ?? this.totalTokensUsed,
       sourcePlatformOrder:
           sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
@@ -256,6 +274,9 @@ class AppSettings {
       'chatKnowledgeSourceIndex': chatKnowledgeSourceIndex,
       'hideInboxTab': hideInboxTab,
       'fontWeightIndex': fontWeightIndex,
+      'startupTabIndex': startupTabIndex,
+      'firstLaunchMs': firstLaunchMs,
+      'totalTokensUsed': totalTokensUsed,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -282,6 +303,9 @@ class AppSettings {
       chatKnowledgeSourceIndex: (json['chatKnowledgeSourceIndex'] as num?)?.toInt() ?? 0,
       hideInboxTab: json['hideInboxTab'] is bool ? json['hideInboxTab'] as bool : false,
       fontWeightIndex: (json['fontWeightIndex'] as num?)?.toInt() ?? 0,
+      startupTabIndex: (json['startupTabIndex'] as num?)?.toInt() ?? 0,
+      firstLaunchMs: json['firstLaunchMs'] as int?,
+      totalTokensUsed: (json['totalTokensUsed'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder:
           (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
@@ -320,6 +344,9 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       chatKnowledgeSourceIndex: (fields[15] as num?)?.toInt() ?? 0,
       hideInboxTab: (fields[16] as bool?) ?? false,
       fontWeightIndex: (fields[17] as num?)?.toInt() ?? 0,
+      startupTabIndex: (fields[18] as num?)?.toInt() ?? 0,
+      firstLaunchMs: fields[19] as int?,
+      totalTokensUsed: (fields[20] as num?)?.toInt() ?? 0,
       embeddingBaseUrl: (fields[10] as String?) ?? '',
       embeddingApiKey: (fields[11] as String?) ?? '',
       embeddingModel: (fields[12] as String?) ?? '',
@@ -329,7 +356,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(18)
+      ..writeByte(21)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -365,6 +392,12 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(16)
       ..write(obj.hideInboxTab)
       ..writeByte(17)
-      ..write(obj.fontWeightIndex);
+      ..write(obj.fontWeightIndex)
+      ..writeByte(18)
+      ..write(obj.startupTabIndex)
+      ..writeByte(19)
+      ..write(obj.firstLaunchMs)
+      ..writeByte(20)
+      ..write(obj.totalTokensUsed);
   }
 }

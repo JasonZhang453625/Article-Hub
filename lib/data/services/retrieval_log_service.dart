@@ -1,4 +1,4 @@
-import 'dart:developer' as developer;
+﻿import 'dart:developer' as developer;
 import 'package:hive_flutter/hive_flutter.dart';
 
 /// A single retrieval log entry recorded locally after each RAG query.
@@ -86,7 +86,7 @@ class RetrievalLogService {
     await box.put(log.id, log.toMap());
     developer.log(
       'retrieval log saved: ${log.method} ${log.candidateIds.length} candidates',
-      name: 'article_hub.retrieval_log',
+      name: 'memora.retrieval_log',
     );
   }
 
