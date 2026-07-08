@@ -362,6 +362,8 @@ class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {
         return SourcePlatform.web;
       case 10:
         return SourcePlatform.reddit;
+      case 11:
+        return SourcePlatform.local;
       default:
         return SourcePlatform.web;
     }
@@ -387,6 +389,8 @@ class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {
         return 7;
       case SourcePlatform.reddit:
         return 10;
+      case SourcePlatform.local:
+        return 11;
     }
   }
 }

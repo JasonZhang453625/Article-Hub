@@ -143,6 +143,48 @@ class ProcessingPipeline {
     ));
   }
 
+  /// Process a file-based article: skip metadata/content stages and inject
+  /// [content] directly into the pipeline starting from the summary stage.
+  Future<Article?> processFile(Article article, String content) async {
+    _settings = _getSettings();
+    _folders = List<Folder>.from(_getFolders());
+
+    var current = article;
+
+    current = current.copyWith(
+      processingStatus: ProcessingStatus.processing,
+      processingStage: ProcessingStage.summary,
+    );
+    await _articles.update(current);
+
+    // Inject the file content directly — bypass metadata and content stages.
+    _contentCache[current.id] = content;
+
+    // Stage 3: AI summary
+    current = await _stageSummary(current);
+    if (current.processingStatus == ProcessingStatus.failed) {
+      await _articles.update(current);
+      return current;
+    }
+
+    // Stage 4: Tags
+    current = await _stageTags(current);
+
+    // Stage 5: Folder suggestion
+    current = await _stageFolderSuggestion(current);
+
+    current = current.copyWith(
+      processingStatus: ProcessingStatus.completed,
+      processingStage: Article.clearValue,
+      lastProcessedAt: DateTime.now(),
+    );
+    await _articles.update(current);
+
+    await _updateIndex(current);
+
+    return current;
+  }
+
   // ── Stage implementations ──────────────────────────────────────────────
 
   Future<Article> _stageMetadata(Article article) async {

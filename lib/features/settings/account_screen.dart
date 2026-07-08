@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../config/routes.dart';
+import '../../config/supabase_config.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/providers/auth_provider.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 
 class AccountScreen extends ConsumerWidget {
@@ -19,6 +23,11 @@ class AccountScreen extends ConsumerWidget {
     final cardColor = theme.colorScheme.surface;
     final outlineColor = theme.colorScheme.outline;
 
+    final isLoggedIn = ref.watch(isLoggedInProvider);
+    final email = ref.watch(currentEmailProvider);
+    final auth = ref.watch(authServiceProvider);
+    final authAvailable = SupabaseConfig.isConfigured;
+
     return Scaffold(
       appBar: AppBar(title: Text(s.settingsAccount)),
       body: DelayedReveal(
@@ -28,7 +37,7 @@ class AccountScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Avatar + big title + usage days ──
+              // ── Avatar + title + usage days ──
               Center(
                 child: Column(
                   children: [
@@ -46,13 +55,22 @@ class AccountScreen extends ConsumerWidget {
                           end: Alignment.bottomRight,
                         ),
                       ),
-                      child: const Center(
-                        child: Icon(Icons.person_rounded, size: 36, color: Colors.white),
+                      child: Center(
+                        child: isLoggedIn
+                            ? Text(
+                                (email ?? '?')[0].toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.person_rounded, size: 36, color: Colors.white),
                       ),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      s.accountTitle,
+                      isLoggedIn && email != null ? email : s.accountTitle,
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -72,6 +90,14 @@ class AccountScreen extends ConsumerWidget {
                         ),
                       ],
                     ),
+                    if (!isLoggedIn && authAvailable) ...[
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: () => context.push(AppRoutes.settingsLogin),
+                        icon: const Icon(Icons.login_rounded, size: 18),
+                        label: Text(s.accountLogin),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -147,55 +173,74 @@ class AccountScreen extends ConsumerWidget {
 
               const SizedBox(height: 20),
 
-              // ── Account Security ──
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 8),
-                child: Text(
-                  s.accountSecurity,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.8,
-                    color: const Color(0xFF00AEEF),
+              if (authAvailable) ...[
+                // ── Account Security ──
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Text(
+                    s.accountSecurity,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                      color: const Color(0xFF00AEEF),
+                    ),
                   ),
                 ),
-              ),
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Column(
+                    children: [
+                      if (isLoggedIn) ...[
+                        _SecurityTile(
+                          icon: Icons.logout_rounded,
+                          title: s.logout,
+                          theme: theme, isDark: isDark,
+                          onTap: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: Text(s.logoutConfirmTitle),
+                              content: Text(s.logoutConfirm),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(false),
+                                  child: Text(s.cancel),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(true),
+                                  child: Text(s.logout),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            await auth.signOut();
+                          }
+                        },
+                        ),
+                      ] else ...[
+                        _SecurityTile(
+                          icon: Icons.login_rounded,
+                          title: s.accountLogin,
+                          theme: theme, isDark: isDark,
+                          onTap: () => context.push(AppRoutes.settingsLogin),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-                child: Column(
-                  children: [
-                    _SecurityTile(
-                      icon: Icons.lock_outline_rounded,
-                      title: s.setPassword,
-                      theme: theme, isDark: isDark,
-                      onTap: () => _showComingSoon(context, s.setPassword),
-                    ),
-                    Divider(height: 1, indent: 56, color: outlineColor.withValues(alpha: 0.2)),
-                    _SecurityTile(
-                      icon: Icons.key_rounded,
-                      title: s.changePassword,
-                      theme: theme, isDark: isDark,
-                      onTap: () => _showComingSoon(context, s.changePassword),
-                    ),
-                  ],
-                ),
-              ),
+              ],
 
               const SizedBox(height: 32),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  void _showComingSoon(BuildContext context, String title) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$title — coming soon')),
     );
   }
 

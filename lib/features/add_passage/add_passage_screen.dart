@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -10,6 +12,7 @@ import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
+import '../../shared/utils/file_content_utils.dart';
 import 'widgets/url_input_field.dart';
 import 'widgets/tag_input.dart';
 
@@ -166,6 +169,60 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     }
   }
 
+  Future<void> _importFile() async {
+    final s = ref.read(stringsProvider);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'md'],
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      if (file.path == null) return;
+
+      final raw = await File(file.path!).readAsString();
+      final isMd = file.name.toLowerCase().endsWith('.md');
+
+      final mdTitle = extractMarkdownTitle(raw);
+      final title = isMd && mdTitle.isNotEmpty ? mdTitle : file.name;
+      final titleWithoutExt = title.replaceAll(RegExp(r'\.[^.]+$'), '');
+      final content = isMd ? markdownToPlainText(raw) : raw;
+
+      if (content.trim().isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(s.fileReadError)),
+          );
+        }
+        return;
+      }
+
+      final article = Article(
+        id: const Uuid().v4(),
+        url: 'file://${file.path}',
+        title: titleWithoutExt.isNotEmpty ? titleWithoutExt : file.name,
+        source: SourcePlatform.local,
+        processingStatus: ProcessingStatus.pending,
+      );
+
+      final notifier = ref.read(articlesProvider.notifier);
+      await notifier.add(article);
+
+      final pipeline = ref.read(processingPipelineProvider);
+
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      pipeline.processFile(article, content);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${s.fileReadError}: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
@@ -175,6 +232,11 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       appBar: AppBar(
         title: Text(s.addArticle),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.attach_file_rounded),
+            tooltip: s.importFile,
+            onPressed: _importFile,
+          ),
           IconButton(
             icon: const Icon(Icons.playlist_add_rounded),
             tooltip: s.addMultipleUrls,

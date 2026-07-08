@@ -24,6 +24,8 @@ class LocaleStrings {
   final String clipboardSave;
   final String addArticle;
   final String addMultipleUrls;
+  final String importFile;
+  final String fileReadError;
   final String save;
   final String supportedSources;
   final String supportedSourcesDesc;
@@ -137,6 +139,24 @@ class LocaleStrings {
   final String memoryCount;
   final String tokenConsumption;
   final String accountSecurity;
+  final String accountLogin;
+  final String loginDesc;
+  final String emailLabel;
+  final String emailRequired;
+  final String emailInvalid;
+  final String sendCode;
+  final String verifyCode;
+  final String codeSentPrefix;
+  final String changeEmail;
+  final String logout;
+  final String logoutConfirmTitle;
+  final String logoutConfirm;
+  final String resendCode;
+  final String resendCountdown;
+  final String loginErrorNetwork;
+  final String loginErrorOtpInvalid;
+  final String loginErrorNotConfigured;
+  final String loginErrorGeneric;
   final String setPassword;
   final String changePassword;
   final String futureMembership;
@@ -257,6 +277,8 @@ class LocaleStrings {
     required this.clipboardSave,
     required this.addArticle,
     required this.addMultipleUrls,
+    required this.importFile,
+    required this.fileReadError,
     required this.save,
     required this.supportedSources,
     required this.supportedSourcesDesc,
@@ -370,6 +392,24 @@ class LocaleStrings {
     required this.memoryCount,
     required this.tokenConsumption,
     required this.accountSecurity,
+    required this.accountLogin,
+    required this.loginDesc,
+    required this.emailLabel,
+    required this.emailRequired,
+    required this.emailInvalid,
+    required this.sendCode,
+    required this.verifyCode,
+    required this.codeSentPrefix,
+    required this.changeEmail,
+    required this.logout,
+    required this.logoutConfirmTitle,
+    required this.logoutConfirm,
+    required this.resendCode,
+    required this.resendCountdown,
+    required this.loginErrorNetwork,
+    required this.loginErrorOtpInvalid,
+    required this.loginErrorNotConfigured,
+    required this.loginErrorGeneric,
     required this.setPassword,
     required this.changePassword,
     required this.futureMembership,
@@ -505,6 +545,8 @@ class LocaleStrings {
     clipboardSave: 'Save',
     addArticle: 'Add Article',
     addMultipleUrls: 'Add multiple URLs',
+    importFile: 'Import File',
+    fileReadError: 'Failed to read file',
     save: 'Save',
     supportedSources: 'Supported sources',
     supportedSourcesDesc: 'Paste links from your enabled platforms and the app will detect the source automatically.',
@@ -618,6 +660,24 @@ class LocaleStrings {
     memoryCount: 'Memory items',
     tokenConsumption: 'Token consumption',
     accountSecurity: 'Account Security',
+    accountLogin: 'Sign in / Sign up',
+    loginDesc: 'Enter your email to receive a one-time verification code.',
+    emailLabel: 'Email',
+    emailRequired: 'Please enter your email',
+    emailInvalid: 'Please enter a valid email',
+    sendCode: 'Send verification code',
+    verifyCode: 'Verify',
+    codeSentPrefix: 'Verification code sent to',
+    changeEmail: 'Change email',
+    logout: 'Sign out',
+    logoutConfirmTitle: 'Sign out',
+    logoutConfirm: 'Are you sure you want to sign out?',
+    resendCode: 'Resend code',
+    resendCountdown: 'Resend in {}s',
+    loginErrorNetwork: 'Network error. Please check your connection and try again.',
+    loginErrorOtpInvalid: 'Invalid or expired verification code. Please try again.',
+    loginErrorNotConfigured: 'Login service is not configured. Please contact support.',
+    loginErrorGeneric: 'Login failed. Please try again later.',
     setPassword: 'Set Password',
     changePassword: 'Change Password',
     futureMembership: 'Future membership tiers',
@@ -739,6 +799,8 @@ class LocaleStrings {
     clipboardSave: '保存',
     addArticle: '添加文章',
     addMultipleUrls: '添加多个链接',
+    importFile: '导入文件',
+    fileReadError: '无法读取文件',
     save: '保存',
     supportedSources: '支持的来源',
     supportedSourcesDesc: '从已启用的平台粘贴链接，应用会自动识别来源。',
@@ -852,6 +914,24 @@ class LocaleStrings {
     memoryCount: '记忆数量',
     tokenConsumption: 'Token 消耗',
     accountSecurity: '账号安全',
+    accountLogin: '登录 / 注册',
+    loginDesc: '输入邮箱，我们将发送一次性验证码。',
+    emailLabel: '邮箱',
+    emailRequired: '请输入邮箱地址',
+    emailInvalid: '请输入有效的邮箱地址',
+    sendCode: '发送验证码',
+    verifyCode: '验证',
+    codeSentPrefix: '验证码已发送至',
+    changeEmail: '更换邮箱',
+    logout: '退出登录',
+    logoutConfirmTitle: '退出登录',
+    logoutConfirm: '确定要退出登录吗？',
+    resendCode: '重新发送',
+    resendCountdown: '{}秒后可重发',
+    loginErrorNetwork: '网络错误，请检查网络后重试。',
+    loginErrorOtpInvalid: '验证码无效或已过期，请重试。',
+    loginErrorNotConfigured: '登录服务未配置，请联系管理员。',
+    loginErrorGeneric: '登录失败，请稍后重试。',
     setPassword: '设置密码',
     changePassword: '修改密码',
     futureMembership: '未来会员等级勋章',

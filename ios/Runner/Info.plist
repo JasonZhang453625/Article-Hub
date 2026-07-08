@@ -24,6 +24,22 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- Deep link for Supabase auth email magic-link redirect.
+	     Configure redirect URL "memora://login-callback" in the
+	     Supabase dashboard (Authentication > URL Configuration). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>memora</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>memora</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

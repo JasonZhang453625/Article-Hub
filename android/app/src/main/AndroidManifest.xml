@@ -43,6 +43,15 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="application/json" />
             </intent-filter>
+            <!-- Deep link for Supabase auth email magic-link redirect.
+                 Configure redirect URL "memora://login-callback" in the
+                 Supabase dashboard (Authentication > URL Configuration). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="memora" android:host="login-callback" />
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

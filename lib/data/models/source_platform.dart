@@ -9,7 +9,8 @@ enum SourcePlatform {
   xiaohongshu,
   chatgpt,
   youtube,
-  reddit;
+  reddit,
+  local;
 
   String get displayName {
     switch (this) {
@@ -31,6 +32,8 @@ enum SourcePlatform {
         return 'YouTube';
       case SourcePlatform.reddit:
         return 'Reddit';
+      case SourcePlatform.local:
+        return 'Local';
     }
   }
 
@@ -54,6 +57,8 @@ enum SourcePlatform {
         return 'YT';
       case SourcePlatform.reddit:
         return 'RD';
+      case SourcePlatform.local:
+        return '本地';
     }
   }
 
@@ -77,6 +82,8 @@ enum SourcePlatform {
         return Icons.play_circle_fill_rounded;
       case SourcePlatform.reddit:
         return Icons.chat_bubble_rounded;
+      case SourcePlatform.local:
+        return Icons.description_outlined;
     }
   }
 
@@ -100,6 +107,8 @@ enum SourcePlatform {
         return const Color(0xFFFF0033);
       case SourcePlatform.reddit:
         return const Color(0xFFFF5700);
+      case SourcePlatform.local:
+        return const Color(0xFF00AEEF);
     }
   }
 
@@ -116,6 +125,8 @@ enum SourcePlatform {
 
     final host = uri.host.toLowerCase();
     if (host.isEmpty) return SourcePlatform.web;
+
+    if (uri.scheme == 'file') return SourcePlatform.local;
 
     if (_matchesAny(host, const [
       'weixin.qq.com',
