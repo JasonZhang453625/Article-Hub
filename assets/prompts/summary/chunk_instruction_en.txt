@@ -1,0 +1,5 @@
+Extract the following from this article section:
+1. What event or viewpoint does this section describe? (2-3 sentences)
+2. List 3-5 key takeaways
+3. Role in the full article: background / argument / conclusion?
+Rules: Only extract information from this section. Do not guess context beyond the section. Preserve important numbers and named entities.

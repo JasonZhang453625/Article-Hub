@@ -1,7 +1,9 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
+
+import 'prompt_service.dart';
 
 class AiService {
   static const int _singlePassLimit = 15000;
@@ -12,6 +14,7 @@ class AiService {
   final String apiKey;
   final String model;
   final Duration timeout;
+  final PromptService _prompts;
   String? lastError;
 
   /// Called after a successful API response with the total_tokens from usage.
@@ -22,12 +25,11 @@ class AiService {
     required this.apiKey,
     required this.model,
     this.timeout = const Duration(seconds: 60),
-  });
+    PromptService? promptService,
+  }) : _prompts = promptService ?? PromptService();
 
   Uri _chatUri() {
     var base = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
-    // Auto-append /v1 if the user entered a bare provider domain
-    // (e.g. https://api.deepseek.com → https://api.deepseek.com/v1).
     if (!base.endsWith('/v1') && !base.contains('/v1/')) {
       base = '$base/v1';
     }
@@ -37,9 +39,6 @@ class AiService {
   bool get isConfigured =>
       baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
 
-  /// True when the configured endpoint or model looks like MiMo.
-  /// MiMo uses `max_completion_tokens` instead of `max_tokens` and has a
-  /// "thinking" mode that consumes tokens before generating the answer.
   bool get _isMiMo {
     final b = baseUrl.toLowerCase();
     final m = model.toLowerCase();
@@ -56,69 +55,32 @@ class AiService {
     return {'max_tokens': _summaryMaxTokens};
   }
 
-  /// Build a language- and length-aware summary instruction.
-  ///
-  /// [contentLength] is the character count of the extracted article body.
-  /// [languageHint] is the user's language preference string.
-  /// [verbosity] controls detail level: 0 = concise (3 bullets),
-  ///   1 = detailed (adaptive by article length, 3-7 bullets).
-  static String summaryInstruction(
-      int contentLength, String languageHint, int verbosity) {
-    final isChinese = languageHint.contains('Chinese') ||
-        languageHint.contains('中文');
+  Future<String> _buildSummaryInstruction(
+      int contentLength, String languageHint, int verbosity) async {
+    final isChinese =
+        languageHint.contains('Chinese') || languageHint.contains('中文');
+    final lang = isChinese ? 'zh' : 'en';
 
-    if (isChinese) {
-      return _summaryInstructionChinese(contentLength, verbosity);
-    } else {
-      return _summaryInstructionEnglish(contentLength, verbosity);
-    }
-  }
+    final qualityRules = await _prompts.load('summary/quality_rules_$lang.txt');
 
-  static String _summaryInstructionChinese(int contentLength, int verbosity) {
-    const qualityRules =
-        '每条要点必须可以独立阅读——不要出现"同上""如前所述"等回指。'
-        '每条要点应当尽量包含文章中的具体事实、产品名、时间点、数字或专有名词。'
-        '禁止使用"文章介绍了..."、"本文讨论了..."等空泛开头，直接陈述事实。'
-        '仅使用文章中的信息，不要添加外部知识或推测。';
-
+    String instructionFile;
     if (verbosity == 0) {
-      return '用80-120个中文字概括这篇文章的立场、结论或主要发现；然后列出3~5条全篇的要点。$qualityRules';
-    }
-
-    if (contentLength < 2000) {
-      return '用100-150个中文字概括这篇文章的立场、结论或主要发现；然后列出3~5条全篇的要点。$qualityRules';
-    } else if (contentLength < 8000) {
-      return '用200-300个中文字概括这篇文章的立场、结论或主要发现；然后列出5~8条全篇的要点。$qualityRules';
+      instructionFile = 'summary/instruction_${lang}_concise.txt';
     } else {
-      return '用300-500个中文字概括这篇文章的立场、结论或主要发现；然后列出5~7条全篇的要点。$qualityRules';
-    }
-  }
-
-  static String _summaryInstructionEnglish(int contentLength, int verbosity) {
-    const qualityRules =
-        'Each bullet point MUST be self-contained — avoid back-references like '
-        '"same as above" or "as mentioned earlier". '
-        'Each bullet should include specific facts, product names, dates, '
-        'numbers, or named entities from the article. '
-        'Do NOT start bullets with "The article discusses...", "This piece covers..." '
-        '— go straight to the fact. '
-        'Use ONLY information from the article; do not add external knowledge or assumptions.';
-
-    if (verbosity == 0) {
-      return 'Summarize the position, conclusion, or key finding in 60-100 words, '
-          'then list 3-5 key takeaways as bullet points. $qualityRules';
+      final thresholds = isChinese
+          ? [2000, 8000]
+          : [1500, 6000];
+      final sizes = ['short', 'medium', 'long'];
+      final idx = contentLength < thresholds[0]
+          ? 0
+          : contentLength < thresholds[1]
+              ? 1
+              : 2;
+      instructionFile = 'summary/instruction_${lang}_detailed_${sizes[idx]}.txt';
     }
 
-    if (contentLength < 1500) {
-      return 'Summarize the position, conclusion, or key finding in 80-120 words, '
-          'then list 3-5 key takeaways as bullet points. $qualityRules';
-    } else if (contentLength < 6000) {
-      return 'Summarize the position, conclusion, or key finding in 150-250 words, '
-          'then list 5-8 key takeaways as bullet points. $qualityRules';
-    } else {
-      return 'Summarize the position, conclusion, or key finding in 250-400 words, '
-          'then list 5-7 key takeaways as bullet points. $qualityRules';
-    }
+    final instruction = await _prompts.load(instructionFile);
+    return '$instruction $qualityRules';
   }
 
   Future<String?> summarize(String title, String content,
@@ -158,16 +120,15 @@ class AiService {
   }) async {
     final isChinese =
         languageHint.contains('Chinese') || languageHint.contains('中文');
+    final lang = isChinese ? 'zh' : 'en';
 
-    final instruction = summaryInstruction(
+    final instruction = await _buildSummaryInstruction(
       sourceLength,
       languageHint,
       verbosity,
     );
-
-    final systemPrompt = isChinese
-        ? '你是一个简洁的阅读助手。请用与原文相同的语言总结文章。$instruction'
-        : 'You are a concise reading assistant. Summarize the article in the same language as the source. $instruction';
+    final systemPrompt = await _prompts.load('summary/system_$lang.txt',
+        {'instruction': instruction});
 
     final body = jsonEncode({
       'model': model,
@@ -183,7 +144,6 @@ class AiService {
   }
 
   /// Summarize content and also generate a proper article title.
-  /// Returns a record of (title, summary). Either may be null on failure.
   Future<({String? title, String? summary})> summarizeWithTitle(
     String title,
     String content, {
@@ -225,22 +185,15 @@ class AiService {
   }) async {
     final isChinese =
         languageHint.contains('Chinese') || languageHint.contains('中文');
+    final lang = isChinese ? 'zh' : 'en';
 
-    final instruction = summaryInstruction(
+    final instruction = await _buildSummaryInstruction(
       sourceLength,
       languageHint,
       verbosity,
     );
-
-    final systemPrompt = isChinese
-        ? '你是一个简洁的阅读助手。请用与原文相同的语言阅读文章，然后返回一个JSON对象，包含两个字段：\n'
-              '1. "title"：一个简洁准确的中文文章标题（不是URL或域名，而是能概括文章内容的标题）\n'
-              '2. "summary"：文章摘要。$instruction\n'
-              '请只返回JSON，不要添加其他文字。格式：{"title":"...","summary":"..."}'
-        : 'You are a concise reading assistant. Read the article and return a JSON object with two fields:\n'
-              '1. "title": a concise, descriptive article title (not a URL or domain name)\n'
-              '2. "summary": the article summary. $instruction\n'
-              'Return ONLY the JSON, nothing else. Format: {"title":"...","summary":"..."}';
+    final systemPrompt = await _prompts.load('summary/system_with_title_$lang.txt',
+        {'instruction': instruction});
 
     final body = jsonEncode({
       'model': model,
@@ -261,27 +214,17 @@ class AiService {
   }) async {
     final isChinese =
         languageHint.contains('Chinese') || languageHint.contains('中文');
-    final instruction = isChinese
-        ? '请从这个文章片段中提取以下信息：\n'
-            '1. 这段讲了什么事件/观点？（2-3句）\n'
-            '2. 列出3-5个关键要点\n'
-            '3. 这段与全文的关系：它是介绍背景 / 展开论证 / 给出结论？\n'
-            '要求：只提取片段中的信息，不要猜测上下文，保留重要数字和专有名词。'
-        : 'Extract the following from this article section:\n'
-            '1. What event or viewpoint does this section describe? (2-3 sentences)\n'
-            '2. List 3-5 key takeaways\n'
-            '3. Role in the full article: background / argument / conclusion?\n'
-            'Rules: Only extract information from this section. Do not guess context beyond the section. '
-            'Preserve important numbers and named entities.';
+    final lang = isChinese ? 'zh' : 'en';
+
+    final instruction = await _prompts.load('summary/chunk_instruction_$lang.txt');
 
     final summaries = <String>[];
     final chunkCount = (content.length / _chunkSize).ceil();
 
     for (
-      var start = 0, index = 0;
-      start < content.length;
-      start += _chunkSize, index++
-    ) {
+        var start = 0, index = 0;
+        start < content.length;
+        start += _chunkSize, index++) {
       final end = (start + _chunkSize).clamp(0, content.length);
       final chunk = content.substring(start, end);
       final body = jsonEncode({
@@ -319,7 +262,6 @@ class AiService {
     if (text == null || text.isEmpty) return (title: null, summary: null);
 
     try {
-      // Strip markdown code block wrappers if present (many LLMs wrap JSON in ```json ... ```)
       var jsonStr = text.trim();
       final codeBlockPattern =
           RegExp(r'^```(?:json)?\s*\n?(.*?)\n?```$', dotAll: true);
@@ -332,17 +274,18 @@ class AiService {
       final aiTitle = json['title'] as String?;
       final aiSummary = json['summary'] as String?;
       return (
-        title: (aiTitle != null && aiTitle.trim().isNotEmpty) ? aiTitle.trim() : null,
-        summary: (aiSummary != null && aiSummary.trim().isNotEmpty) ? aiSummary.trim() : null,
+        title: (aiTitle != null && aiTitle.trim().isNotEmpty)
+            ? aiTitle.trim()
+            : null,
+        summary: (aiSummary != null && aiSummary.trim().isNotEmpty)
+            ? aiSummary.trim()
+            : null,
       );
     } catch (_) {
-      // JSON parsing failed — treat entire response as summary only
       return (title: null, summary: text);
     }
   }
 
-  /// General-purpose chat completion with explicit system + user messages.
-  /// Used by the RAG conversation flow where the caller controls both prompts.
   Future<String?> chat({
     required String systemPrompt,
     required String userMessage,
@@ -369,13 +312,9 @@ class AiService {
       'temperature': temperature,
     };
     if (isMiMo) {
-      // MiMo: explicit thinking-disable + MiMo-specific token field.
       payload['max_completion_tokens'] = maxTokens;
       payload['thinking'] = {'type': 'disabled'};
     } else {
-      // Other providers: send BOTH token fields so thinking models
-      // (DeepSeek-R1, o1/o3, etc.) and classic models both work without
-      // per-provider detection. Servers ignore the field they don't use.
       payload['max_tokens'] = maxTokens;
       payload['max_completion_tokens'] = maxTokens;
     }
@@ -421,7 +360,6 @@ class AiService {
       final message = choices[0]['message'] as Map<String, dynamic>?;
       final text = message?['content'] as String?;
 
-      // Track token usage if the API returns it.
       if (onTokensUsed != null) {
         final usage = json['usage'] as Map<String, dynamic>?;
         final totalTokens = usage?['total_tokens'] as int?;

@@ -1,0 +1,1 @@
+You are a library classifier. Assign this article to a new folder. Invent a specific category name (2-4 words). Output ONLY the folder name. Nothing else.

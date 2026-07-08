@@ -55,18 +55,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (e is SupabaseNotConfiguredException) return s.loginErrorNotConfigured;
     final msg = e.toString().toLowerCase();
     if (e is AuthException) {
-      if (msg.contains('otp') || msg.contains('token') ||
-          msg.contains('invalid') || msg.contains('expired')) {
+      if (msg.contains('email') && msg.contains('invalid')) {
+        return s.emailInvalid;
+      }
+      if (msg.contains('otp') ||
+          msg.contains('token') ||
+          msg.contains('invalid') ||
+          msg.contains('expired')) {
         return s.loginErrorOtpInvalid;
       }
-      if (msg.contains('network') || msg.contains('timeout') ||
+      if (msg.contains('network') ||
+          msg.contains('timeout') ||
           msg.contains('connection')) {
         return s.loginErrorNetwork;
       }
       return s.loginErrorGeneric;
     }
-    if (msg.contains('socket') || msg.contains('network') ||
-        msg.contains('connection') || msg.contains('timeout')) {
+    if (msg.contains('socket') ||
+        msg.contains('network') ||
+        msg.contains('connection') ||
+        msg.contains('timeout')) {
       return s.loginErrorNetwork;
     }
     return s.loginErrorGeneric;
@@ -160,7 +168,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    _codeSent ? '${s.codeSentPrefix} $_submittedEmail' : s.loginDesc,
+                    _codeSent
+                        ? '${s.codeSentPrefix} $_submittedEmail'
+                        : s.loginDesc,
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
@@ -177,9 +187,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         prefixIcon: const Icon(Icons.email_rounded),
                       ),
                       validator: (v) {
-                        if (v == null || v.trim().isEmpty) return s.emailRequired;
-                        final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-                        if (!emailRegex.hasMatch(v.trim())) return s.emailInvalid;
+                        if (v == null || v.trim().isEmpty) {
+                          return s.emailRequired;
+                        }
+                        final emailRegex = RegExp(
+                          r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                        );
+                        if (!emailRegex.hasMatch(v.trim())) {
+                          return s.emailInvalid;
+                        }
                         return null;
                       },
                       onFieldSubmitted: (_) => _sendCode(),
@@ -206,9 +222,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       maxLength: 6,
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 24, letterSpacing: 8),
-                      decoration: const InputDecoration(
-                        counterText: '',
-                      ),
+                      decoration: const InputDecoration(counterText: ''),
                       onChanged: (v) {
                         if (v.trim().length == 6) {
                           _verifyCode();
@@ -232,10 +246,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: 8),
                     if (_countdown > 0)
                       Text(
-                        s.resendCountdown.replaceAll('{}', _countdown.toString()),
+                        s.resendCountdown.replaceAll(
+                          '{}',
+                          _countdown.toString(),
+                        ),
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.5,
+                          ),
                         ),
                       )
                     else

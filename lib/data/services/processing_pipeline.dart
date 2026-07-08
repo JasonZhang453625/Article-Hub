@@ -11,6 +11,7 @@ import 'embedding_service.dart';
 import 'index_service.dart';
 import 'metadata_service.dart';
 import 'page_loader.dart';
+import 'prompt_service.dart';
 
 /// Orchestrates the sequential processing of an Article through all
 /// knowledge-ification stages: metadata → content → summary → tags → folder.
@@ -37,6 +38,7 @@ class ProcessingPipeline {
   final EmbeddingService? _embedding;
   final IndexService? _index;
   final Future<Folder?> Function(String name)? _createFolder;
+  final PromptService _prompts;
 
   /// Mutable — refreshed from getters at the start of each [process] call.
   AppSettings? _settings;
@@ -59,6 +61,7 @@ class ProcessingPipeline {
     EmbeddingService? embedding,
     IndexService? index,
     Future<Folder?> Function(String name)? createFolder,
+    PromptService? promptService,
   })  : _articles = articles,
         _getSettings = getSettings,
         _getFolders = getFolders,
@@ -66,7 +69,8 @@ class ProcessingPipeline {
         _extractor = extractor ?? ContentExtractor(),
         _embedding = embedding,
         _index = index,
-        _createFolder = createFolder;
+        _createFolder = createFolder,
+        _prompts = promptService ?? PromptService();
 
   /// Process a single article through all stages. Returns the final article.
   Future<Article?> process(Article article) async {
@@ -324,21 +328,12 @@ class ProcessingPipeline {
       model: settings.aiModel,
     );
 
-    final prompt =
-        'You are a precise content classifier.\n\n'
-        'Given a title and summary, generate 2-5 tags that would help a reader '
-        'quickly understand what this article is about and find related content later.\n\n'
-        'Rules:\n'
-        '- Each tag must be a noun phrase, not an adjective (e.g. "GPU架构" not "快")\n'
-        '- Include at least one tag for: subject domain, concrete entity, and difficulty level\n'
-        '- If the article mentions a specific person, product, or company by name, include it as a tag\n'
-        '- Avoid overly broad tags like "科技" or "technology" — prefer "芯片制造" or "semiconductor fabrication"\n'
-        '- Tags must be in the same language as the article content\n\n'
-        'Return ONLY a JSON array of strings. Example: ["大语言模型","OpenAI","推理优化","Transformer"]';
+    final tagSystem = await _prompts.load('tags/system.txt');
+    final tagPrompt = await _prompts.load('tags/user_prompt.txt');
 
     final response = await ai.chat(
-      systemPrompt: 'You are a precise content classifier.',
-      userMessage: '$prompt\n\nTitle: $title\n\nSummary: $summary',
+      systemPrompt: tagSystem,
+      userMessage: '$tagPrompt\n\nTitle: $title\n\nSummary: $summary',
       temperature: 0.3,
       maxTokens: 200,
     );
@@ -441,16 +436,9 @@ class ProcessingPipeline {
 
     final namesList = folderNames.map((n) => '"$n"').join(', ');
     final systemPrompt = folderNames.isEmpty
-        ? 'You are a library classifier. Assign this article to a new folder. '
-            'Invent a specific category name (2-4 words). '
-            'Output ONLY the folder name. Nothing else.'
-        : 'You are a library classifier. Your goal is to assign each article '
-            'to ONE existing folder or suggest ONE new folder name. '
-            'Available folders: [$namesList]. '
-            '- If a folder exists that clearly contains this topic, output exactly that name\n'
-            '- If no folder matches well, create a specific new category name (e.g. "半导体行业" not just "科技")\n'
-            '- A "good match" means the topic is a primary child of the folder — not just tenuously related\n'
-            '- Output ONLY the folder name. Nothing else.';
+        ? await _prompts.load('folder/system_no_folders.txt')
+        : await _prompts.load('folder/system_with_folders.txt',
+            {'folderNames': namesList});
 
     // Few-shot: prime the model with one example so it imitates the format
     // and stops returning "null"/"none" on weak models like gpt-4o-mini.
