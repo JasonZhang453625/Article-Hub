@@ -7,6 +7,7 @@ import 'config/theme.dart';
 import 'config/routes.dart';
 import 'shared/providers/locale_provider.dart';
 import 'shared/providers/settings_providers.dart';
+import 'shared/widgets/auto_sync_host.dart';
 
 class App extends ConsumerWidget {
   const App({super.key});
@@ -41,10 +42,7 @@ class App extends ConsumerWidget {
       darkTheme: dark,
       themeMode: themeMode,
       locale: locale,
-      supportedLocales: const [
-        Locale('en'),
-        Locale('zh'),
-      ],
+      supportedLocales: const [Locale('en'), Locale('zh')],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -57,18 +55,21 @@ class App extends ConsumerWidget {
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle(
             statusBarColor: Colors.transparent,
-            statusBarIconBrightness:
-                isDark ? Brightness.light : Brightness.dark,
-            systemNavigationBarColor:
-                isDark ? const Color(0xFF1A2530) : Colors.white,
-            systemNavigationBarIconBrightness:
-                isDark ? Brightness.light : Brightness.dark,
+            statusBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
+            systemNavigationBarColor: isDark
+                ? const Color(0xFF1A2530)
+                : Colors.white,
+            systemNavigationBarIconBrightness: isDark
+                ? Brightness.light
+                : Brightness.dark,
           ),
           child: MediaQuery(
-            data: MediaQuery.of(context).copyWith(
-              textScaler: TextScaler.linear(textScaleFactor),
-            ),
-            child: child!,
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScaleFactor)),
+            child: AutoSyncHost(child: child!),
           ),
         );
       },
@@ -82,11 +83,19 @@ class App extends ConsumerWidget {
       displayLarge: t.displayLarge?.copyWith(fontWeight: fw),
       displayMedium: t.displayMedium?.copyWith(fontWeight: fw),
       displaySmall: t.displaySmall?.copyWith(fontWeight: fw),
-      headlineLarge: t.headlineLarge?.copyWith(fontWeight: fw.value > 600 ? fw : FontWeight.w700),
-      headlineMedium: t.headlineMedium?.copyWith(fontWeight: fw.value > 600 ? fw : FontWeight.w700),
+      headlineLarge: t.headlineLarge?.copyWith(
+        fontWeight: fw.value > 600 ? fw : FontWeight.w700,
+      ),
+      headlineMedium: t.headlineMedium?.copyWith(
+        fontWeight: fw.value > 600 ? fw : FontWeight.w700,
+      ),
       headlineSmall: t.headlineSmall?.copyWith(fontWeight: fw),
-      titleLarge: t.titleLarge?.copyWith(fontWeight: fw.value > 600 ? fw : FontWeight.w700),
-      titleMedium: t.titleMedium?.copyWith(fontWeight: fw.value > 500 ? fw : FontWeight.w600),
+      titleLarge: t.titleLarge?.copyWith(
+        fontWeight: fw.value > 600 ? fw : FontWeight.w700,
+      ),
+      titleMedium: t.titleMedium?.copyWith(
+        fontWeight: fw.value > 500 ? fw : FontWeight.w600,
+      ),
       titleSmall: t.titleSmall?.copyWith(fontWeight: fw),
       bodyLarge: t.bodyLarge?.copyWith(fontWeight: fw),
       bodyMedium: t.bodyMedium?.copyWith(fontWeight: fw),

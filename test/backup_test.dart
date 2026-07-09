@@ -63,17 +63,18 @@ void main() {
       expect(restored.clipboardDetectionEnabled, isFalse);
     });
 
-    test('AppSettings defaults clipboardDetectionEnabled to true when absent',
-        () {
-      // Older backups won't have the field; it should default to enabled.
-      final restored = AppSettings.fromJson({'fontSize': 14});
-      expect(restored.clipboardDetectionEnabled, isTrue);
-    });
+    test(
+      'AppSettings defaults clipboardDetectionEnabled to true when absent',
+      () {
+        // Older backups won't have the field; it should default to enabled.
+        final restored = AppSettings.fromJson({'fontSize': 14});
+        expect(restored.clipboardDetectionEnabled, isTrue);
+      },
+    );
 
-    test('AppSettings.toJson includes API keys for portable config',
-        () {
-      // API keys are included so the backup can serve as a complete portable
-      // configuration across devices.
+    test('AppSettings.toJson excludes API keys from export payloads', () {
+      // API keys stay local to the device and must not enter backup or sync
+      // payloads.
       final settings = AppSettings(
         fontSize: 16,
         aiBaseUrl: 'https://api.openai.com/v1',
@@ -81,9 +82,12 @@ void main() {
         aiModel: 'gpt-4o-mini',
       );
       final json = settings.toJson();
-      expect(json.containsKey('aiApiKey'), isTrue,
-          reason: 'API key must appear in AppSettings JSON (export path)');
-      expect(json['aiApiKey'], 'sk-test-key');
+      expect(
+        json.containsKey('aiApiKey'),
+        isFalse,
+        reason: 'API key must not appear in AppSettings JSON export path',
+      );
+      expect(json.toString().contains('sk-test-key'), isFalse);
       expect(json['aiBaseUrl'], 'https://api.openai.com/v1');
       expect(json['aiModel'], 'gpt-4o-mini');
     });
@@ -197,10 +201,7 @@ void main() {
         "filterGroups": []
       }
       ''';
-      expect(
-        () => BackupData.fromJsonString(json),
-        throwsFormatException,
-      );
+      expect(() => BackupData.fromJsonString(json), throwsFormatException);
     });
 
     test('new export uses app="memora"', () {
@@ -331,22 +332,24 @@ void main() {
       expect(restored.suggestedFolderId, 'folder-abc');
     });
 
-    test('fromJson defaults to completed when processing fields are absent',
-        () {
-      final json = <String, dynamic>{
-        'id': 'old',
-        'url': 'https://old.com',
-        'title': 'Old article',
-        'source': 2,
-      };
-      final a = Article.fromJson(json);
-      expect(a.processingStatus, ProcessingStatus.completed);
-      expect(a.processingStage, isNull);
-      expect(a.processingError, isNull);
-      expect(a.retryCount, 0);
-      expect(a.lastProcessedAt, isNull);
-      expect(a.suggestedFolderId, isNull);
-    });
+    test(
+      'fromJson defaults to completed when processing fields are absent',
+      () {
+        final json = <String, dynamic>{
+          'id': 'old',
+          'url': 'https://old.com',
+          'title': 'Old article',
+          'source': 2,
+        };
+        final a = Article.fromJson(json);
+        expect(a.processingStatus, ProcessingStatus.completed);
+        expect(a.processingStage, isNull);
+        expect(a.processingError, isNull);
+        expect(a.retryCount, 0);
+        expect(a.lastProcessedAt, isNull);
+        expect(a.suggestedFolderId, isNull);
+      },
+    );
 
     test('copyWith updates processing fields', () {
       final a = Article(

@@ -55,94 +55,6 @@ class AiService {
     return {'max_tokens': _summaryMaxTokens};
   }
 
-  Future<String> _buildSummaryInstruction(
-      int contentLength, String languageHint, int verbosity) async {
-    final isChinese =
-        languageHint.contains('Chinese') || languageHint.contains('中文');
-    final lang = isChinese ? 'zh' : 'en';
-
-    final qualityRules = await _prompts.load('summary/quality_rules_$lang.txt');
-
-    String instructionFile;
-    if (verbosity == 0) {
-      instructionFile = 'summary/instruction_${lang}_concise.txt';
-    } else {
-      final thresholds = isChinese
-          ? [2000, 8000]
-          : [1500, 6000];
-      final sizes = ['short', 'medium', 'long'];
-      final idx = contentLength < thresholds[0]
-          ? 0
-          : contentLength < thresholds[1]
-              ? 1
-              : 2;
-      instructionFile = 'summary/instruction_${lang}_detailed_${sizes[idx]}.txt';
-    }
-
-    final instruction = await _prompts.load(instructionFile);
-    return '$instruction $qualityRules';
-  }
-
-  Future<String?> summarize(String title, String content,
-      {String languageHint = '', int verbosity = 0}) async {
-    if (!isConfigured) return null;
-
-    if (content.length > _singlePassLimit) {
-      final chunkSummaries = await _summarizeChunks(
-        content,
-        languageHint: languageHint,
-      );
-      if (chunkSummaries.isEmpty) return null;
-      return _summarizeSingle(
-        title,
-        chunkSummaries.join('\n\n---\n\n'),
-        languageHint: languageHint,
-        verbosity: verbosity,
-        sourceLength: content.length,
-      );
-    }
-
-    return _summarizeSingle(
-      title,
-      content,
-      languageHint: languageHint,
-      verbosity: verbosity,
-      sourceLength: content.length,
-    );
-  }
-
-  Future<String?> _summarizeSingle(
-    String title,
-    String content, {
-    required String languageHint,
-    required int verbosity,
-    required int sourceLength,
-  }) async {
-    final isChinese =
-        languageHint.contains('Chinese') || languageHint.contains('中文');
-    final lang = isChinese ? 'zh' : 'en';
-
-    final instruction = await _buildSummaryInstruction(
-      sourceLength,
-      languageHint,
-      verbosity,
-    );
-    final systemPrompt = await _prompts.load('summary/system_$lang.txt',
-        {'instruction': instruction});
-
-    final body = jsonEncode({
-      'model': model,
-      'messages': [
-        {'role': 'system', 'content': systemPrompt},
-        {'role': 'user', 'content': 'Title: $title\n\n$content'},
-      ],
-      'temperature': 0.3,
-      ..._summaryOutputOptions,
-    });
-
-    return _postChat(_chatUri(), body);
-  }
-
   /// Summarize content and also generate a proper article title.
   Future<({String? title, String? summary})> summarizeWithTitle(
     String title,
@@ -187,13 +99,7 @@ class AiService {
         languageHint.contains('Chinese') || languageHint.contains('中文');
     final lang = isChinese ? 'zh' : 'en';
 
-    final instruction = await _buildSummaryInstruction(
-      sourceLength,
-      languageHint,
-      verbosity,
-    );
-    final systemPrompt = await _prompts.load('summary/system_with_title_$lang.txt',
-        {'instruction': instruction});
+    final systemPrompt = await _prompts.load('summary/full_summary_$lang.txt');
 
     final body = jsonEncode({
       'model': model,
@@ -261,6 +167,98 @@ class AiService {
     final text = await _postChat(uri, body);
     if (text == null || text.isEmpty) return (title: null, summary: null);
 
+    return _parseStructuredSummary(text);
+  }
+
+  /// Parses the structured output format:
+  ///   【标题】...      /  【Title】...
+  ///   【摘要】...      /  【Summary】...
+  ///   【要点】...      /  【Key Points】...
+  ///   1. ...
+  ///   【总结】...      /  【Conclusion】...
+  ///   ✓
+  ///
+  /// Falls back to the old formats.
+  ({String? title, String? summary}) _parseStructuredSummary(String text) {
+    // Try the new 总分总 format first.
+    final titleMatch = RegExp(
+      r'【(?:标题|Title)】\s*\n?(.+?)(?=\n【(?:摘要|Summary)】)',
+      dotAll: true,
+    ).firstMatch(text);
+
+    final summaryMatch = RegExp(
+      r'【(?:摘要|Summary)】\s*\n?(.+?)(?=\n【(?:要点|Key\s+Points)】)',
+      dotAll: true,
+    ).firstMatch(text);
+
+    final pointsMatch = RegExp(
+      r'【(?:要点|Key\s+Points)】\s*\n?(.+?)(?=\n【(?:总结|Conclusion)】)',
+      dotAll: true,
+    ).firstMatch(text);
+
+    final conclusionMatch = RegExp(
+      r'【(?:总结|Conclusion)】\s*\n?(.+?)(?:\n✓\s*)?$',
+      dotAll: true,
+    ).firstMatch(text);
+
+    if (titleMatch != null || summaryMatch != null || pointsMatch != null) {
+      final title = titleMatch?.group(1)?.trim();
+      final overview = summaryMatch?.group(1)?.trim() ?? '';
+      final points = pointsMatch?.group(1)?.trim() ?? '';
+      final conclusion = conclusionMatch?.group(1)?.trim() ?? '';
+
+      // Build Markdown for display: 摘要 → 要点 → 总结.
+      final displayParts = <String>[];
+      if (overview.isNotEmpty) {
+        displayParts.add('**摘要**\n\n$overview');
+      }
+      if (points.isNotEmpty) {
+        displayParts.add('\n\n**要点**\n\n$points');
+      }
+      if (conclusion.isNotEmpty) {
+        displayParts.add('\n\n**总结**\n\n$conclusion');
+      }
+      final displaySummary =
+          displayParts.isEmpty ? text : displayParts.join('');
+
+      return (
+        title: (title != null && title.isNotEmpty) ? title : null,
+        summary: displaySummary,
+      );
+    }
+
+    // Fallback: old 一句话结论 / 核心摘要 / 全篇要点 format.
+    final oldConclusion = RegExp(
+      r'【(?:一句话结论|Key\s+Conclusion)】\s*\n?(.+?)(?=\n【(?:核心摘要|Core\s+Summary)】)',
+      dotAll: true,
+    ).firstMatch(text);
+
+    final oldSummary = RegExp(
+      r'【(?:核心摘要|Core\s+Summary)】\s*\n?(.+?)(?=\n【(?:全篇要点|Key\s+Points)】)',
+      dotAll: true,
+    ).firstMatch(text);
+
+    final oldPoints = RegExp(
+      r'【(?:全篇要点|Key\s+Points)】\s*\n?(.+?)(?:\n✓\s*)?$',
+      dotAll: true,
+    ).firstMatch(text);
+
+    if (oldConclusion != null || oldSummary != null || oldPoints != null) {
+      final title = oldConclusion?.group(1)?.trim();
+      final core = oldSummary?.group(1)?.trim() ?? '';
+      final pts = oldPoints?.group(1)?.trim() ?? '';
+
+      final displayParts = <String>[];
+      if (core.isNotEmpty) displayParts.add('**核心摘要**\n\n$core');
+      if (pts.isNotEmpty) displayParts.add('\n\n**全篇要点**\n\n$pts');
+      final displaySummary = displayParts.isEmpty ? text : displayParts.join('');
+      return (
+        title: (title != null && title.isNotEmpty) ? title : null,
+        summary: displaySummary,
+      );
+    }
+
+    // Fallback: old JSON format.
     try {
       var jsonStr = text.trim();
       final codeBlockPattern =

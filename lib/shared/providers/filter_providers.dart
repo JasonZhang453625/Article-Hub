@@ -2,14 +2,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/filter_group.dart';
+import '../../data/services/sync_outbox_service.dart';
 import 'article_providers.dart';
+import 'sync_providers.dart';
 
 final filterGroupsProvider =
-    StateNotifierProvider<FilterGroupsNotifier, AsyncValue<List<FilterGroup>>>(
-      (ref) {
-        return FilterGroupsNotifier(ref);
-      },
-    );
+    StateNotifierProvider<FilterGroupsNotifier, AsyncValue<List<FilterGroup>>>((
+      ref,
+    ) {
+      return FilterGroupsNotifier(ref);
+    });
 
 class FilterGroupsNotifier
     extends StateNotifier<AsyncValue<List<FilterGroup>>> {
@@ -41,6 +43,7 @@ class FilterGroupsNotifier
     try {
       final box = await _ensureBox();
       await box.put(group.id, group);
+      await _enqueueGroup(group);
       state = AsyncValue.data(box.values.toList());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
@@ -51,6 +54,7 @@ class FilterGroupsNotifier
     try {
       final box = await _ensureBox();
       await box.put(group.id, group);
+      await _enqueueGroup(group);
       state = AsyncValue.data(box.values.toList());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
@@ -61,6 +65,15 @@ class FilterGroupsNotifier
     try {
       final box = await _ensureBox();
       await box.delete(id);
+      await _ref
+          .read(syncOutboxProvider)
+          .enqueue(
+            SyncOutboxRecord.create(
+              collection: SyncCollections.filterGroups,
+              itemId: id,
+              operation: SyncOperation.delete,
+            ),
+          );
       state = AsyncValue.data(box.values.toList());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
@@ -70,10 +83,14 @@ class FilterGroupsNotifier
   /// Merges imported filter groups (by id) into the box.
   Future<int> importAll(Iterable<FilterGroup> groups) async {
     try {
-      final entries = {for (final g in groups) g.id: g};
+      final imported = groups.toList(growable: false);
+      final entries = {for (final g in imported) g.id: g};
       if (entries.isEmpty) return 0;
       final box = await _ensureBox();
       await box.putAll(entries);
+      for (final group in imported) {
+        await _enqueueGroup(group);
+      }
       state = AsyncValue.data(box.values.toList());
       return entries.length;
     } catch (e, st) {
@@ -83,6 +100,19 @@ class FilterGroupsNotifier
   }
 
   String generateId() => const Uuid().v4();
+
+  Future<void> _enqueueGroup(FilterGroup group) {
+    return _ref
+        .read(syncOutboxProvider)
+        .enqueue(
+          SyncOutboxRecord.create(
+            collection: SyncCollections.filterGroups,
+            itemId: group.id,
+            operation: SyncOperation.upsert,
+            payload: group.toJson(),
+          ),
+        );
+  }
 }
 
 /// The currently selected custom filter group ID. Empty string = none.

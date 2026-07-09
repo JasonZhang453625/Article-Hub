@@ -17,8 +17,6 @@ class SummaryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final s = ref.watch(stringsProvider);
 
     // Watch the provider so the page auto-refreshes when the background
@@ -80,7 +78,30 @@ class SummaryScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: SingleChildScrollView(
+      body: SummaryContent(article: a),
+    );
+  }
+}
+
+class SummaryContent extends ConsumerWidget {
+  final Article article;
+
+  const SummaryContent({super.key, required this.article});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final s = ref.watch(stringsProvider);
+
+    final articlesAsync = ref.watch(articlesProvider);
+    final latest = articlesAsync.maybeWhen(
+      data: (list) => list.where((a) => a.id == article.id).firstOrNull,
+      orElse: () => null,
+    );
+    final a = latest ?? article;
+
+    return SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -230,7 +251,6 @@ class SummaryScreen extends ConsumerWidget {
             const SizedBox(height: 24),
           ],
         ),
-      ),
     );
   }
 }

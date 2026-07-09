@@ -1,38 +1,38 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/services/backup_data.dart';
 
 /// Phase 2.4 security tests:
-/// - API Key (chat and embedding) must appear in exported backup JSON — the
-///   backup is for portable configuration across devices.
+/// - API Key (chat and embedding) must not appear in exported backup or sync
+///   JSON. They stay local to the device.
 /// - Vector data (from IndexRecord) must never enter the backup.
 void main() {
-  group('Security: API keys included in backup', () {
-    test('aiApiKey is present in AppSettings.toJson()', () {
+  group('Security: API keys excluded from backup', () {
+    test('aiApiKey is omitted from AppSettings.toJson()', () {
       final settings = AppSettings(
         aiBaseUrl: 'https://api.openai.com',
         aiApiKey: 'sk-secret-key-12345',
         aiModel: 'gpt-4o-mini',
       );
       final json = settings.toJson();
-      expect(json.containsKey('aiApiKey'), isTrue);
-      expect(json['aiApiKey'], equals('sk-secret-key-12345'));
+      expect(json.containsKey('aiApiKey'), isFalse);
+      expect(json.toString().contains('sk-secret-key-12345'), isFalse);
     });
 
-    test('embeddingApiKey is present in AppSettings.toJson()', () {
+    test('embeddingApiKey is omitted from AppSettings.toJson()', () {
       final settings = AppSettings(
         embeddingBaseUrl: 'https://api.openai.com',
         embeddingApiKey: 'sk-embedding-secret-99',
         embeddingModel: 'text-embedding-3-small',
       );
       final json = settings.toJson();
-      expect(json.containsKey('embeddingApiKey'), isTrue);
-      expect(json['embeddingApiKey'], equals('sk-embedding-secret-99'));
+      expect(json.containsKey('embeddingApiKey'), isFalse);
+      expect(json.toString().contains('sk-embedding-secret-99'), isFalse);
     });
 
-    test('full backup export includes API keys for portable config', () {
+    test('full backup export excludes API keys', () {
       final backup = BackupData.create(
         articles: [
           Article(
@@ -55,14 +55,27 @@ void main() {
       );
 
       final jsonString = backup.toJsonString();
-      expect(jsonString.contains('"aiApiKey"'), isTrue,
-          reason: 'AI API key key-name must be present in backup export');
-      expect(jsonString.contains('"embeddingApiKey"'), isTrue,
-          reason: 'Embedding API key key-name must be present in backup export');
-      expect(jsonString.contains('sk-LIVE-KEY-abc123'), isTrue,
-          reason: 'AI API key value must be present in backup export');
-      expect(jsonString.contains('sk-EMBED-KEY-xyz789'), isTrue,
-          reason: 'Embedding API key value must be present in backup export');
+      expect(
+        jsonString.contains('"aiApiKey"'),
+        isFalse,
+        reason: 'AI API key key-name must not be present in backup export',
+      );
+      expect(
+        jsonString.contains('"embeddingApiKey"'),
+        isFalse,
+        reason:
+            'Embedding API key key-name must not be present in backup export',
+      );
+      expect(
+        jsonString.contains('sk-LIVE-KEY-abc123'),
+        isFalse,
+        reason: 'AI API key value must not be present in backup export',
+      );
+      expect(
+        jsonString.contains('sk-EMBED-KEY-xyz789'),
+        isFalse,
+        reason: 'Embedding API key value must not be present in backup export',
+      );
     });
 
     test('importing a backup with API key fields does not crash', () {

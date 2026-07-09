@@ -9,7 +9,8 @@ class AppSettings {
   /// Built-in default embedding configuration (SiliconFlow BGE-M3).
   /// Used when the user hasn't provided their own config (BYOK).
   static const String defaultEmbeddingBaseUrl = 'https://api.siliconflow.cn/v1';
-  static const String defaultEmbeddingApiKey = 'sk-goxkdsfshuekimktyiwdkexdnkdantwuhfylssothjhetcjh';
+  static const String defaultEmbeddingApiKey =
+      'sk-goxkdsfshuekimktyiwdkexdnkdantwuhfylssothjhetcjh';
   static const String defaultEmbeddingModel = 'BAAI/bge-m3';
 
   double fontSize;
@@ -26,7 +27,7 @@ class AppSettings {
 
   /// AI configuration for auto-summarization (BYOK).
   ///
-  /// The API key is stored locally on the device (never transmitted — the app
+  /// The API key is stored locally on the device (never transmitted â€” the app
   /// calls the user's own AI provider directly). We deliberately do NOT
   /// additionally encrypt it: the threat model is "attacker has the unlocked
   /// device or root access", against which app-level encryption provides no
@@ -97,11 +98,11 @@ class AppSettings {
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
-          sourcePlatformOrder ?? defaultSourcePlatformOrder,
-        ),
+         sourcePlatformOrder ?? defaultSourcePlatformOrder,
+       ),
        hiddenSourcePlatforms = normalizeHiddenSourcePlatforms(
-          hiddenSourcePlatforms ?? const [],
-        );
+         hiddenSourcePlatforms ?? const [],
+       );
 
   static List<String> get defaultSourcePlatformOrder =>
       SourcePlatform.values.map((platform) => platform.name).toList();
@@ -169,12 +170,14 @@ class AppSettings {
       embeddingModel.trim().isNotEmpty;
 
   /// Returns the effective embedding base URL (user-provided or built-in default).
-  String get effectiveEmbeddingBaseUrl =>
-      embeddingBaseUrl.trim().isNotEmpty ? embeddingBaseUrl : defaultEmbeddingBaseUrl;
+  String get effectiveEmbeddingBaseUrl => embeddingBaseUrl.trim().isNotEmpty
+      ? embeddingBaseUrl
+      : defaultEmbeddingBaseUrl;
 
   /// Returns the effective embedding API key (user-provided or built-in default).
-  String get effectiveEmbeddingApiKey =>
-      embeddingApiKey.trim().isNotEmpty ? embeddingApiKey : defaultEmbeddingApiKey;
+  String get effectiveEmbeddingApiKey => embeddingApiKey.trim().isNotEmpty
+      ? embeddingApiKey
+      : defaultEmbeddingApiKey;
 
   /// Returns the effective embedding model (user-provided or built-in default).
   String get effectiveEmbeddingModel =>
@@ -193,10 +196,14 @@ class AppSettings {
 
   FontWeight get fontWeight {
     switch (fontWeightIndex) {
-      case 1: return FontWeight.w500;
-      case 2: return FontWeight.w600;
-      case 3: return FontWeight.w700;
-      default: return FontWeight.w400;
+      case 1:
+        return FontWeight.w500;
+      case 2:
+        return FontWeight.w600;
+      case 3:
+        return FontWeight.w700;
+      default:
+        return FontWeight.w400;
     }
   }
 
@@ -236,26 +243,27 @@ class AppSettings {
       embeddingApiKey: embeddingApiKey ?? this.embeddingApiKey,
       embeddingModel: embeddingModel ?? this.embeddingModel,
       languageIndex: languageIndex ?? this.languageIndex,
-      summaryVerbosityIndex: summaryVerbosityIndex ?? this.summaryVerbosityIndex,
-      chatAnswerLengthIndex: chatAnswerLengthIndex ?? this.chatAnswerLengthIndex,
-      chatKnowledgeSourceIndex: chatKnowledgeSourceIndex ?? this.chatKnowledgeSourceIndex,
+      summaryVerbosityIndex:
+          summaryVerbosityIndex ?? this.summaryVerbosityIndex,
+      chatAnswerLengthIndex:
+          chatAnswerLengthIndex ?? this.chatAnswerLengthIndex,
+      chatKnowledgeSourceIndex:
+          chatKnowledgeSourceIndex ?? this.chatKnowledgeSourceIndex,
       hideInboxTab: hideInboxTab ?? this.hideInboxTab,
       fontWeightIndex: fontWeightIndex ?? this.fontWeightIndex,
       startupTabIndex: startupTabIndex ?? this.startupTabIndex,
       firstLaunchMs: firstLaunchMs ?? this.firstLaunchMs,
       totalTokensUsed: totalTokensUsed ?? this.totalTokensUsed,
-      sourcePlatformOrder:
-          sourcePlatformOrder ?? this.sourcePlatformOrder,
+      sourcePlatformOrder: sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
           hiddenSourcePlatforms ?? this.hiddenSourcePlatforms,
     );
   }
 
-  /// Serializes to JSON for the backup/export path.
+  /// Serializes to JSON for backup/export and encrypted sync payloads.
   ///
-  /// Includes both API keys so that a backup serves as a complete portable
-  /// configuration — the user can export on one device and import on another
-  /// without re-entering provider credentials.
+  /// Provider API keys intentionally stay local to this device and are not
+  /// included here.
   Map<String, dynamic> toJson() {
     return {
       'fontSize': fontSize,
@@ -263,10 +271,8 @@ class AppSettings {
       'themeModeIndex': themeModeIndex,
       'clipboardDetectionEnabled': clipboardDetectionEnabled,
       'aiBaseUrl': aiBaseUrl,
-      'aiApiKey': aiApiKey,
       'aiModel': aiModel,
       'embeddingBaseUrl': embeddingBaseUrl,
-      'embeddingApiKey': embeddingApiKey,
       'embeddingModel': embeddingModel,
       'languageIndex': languageIndex,
       'summaryVerbosityIndex': summaryVerbosityIndex,
@@ -287,27 +293,40 @@ class AppSettings {
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14.0,
       webZoomPercent: (json['webZoomPercent'] as num?)?.toInt() ?? 100,
       themeModeIndex: (json['themeModeIndex'] as num?)?.toInt() ?? 1,
-      clipboardDetectionEnabled:
-          json['clipboardDetectionEnabled'] is bool
-              ? json['clipboardDetectionEnabled'] as bool
-              : true,
+      clipboardDetectionEnabled: json['clipboardDetectionEnabled'] is bool
+          ? json['clipboardDetectionEnabled'] as bool
+          : true,
       aiBaseUrl: json['aiBaseUrl'] is String ? json['aiBaseUrl'] as String : '',
       aiApiKey: json['aiApiKey'] is String ? json['aiApiKey'] as String : '',
-      aiModel: json['aiModel'] is String ? json['aiModel'] as String : 'gpt-4o-mini',
-      embeddingBaseUrl: json['embeddingBaseUrl'] is String ? json['embeddingBaseUrl'] as String : '',
-      embeddingApiKey: json['embeddingApiKey'] is String ? json['embeddingApiKey'] as String : '',
-      embeddingModel: json['embeddingModel'] is String ? json['embeddingModel'] as String : '',
+      aiModel: json['aiModel'] is String
+          ? json['aiModel'] as String
+          : 'gpt-4o-mini',
+      embeddingBaseUrl: json['embeddingBaseUrl'] is String
+          ? json['embeddingBaseUrl'] as String
+          : '',
+      embeddingApiKey: json['embeddingApiKey'] is String
+          ? json['embeddingApiKey'] as String
+          : '',
+      embeddingModel: json['embeddingModel'] is String
+          ? json['embeddingModel'] as String
+          : '',
       languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
-      summaryVerbosityIndex: (json['summaryVerbosityIndex'] as num?)?.toInt() ?? 0,
-      chatAnswerLengthIndex: (json['chatAnswerLengthIndex'] as num?)?.toInt() ?? 0,
-      chatKnowledgeSourceIndex: (json['chatKnowledgeSourceIndex'] as num?)?.toInt() ?? 0,
-      hideInboxTab: json['hideInboxTab'] is bool ? json['hideInboxTab'] as bool : false,
+      summaryVerbosityIndex:
+          (json['summaryVerbosityIndex'] as num?)?.toInt() ?? 0,
+      chatAnswerLengthIndex:
+          (json['chatAnswerLengthIndex'] as num?)?.toInt() ?? 0,
+      chatKnowledgeSourceIndex:
+          (json['chatKnowledgeSourceIndex'] as num?)?.toInt() ?? 0,
+      hideInboxTab: json['hideInboxTab'] is bool
+          ? json['hideInboxTab'] as bool
+          : false,
       fontWeightIndex: (json['fontWeightIndex'] as num?)?.toInt() ?? 0,
       startupTabIndex: (json['startupTabIndex'] as num?)?.toInt() ?? 0,
       firstLaunchMs: json['firstLaunchMs'] as int?,
       totalTokensUsed: (json['totalTokensUsed'] as num?)?.toInt() ?? 0,
-      sourcePlatformOrder:
-          (json['sourcePlatformOrder'] as List?)?.whereType<String>().toList(),
+      sourcePlatformOrder: (json['sourcePlatformOrder'] as List?)
+          ?.whereType<String>()
+          .toList(),
       hiddenSourcePlatforms: (json['hiddenSourcePlatforms'] as List?)
           ?.whereType<String>()
           .toList(),
@@ -330,10 +349,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       fontSize: (fields[0] as num?)?.toDouble() ?? 14.0,
       webZoomPercent: (fields[1] as num?)?.toInt() ?? 100,
       themeModeIndex: (fields[2] as num?)?.toInt() ?? 1,
-      sourcePlatformOrder:
-          (fields[3] as List?)?.cast<String>(),
-      hiddenSourcePlatforms:
-          (fields[4] as List?)?.cast<String>(),
+      sourcePlatformOrder: (fields[3] as List?)?.cast<String>(),
+      hiddenSourcePlatforms: (fields[4] as List?)?.cast<String>(),
       clipboardDetectionEnabled: (fields[5] as bool?) ?? true,
       aiBaseUrl: (fields[6] as String?) ?? '',
       aiApiKey: (fields[7] as String?) ?? '',

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../config/backend_config.dart';
 import '../../config/routes.dart';
-import '../../config/supabase_config.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/providers/auth_provider.dart';
+import '../../shared/providers/sync_providers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 
 class AccountScreen extends ConsumerWidget {
@@ -25,13 +27,13 @@ class AccountScreen extends ConsumerWidget {
 
     final isLoggedIn = ref.watch(isLoggedInProvider);
     final email = ref.watch(currentEmailProvider);
-    final auth = ref.watch(authServiceProvider);
-    final authAvailable = SupabaseConfig.isConfigured;
+    final authAvailable = BackendConfig.isConfigured;
 
     return Scaffold(
       appBar: AppBar(title: Text(s.settingsAccount)),
       body: DelayedReveal(
-        delayMs: 40, beginOffset: const Offset(0, 0.035),
+        delayMs: 40,
+        beginOffset: const Offset(0, 0.035),
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
@@ -43,7 +45,8 @@ class AccountScreen extends ConsumerWidget {
                   children: [
                     const SizedBox(height: 8),
                     Container(
-                      width: 72, height: 72,
+                      width: 72,
+                      height: 72,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         gradient: LinearGradient(
@@ -65,7 +68,11 @@ class AccountScreen extends ConsumerWidget {
                                   color: Colors.white,
                                 ),
                               )
-                            : const Icon(Icons.person_rounded, size: 36, color: Colors.white),
+                            : const Icon(
+                                Icons.person_rounded,
+                                size: 36,
+                                color: Colors.white,
+                              ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -79,13 +86,20 @@ class AccountScreen extends ConsumerWidget {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.calendar_today_rounded, size: 14,
-                          color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                        Icon(
+                          Icons.calendar_today_rounded,
+                          size: 14,
+                          color: isDark
+                              ? Colors.white54
+                              : const Color(0xFF6C8594),
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           '${s.usageDays} $usageDays ${s.daysN}',
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: isDark ? Colors.white54 : const Color(0xFF6C8594),
+                            color: isDark
+                                ? Colors.white54
+                                : const Color(0xFF6C8594),
                           ),
                         ),
                       ],
@@ -107,11 +121,16 @@ class AccountScreen extends ConsumerWidget {
               // ── Medals ──
               Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 16,
+                  ),
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: outlineColor.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -155,23 +174,55 @@ class AccountScreen extends ConsumerWidget {
               // ── Stats cards ──
               Row(
                 children: [
-                  Expanded(child: _StatCard(
-                    icon: Icons.memory_rounded,
-                    label: s.memoryCount,
-                                        value: '$articleCount ${s.entriesN}',
-                    theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark,
-                  )),
+                  Expanded(
+                    child: _StatCard(
+                      icon: Icons.memory_rounded,
+                      label: s.memoryCount,
+                      value: '$articleCount ${s.entriesN}',
+                      theme: theme,
+                      cardColor: cardColor,
+                      outlineColor: outlineColor,
+                      isDark: isDark,
+                    ),
+                  ),
                   const SizedBox(width: 12),
-                  Expanded(child: _StatCard(
-                    icon: Icons.bolt_rounded,
-                    label: s.tokenConsumption,
-                    value: _formatNumber(totalTokens),
-                    theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark,
-                  )),
+                  Expanded(
+                    child: _StatCard(
+                      icon: Icons.bolt_rounded,
+                      label: s.tokenConsumption,
+                      value: _formatNumber(totalTokens),
+                      theme: theme,
+                      cardColor: cardColor,
+                      outlineColor: outlineColor,
+                      isDark: isDark,
+                    ),
+                  ),
                 ],
               ),
 
               const SizedBox(height: 20),
+
+              if (authAvailable && isLoggedIn) ...[
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Text(
+                    _l(context, zh: '云端同步', en: 'Cloud Sync'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                      color: const Color(0xFF00AEEF),
+                    ),
+                  ),
+                ),
+                _SyncStatusCard(
+                  theme: theme,
+                  cardColor: cardColor,
+                  outlineColor: outlineColor,
+                  isDark: isDark,
+                  localize: (zh, en) => _l(context, zh: zh, en: en),
+                ),
+                const SizedBox(height: 20),
+              ],
 
               if (authAvailable) ...[
                 // ── Account Security ──
@@ -191,43 +242,74 @@ class AccountScreen extends ConsumerWidget {
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: outlineColor.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Column(
                     children: [
                       if (isLoggedIn) ...[
                         _SecurityTile(
+                          icon: Icons.key_rounded,
+                          title: _l(
+                            context,
+                            zh: '导出同步恢复密钥',
+                            en: 'Export sync recovery key',
+                          ),
+                          theme: theme,
+                          isDark: isDark,
+                          onTap: () => _showRecoveryKeyDialog(context, ref),
+                        ),
+                        _SecurityTile(
+                          icon: Icons.input_rounded,
+                          title: _l(
+                            context,
+                            zh: '导入同步恢复密钥',
+                            en: 'Import sync recovery key',
+                          ),
+                          theme: theme,
+                          isDark: isDark,
+                          onTap: () =>
+                              _showImportRecoveryKeyDialog(context, ref),
+                        ),
+                        _SecurityTile(
                           icon: Icons.logout_rounded,
                           title: s.logout,
-                          theme: theme, isDark: isDark,
+                          theme: theme,
+                          isDark: isDark,
                           onTap: () async {
-                          final confirm = await showDialog<bool>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: Text(s.logoutConfirmTitle),
-                              content: Text(s.logoutConfirm),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.of(ctx).pop(false),
-                                  child: Text(s.cancel),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.of(ctx).pop(true),
-                                  child: Text(s.logout),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirm == true) {
-                            await auth.signOut();
-                          }
-                        },
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text(s.logoutConfirmTitle),
+                                content: Text(s.logoutConfirm),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(ctx).pop(false),
+                                    child: Text(s.cancel),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(ctx).pop(true),
+                                    child: Text(s.logout),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              await ref
+                                  .read(authControllerProvider.notifier)
+                                  .signOut();
+                            }
+                          },
                         ),
                       ] else ...[
                         _SecurityTile(
                           icon: Icons.login_rounded,
                           title: s.accountLogin,
-                          theme: theme, isDark: isDark,
+                          theme: theme,
+                          isDark: isDark,
                           onTap: () => context.push(AppRoutes.settingsLogin),
                         ),
                       ],
@@ -244,6 +326,175 @@ class AccountScreen extends ConsumerWidget {
     );
   }
 
+  Future<void> _showRecoveryKeyDialog(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final crypto = ref.read(syncCryptoProvider);
+    final recoveryKey = await crypto.exportRecoveryKey();
+    final fingerprint = await crypto.keyFingerprint();
+    if (!context.mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_l(context, zh: '同步恢复密钥', en: 'Sync recovery key')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _l(
+                context,
+                zh: '在新设备登录同一账号后，导入这串密钥才能解密云端同步数据。请只保存在你信任的位置。',
+                en: 'After signing in on a new device, import this key to decrypt cloud sync data. Store it only somewhere you trust.',
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: SelectableText(
+                recoveryKey,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _l(
+                context,
+                zh: '指纹：$fingerprint',
+                en: 'Fingerprint: $fingerprint',
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(_l(context, zh: '关闭', en: 'Close')),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: recoveryKey));
+              if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      _l(
+                        context,
+                        zh: '已复制同步恢复密钥',
+                        en: 'Sync recovery key copied',
+                      ),
+                    ),
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.copy_rounded, size: 18),
+            label: Text(_l(context, zh: '复制', en: 'Copy')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showImportRecoveryKeyDialog(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final controller = TextEditingController();
+    try {
+      final imported = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          String? errorText;
+          return StatefulBuilder(
+            builder: (dialogContext, setState) => AlertDialog(
+              title: Text(
+                _l(context, zh: '导入同步恢复密钥', en: 'Import sync recovery key'),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _l(
+                      context,
+                      zh: '导入后，本设备会使用这把密钥解密云端同步数据。请确认它来自你自己的设备。',
+                      en: 'After import, this device will use the key to decrypt cloud sync data. Make sure it came from your own device.',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    minLines: 3,
+                    maxLines: 5,
+                    decoration: InputDecoration(
+                      hintText: 'memora-sync-key-v1:...',
+                      errorText: errorText,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: Text(_l(context, zh: '取消', en: 'Cancel')),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    try {
+                      await ref
+                          .read(syncCryptoProvider)
+                          .importRecoveryKey(controller.text);
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop(true);
+                      }
+                    } on FormatException catch (error) {
+                      setState(() {
+                        errorText = error.message;
+                      });
+                    } catch (error) {
+                      setState(() {
+                        errorText = error.toString();
+                      });
+                    }
+                  },
+                  child: Text(_l(context, zh: '导入', en: 'Import')),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
+      if (imported == true && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _l(context, zh: '同步恢复密钥已导入', en: 'Sync recovery key imported'),
+            ),
+          ),
+        );
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  String _l(BuildContext context, {required String zh, required String en}) {
+    final code = Localizations.localeOf(context).languageCode.toLowerCase();
+    return code.startsWith('zh') ? zh : en;
+  }
+
   String _formatNumber(int n) {
     if (n >= 1000000) {
       return '${(n / 1000000).toStringAsFixed(1)}M';
@@ -251,6 +502,219 @@ class AccountScreen extends ConsumerWidget {
       return '${(n / 1000).toStringAsFixed(1)}K';
     }
     return n.toString();
+  }
+}
+
+class _SyncStatusCard extends ConsumerStatefulWidget {
+  final ThemeData theme;
+  final Color cardColor;
+  final Color outlineColor;
+  final bool isDark;
+  final String Function(String zh, String en) localize;
+
+  const _SyncStatusCard({
+    required this.theme,
+    required this.cardColor,
+    required this.outlineColor,
+    required this.isDark,
+    required this.localize,
+  });
+
+  @override
+  ConsumerState<_SyncStatusCard> createState() => _SyncStatusCardState();
+}
+
+class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
+  bool _syncing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = ref.watch(syncOutboxCountProvider);
+    final lastSync = ref.watch(syncLastSyncAtProvider);
+
+    final pendingText = pending.when(
+      data: (count) => widget.localize('$count 项待上传', '$count pending'),
+      loading: () => widget.localize('检查中', 'Checking'),
+      error: (error, stackTrace) => widget.localize('读取失败', 'Unavailable'),
+    );
+    final lastSyncText = lastSync.when(
+      data: (value) => _formatLastSync(value),
+      loading: () => widget.localize('检查中', 'Checking'),
+      error: (error, stackTrace) => widget.localize('读取失败', 'Unavailable'),
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: widget.cardColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: widget.outlineColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: widget.theme.colorScheme.primary.withValues(
+                    alpha: 0.12,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.sync_rounded,
+                  size: 20,
+                  color: widget.theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.localize('同步状态', 'Sync status'),
+                      style: widget.theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      pendingText,
+                      style: widget.theme.textTheme.bodySmall?.copyWith(
+                        color: widget.isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SyncMetaRow(
+            icon: Icons.schedule_rounded,
+            label: widget.localize('上次同步', 'Last sync'),
+            value: lastSyncText,
+            theme: widget.theme,
+            isDark: widget.isDark,
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _syncing ? null : _runSync,
+              icon: _syncing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.cloud_sync_rounded, size: 18),
+              label: Text(
+                _syncing
+                    ? widget.localize('同步中', 'Syncing')
+                    : widget.localize('立即同步', 'Sync now'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runSync() async {
+    setState(() => _syncing = true);
+    try {
+      ref.invalidate(syncNowProvider);
+      final result = await ref.read(syncNowProvider.future);
+      ref.invalidate(syncOutboxCountProvider);
+      ref.invalidate(syncLastSyncAtProvider);
+      if (!mounted) return;
+
+      final message = result == null
+          ? widget.localize('请先登录账号', 'Sign in first')
+          : widget.localize(
+              '同步完成：上传 ${result.pushed}，接收 ${result.applied}/${result.pulled}',
+              'Synced: pushed ${result.pushed}, applied ${result.applied}/${result.pulled}',
+            );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(widget.localize('同步失败：$error', 'Sync failed: $error')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  String _formatLastSync(String? value) {
+    if (value == null || value.isEmpty) {
+      return widget.localize('尚未同步', 'Never synced');
+    }
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) return value;
+    final local = parsed.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
+}
+
+class _SyncMetaRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final ThemeData theme;
+  final bool isDark;
+
+  const _SyncMetaRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.theme,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 16,
+          color: isDark ? Colors.white54 : const Color(0xFF6C8594),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: isDark ? Colors.white54 : const Color(0xFF6C8594),
+          ),
+        ),
+        const Spacer(),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -289,16 +753,22 @@ class _StatCard extends StatelessWidget {
             children: [
               Icon(icon, size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 8),
-              Text(label, style: theme.textTheme.bodySmall?.copyWith(
-                color: isDark ? Colors.white54 : const Color(0xFF6C8594),
-              )),
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: isDark ? Colors.white54 : const Color(0xFF6C8594),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
-          Text(value, style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: theme.colorScheme.primary,
-          )),
+          Text(
+            value,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: theme.colorScheme.primary,
+            ),
+          ),
         ],
       ),
     );
@@ -324,14 +794,13 @@ class _MedalIcon extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 44, height: 44,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.15),
             shape: BoxShape.circle,
           ),
-          child: Center(
-            child: Icon(icon, size: 22, color: color),
-          ),
+          child: Center(child: Icon(icon, size: 22, color: color)),
         ),
         const SizedBox(height: 4),
         Text(
@@ -366,14 +835,18 @@ class _SecurityTile extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.vertical(top: const Radius.circular(24), bottom: const Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(
+          top: const Radius.circular(24),
+          bottom: const Radius.circular(24),
+        ),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
               Container(
-                width: 36, height: 36,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   color: theme.colorScheme.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
@@ -381,9 +854,7 @@ class _SecurityTile extends StatelessWidget {
                 child: Icon(icon, size: 20, color: theme.colorScheme.primary),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                child: Text(title, style: theme.textTheme.titleMedium),
-              ),
+              Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
               Icon(
                 Icons.chevron_right_rounded,
                 color: isDark ? Colors.white38 : const Color(0xFF8AA1AF),

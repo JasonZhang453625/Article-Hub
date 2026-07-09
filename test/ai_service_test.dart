@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +7,8 @@ import 'package:http/testing.dart';
 import 'package:memora/data/services/ai_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test(
     'long article is summarized in bounded chunks before final synthesis',
     () async {
@@ -92,8 +94,7 @@ void main() {
     Map<String, dynamic>? requestedThinking;
     final client = MockClient((request) async {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
-      requestedMaxCompletionTokens =
-          body['max_completion_tokens'] as int?;
+      requestedMaxCompletionTokens = body['max_completion_tokens'] as int?;
       requestedThinking = body['thinking'] as Map<String, dynamic>?;
       expect(body.containsKey('max_tokens'), isFalse);
       return http.Response(
@@ -102,10 +103,10 @@ void main() {
             {
               'message': {
                 'content':
-                    '{"title":"Embodied intelligence","summary":"Summary ready"}'
+                    '{"title":"Embodied intelligence","summary":"Summary ready"}',
               },
               'finish_reason': 'stop',
-            }
+            },
           ],
         }),
         200,

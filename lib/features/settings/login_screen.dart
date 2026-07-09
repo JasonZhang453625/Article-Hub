@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/services.dart';
 import '../../data/services/auth_service.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/auth_provider.dart';
@@ -16,6 +16,8 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   static const int _resendSeconds = 60;
+  static const int _minOtpDigits = 6;
+  static const int _maxOtpDigits = 8;
 
   final _emailController = TextEditingController();
   final _tokenController = TextEditingController();
@@ -52,9 +54,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   /// Maps a raw exception to a user-facing localized message.
   String _mapError(Object e) {
     final s = ref.read(stringsProvider);
-    if (e is SupabaseNotConfiguredException) return s.loginErrorNotConfigured;
+    if (e is BackendNotConfiguredException) return s.loginErrorNotConfigured;
     final msg = e.toString().toLowerCase();
-    if (e is AuthException) {
+    if (e is AuthApiException) {
       if (msg.contains('email') && msg.contains('invalid')) {
         return s.emailInvalid;
       }
@@ -88,8 +90,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      final auth = ref.read(authServiceProvider);
-      await auth.sendOtp(_emailController.text.trim());
+      await ref
+          .read(authControllerProvider.notifier)
+          .sendOtp(_emailController.text.trim());
       setState(() {
         _codeSent = true;
         _submittedEmail = _emailController.text.trim();
@@ -103,15 +106,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _verifyCode() async {
-    if (_tokenController.text.trim().isEmpty) return;
+    final token = _tokenController.text.replaceAll(RegExp(r'\s+'), '');
+    if (token.length < _minOtpDigits) return;
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final auth = ref.read(authServiceProvider);
-      await auth.verifyOtp(_submittedEmail, _tokenController.text.trim());
+      await ref
+          .read(authControllerProvider.notifier)
+          .verifyOtp(_submittedEmail, token);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       setState(() => _error = _mapError(e));
@@ -126,8 +131,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      final auth = ref.read(authServiceProvider);
-      await auth.sendOtp(_submittedEmail);
+      await ref.read(authControllerProvider.notifier).sendOtp(_submittedEmail);
       _startCountdown();
     } catch (e) {
       setState(() => _error = _mapError(e));
@@ -219,12 +223,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     TextFormField(
                       controller: _tokenController,
                       keyboardType: TextInputType.number,
-                      maxLength: 6,
+                      maxLength: _maxOtpDigits,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 24, letterSpacing: 8),
+                      style: const TextStyle(fontSize: 24, letterSpacing: 6),
                       decoration: const InputDecoration(counterText: ''),
                       onChanged: (v) {
-                        if (v.trim().length == 6) {
+                        if (v.length == _maxOtpDigits) {
                           _verifyCode();
                         }
                       },

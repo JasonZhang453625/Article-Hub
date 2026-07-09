@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/models/folder.dart';
+import '../../data/services/sync_outbox_service.dart';
 import 'article_providers.dart';
+import 'sync_providers.dart';
 
 final foldersProvider =
     StateNotifierProvider<FoldersNotifier, AsyncValue<List<Folder>>>((ref) {
@@ -31,12 +33,14 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
   Future<void> add(Folder folder) async {
     final box = await _openBox();
     await box.put(folder.id, folder);
+    await _enqueueFolder(folder);
     await _load();
   }
 
   Future<void> update(Folder folder) async {
     final box = await _openBox();
     await box.put(folder.id, folder);
+    await _enqueueFolder(folder);
     await _load();
   }
 
@@ -45,10 +49,20 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
     final deleted = box.get(id);
     final newParentId = deleted?.parentId;
     await box.delete(id);
+    await _ref
+        .read(syncOutboxProvider)
+        .enqueue(
+          SyncOutboxRecord.create(
+            collection: SyncCollections.folders,
+            itemId: id,
+            operation: SyncOperation.delete,
+          ),
+        );
     for (final folder in box.values.toList()) {
       if (folder.parentId == id) {
         folder.parentId = newParentId;
         await folder.save();
+        await _enqueueFolder(folder);
       }
     }
     await _ref.read(articlesProvider.notifier).clearFolder(id);
@@ -56,4 +70,17 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
   }
 
   void refresh() => _load();
+
+  Future<void> _enqueueFolder(Folder folder) {
+    return _ref
+        .read(syncOutboxProvider)
+        .enqueue(
+          SyncOutboxRecord.create(
+            collection: SyncCollections.folders,
+            itemId: folder.id,
+            operation: SyncOperation.upsert,
+            payload: folder.toJson(),
+          ),
+        );
+  }
 }

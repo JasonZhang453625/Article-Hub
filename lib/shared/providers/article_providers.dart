@@ -10,8 +10,10 @@ import '../../data/repositories/passage_repository.dart';
 import '../../data/repositories/article_repository.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/embedding_service.dart';
+import '../../data/services/sync_outbox_service.dart';
 import '../utils/url_helpers.dart';
 import 'ai_providers.dart';
+import 'sync_providers.dart';
 
 final hiveInitProvider = FutureProvider<void>((ref) async {
   await Hive.initFlutter();
@@ -70,6 +72,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> add(Article article) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.add(article);
+    await _enqueueArticle(article);
     _cached.add(article);
     _cached.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     _emit();
@@ -78,6 +81,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> update(Article article) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.update(article);
+    await _enqueueArticle(article);
     final idx = _cached.indexWhere((a) => a.id == article.id);
     if (idx != -1) {
       _cached[idx] = article;
@@ -103,6 +107,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
       coverImageUrl: coverImageUrl ?? current.coverImageUrl,
     );
     await repo.update(updated);
+    await _enqueueArticle(updated);
 
     final idx = _cached.indexWhere((a) => a.id == articleId);
     if (idx != -1) {
@@ -121,23 +126,40 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     if (article.summary == null || article.summary!.isEmpty) return;
 
     final input = IndexService.buildEmbeddingInput(article);
-    embedding.embed(input).then((result) {
-      if (result == null) return;
-      index.put(IndexRecord(
-        articleId: article.id,
-        model: result.model,
-        fingerprint: contentFingerprint(
-            article.title, article.summary!, article.tags),
-        vector: result.vector,
-      ));
-    }).catchError((e) {
-      // Index update is best-effort; don't fail the summary save.
-    });
+    embedding
+        .embed(input)
+        .then((result) {
+          if (result == null) return;
+          index.put(
+            IndexRecord(
+              articleId: article.id,
+              model: result.model,
+              fingerprint: contentFingerprint(
+                article.title,
+                article.summary!,
+                article.tags,
+              ),
+              vector: result.vector,
+            ),
+          );
+        })
+        .catchError((e) {
+          // Index update is best-effort; don't fail the summary save.
+        });
   }
 
   Future<void> delete(String id) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.delete(id);
+    await _ref
+        .read(syncOutboxProvider)
+        .enqueue(
+          SyncOutboxRecord.create(
+            collection: SyncCollections.articles,
+            itemId: id,
+            operation: SyncOperation.delete,
+          ),
+        );
     _ref.read(indexServiceProvider).delete(id).catchError((_) {});
     _cached.removeWhere((a) => a.id == id);
     _emit();
@@ -145,8 +167,10 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
 
   Future<int> importAll(Iterable<Article> articles) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
-    final count = await repo.importAll(articles);
-    for (final article in articles) {
+    final imported = articles.toList(growable: false);
+    final count = await repo.importAll(imported);
+    for (final article in imported) {
+      await _enqueueArticle(article);
       final idx = _cached.indexWhere((a) => a.id == article.id);
       if (idx != -1) {
         _cached[idx] = article;
@@ -157,6 +181,19 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     _cached.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     _emit();
     return count;
+  }
+
+  Future<void> _enqueueArticle(Article article) {
+    return _ref
+        .read(syncOutboxProvider)
+        .enqueue(
+          SyncOutboxRecord.create(
+            collection: SyncCollections.articles,
+            itemId: article.id,
+            operation: SyncOperation.upsert,
+            payload: article.toJson(),
+          ),
+        );
   }
 
   Future<int> addMany(Iterable<String> urls) async {
@@ -184,6 +221,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     for (final article in _cached) {
       if (article.folderId == folderId) {
         article.folderId = null;
+        await _enqueueArticle(article);
       }
     }
     _emit();
@@ -201,7 +239,9 @@ final selectedSourceProvider = StateProvider<String>((ref) => '');
 final selectedFolderIdProvider = StateProvider<String>((ref) => '');
 
 final homeHeaderVisibilityProvider =
-    StateNotifierProvider<HomeHeaderVisibilityNotifier, AsyncValue<bool>>((ref) {
+    StateNotifierProvider<HomeHeaderVisibilityNotifier, AsyncValue<bool>>((
+      ref,
+    ) {
       return HomeHeaderVisibilityNotifier(ref);
     });
 

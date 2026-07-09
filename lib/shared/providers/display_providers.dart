@@ -4,6 +4,8 @@ import '../../data/models/filter_group.dart';
 import 'article_providers.dart';
 import 'filter_providers.dart';
 
+final selectedArticleIdProvider = StateProvider<String?>((ref) => null);
+
 final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final articlesAsync = ref.watch(articlesProvider);
   final query = ref.watch(searchQueryProvider);

@@ -92,9 +92,37 @@ CustomTransitionPage<void> _buildPage({
   );
 }
 
+bool _isAuthCallbackUri(Uri uri) {
+  final fragmentParameters = Uri.splitQueryString(uri.fragment);
+  const authCallbackKeys = {
+    'access_token',
+    'code',
+    'error',
+    'error_code',
+    'error_description',
+    'refresh_token',
+  };
+
+  return authCallbackKeys.any(
+    (key) =>
+        uri.queryParameters.containsKey(key) ||
+        fragmentParameters.containsKey(key),
+  );
+}
+
 final appRouter = GoRouter(
   initialLocation: AppRoutes.chat,
   routes: [
+    GoRoute(
+      path: '/',
+      redirect: (context, state) => _isAuthCallbackUri(state.uri)
+          ? AppRoutes.settingsAccount
+          : AppRoutes.chat,
+    ),
+    GoRoute(
+      path: '/login-callback',
+      redirect: (context, state) => AppRoutes.settingsAccount,
+    ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
         return AppShell(navigationShell: navigationShell);

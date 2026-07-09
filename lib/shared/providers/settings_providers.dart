@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
+import '../../data/services/sync_outbox_service.dart';
 import 'article_providers.dart';
+import 'sync_providers.dart';
 
 final settingsProvider =
     StateNotifierProvider<SettingsNotifier, AsyncValue<AppSettings>>((ref) {
@@ -27,7 +29,9 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     var settings = _box!.get(_key) ?? AppSettings();
     // Set first launch timestamp if not already set.
     if (settings.firstLaunchMs == null) {
-      settings = settings.copyWith(firstLaunchMs: DateTime.now().millisecondsSinceEpoch);
+      settings = settings.copyWith(
+        firstLaunchMs: DateTime.now().millisecondsSinceEpoch,
+      );
       await _box!.put(_key, settings);
     }
     state = AsyncValue.data(settings);
@@ -36,6 +40,16 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   Future<void> _save(AppSettings settings) async {
     _box ??= await Hive.openBox<AppSettings>(_boxName);
     await _box!.put(_key, settings);
+    await _ref
+        .read(syncOutboxProvider)
+        .enqueue(
+          SyncOutboxRecord.create(
+            collection: SyncCollections.appSettings,
+            itemId: _key,
+            operation: SyncOperation.upsert,
+            payload: settings.toJson(),
+          ),
+        );
     state = AsyncValue.data(settings);
   }
 
@@ -73,11 +87,9 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     String? model,
   }) async {
     final current = state.valueOrNull ?? AppSettings();
-    await _save(current.copyWith(
-      aiBaseUrl: baseUrl,
-      aiApiKey: apiKey,
-      aiModel: model,
-    ));
+    await _save(
+      current.copyWith(aiBaseUrl: baseUrl, aiApiKey: apiKey, aiModel: model),
+    );
   }
 
   Future<void> setLanguage(int index) async {
@@ -121,11 +133,13 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     String? model,
   }) async {
     final current = state.valueOrNull ?? AppSettings();
-    await _save(current.copyWith(
-      embeddingBaseUrl: baseUrl,
-      embeddingApiKey: apiKey,
-      embeddingModel: model,
-    ));
+    await _save(
+      current.copyWith(
+        embeddingBaseUrl: baseUrl,
+        embeddingApiKey: apiKey,
+        embeddingModel: model,
+      ),
+    );
   }
 
   Future<void> updateSourcePlatformOrder(List<String> order) async {
@@ -180,39 +194,35 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
 
   Future<void> addTokenUsage(int tokens) async {
     final current = state.valueOrNull ?? AppSettings();
-    await _save(current.copyWith(
-      totalTokensUsed: current.totalTokensUsed + tokens,
-    ));
+    await _save(
+      current.copyWith(totalTokensUsed: current.totalTokensUsed + tokens),
+    );
   }
 }
 
 /// Derived providers for convenience.
 final themeModeProvider = Provider<ThemeMode>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.themeMode,
-    orElse: () => ThemeMode.light,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.themeMode, orElse: () => ThemeMode.light);
 });
 
 final fontSizeProvider = Provider<double>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.fontSize,
-    orElse: () => 14.0,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.fontSize, orElse: () => 14.0);
 });
 
 final webZoomProvider = Provider<int>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.webZoomPercent,
-    orElse: () => 100,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.webZoomPercent, orElse: () => 100);
 });
 
 final clipboardDetectionEnabledProvider = Provider<bool>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.clipboardDetectionEnabled,
-    orElse: () => false,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.clipboardDetectionEnabled, orElse: () => false);
 });
 
 /// True only when base URL, model, AND API key are all present. The key is
@@ -220,39 +230,43 @@ final clipboardDetectionEnabledProvider = Provider<bool>((ref) {
 /// backups; it is never transmitted to any server other than the user's own
 /// AI provider during a summary request.
 final aiConfiguredProvider = Provider<bool>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) =>
-        s.aiBaseUrl.trim().isNotEmpty && s.aiApiKey.trim().isNotEmpty,
-    orElse: () => false,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(
+        data: (s) =>
+            s.aiBaseUrl.trim().isNotEmpty && s.aiApiKey.trim().isNotEmpty,
+        orElse: () => false,
+      );
 });
 
 final orderedSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (settings) => settings.orderedSourcePlatforms,
-    orElse: () => SourcePlatform.values,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(
+        data: (settings) => settings.orderedSourcePlatforms,
+        orElse: () => SourcePlatform.values,
+      );
 });
 
 final visibleSourcePlatformsProvider = Provider<List<SourcePlatform>>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (settings) => settings.visibleSourcePlatforms,
-    orElse: () => SourcePlatform.values,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(
+        data: (settings) => settings.visibleSourcePlatforms,
+        orElse: () => SourcePlatform.values,
+      );
 });
 
 final languageIndexProvider = Provider<int>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.languageIndex,
-    orElse: () => 0,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.languageIndex, orElse: () => 0);
 });
 
 final summaryVerbosityProvider = Provider<int>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.summaryVerbosityIndex,
-    orElse: () => 0,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.summaryVerbosityIndex, orElse: () => 0);
 });
 
 /// Returns the AI prompt language instruction based on the language setting.
@@ -269,32 +283,28 @@ String aiLanguagePrompt(int languageIndex) {
 }
 
 final hideInboxTabProvider = Provider<bool>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.hideInboxTab,
-    orElse: () => false,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.hideInboxTab, orElse: () => false);
 });
 
 final fontWeightIndexProvider = Provider<int>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.fontWeightIndex,
-    orElse: () => 0,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.fontWeightIndex, orElse: () => 0);
 });
 
 final startupTabIndexProvider = Provider<int>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.startupTabIndex,
-    orElse: () => 0,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.startupTabIndex, orElse: () => 0);
 });
 
 /// Computed days since first launch.
 final usageDaysProvider = Provider<int>((ref) {
-  final ms = ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.firstLaunchMs,
-    orElse: () => null,
-  );
+  final ms = ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.firstLaunchMs, orElse: () => null);
   if (ms == null) return 0;
   final first = DateTime.fromMillisecondsSinceEpoch(ms);
   return DateTime.now().difference(first).inDays;
@@ -302,16 +312,14 @@ final usageDaysProvider = Provider<int>((ref) {
 
 /// Total articles count (from the articles provider).
 final articlesCountProvider = Provider<int>((ref) {
-  return ref.watch(articlesProvider).maybeWhen(
-    data: (articles) => articles.length,
-    orElse: () => 0,
-  );
+  return ref
+      .watch(articlesProvider)
+      .maybeWhen(data: (articles) => articles.length, orElse: () => 0);
 });
 
 /// Cumulative token usage.
 final totalTokensUsedProvider = Provider<int>((ref) {
-  return ref.watch(settingsProvider).maybeWhen(
-    data: (s) => s.totalTokensUsed,
-    orElse: () => 0,
-  );
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.totalTokensUsed, orElse: () => 0);
 });

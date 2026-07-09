@@ -7,12 +7,14 @@ class ArticleCard extends StatelessWidget {
   final Article article;
   final VoidCallback onTap;
   final VoidCallback onInfoTap;
+  final bool isSelected;
 
   const ArticleCard({
     super.key,
     required this.article,
     required this.onTap,
     required this.onInfoTap,
+    this.isSelected = false,
   });
 
   @override
@@ -20,7 +22,9 @@ class ArticleCard extends StatelessWidget {
     final accentColor = article.source.accentColor;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final cardBg = theme.colorScheme.surface;
+    final cardBg = isSelected
+        ? theme.colorScheme.primaryContainer.withValues(alpha: 0.3)
+        : theme.colorScheme.surface;
     final metadata = [
       article.source.displayName,
       formatRelative(article.updatedAt),
@@ -38,7 +42,12 @@ class ArticleCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: cardBg,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: accentColor.withValues(alpha: 0.18)),
+              border: Border.all(
+                color: isSelected
+                    ? accentColor.withValues(alpha: 0.5)
+                    : accentColor.withValues(alpha: 0.18),
+                width: isSelected ? 1.5 : 1.0,
+              ),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

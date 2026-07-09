@@ -9,11 +9,8 @@ import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/connectivity_provider.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/utils/breakpoints.dart';
 import 'share_handler.dart';
-
-/// Width threshold above which the app switches from mobile (bottom nav) to
-/// desktop (side rail) layout.
-const double _desktopBreakpoint = 720;
 
 class AppShell extends ConsumerStatefulWidget {
   final StatefulNavigationShell navigationShell;
@@ -95,7 +92,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isDesktop = constraints.maxWidth >= _desktopBreakpoint;
+                final isDesktop = constraints.maxWidth >= tabletBreakpoint;
 
         // ── Offline banner reused by both layouts ──
         Widget? offlineBanner;
