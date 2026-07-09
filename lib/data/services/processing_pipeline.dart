@@ -245,7 +245,6 @@ class ProcessingPipeline {
       model: settings.aiModel,
     );
     final langHint = aiLanguagePrompt(settings.languageIndex);
-    final verbosity = settings.summaryVerbosityIndex;
 
     try {
       final cachedContent = _contentCache.remove(article.id);
@@ -261,7 +260,6 @@ class ProcessingPipeline {
         article.title,
         cachedContent,
         languageHint: langHint,
-        verbosity: verbosity,
       );
 
       if (result.summary == null || result.summary!.isEmpty) {

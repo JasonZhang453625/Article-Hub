@@ -136,7 +136,6 @@ final summaryRegenerationProvider =
               article.title,
               content,
               languageHint: aiLanguagePrompt(settings.languageIndex),
-              verbosity: settings.summaryVerbosityIndex,
             );
             final summary = result.summary;
             if (summary == null || summary.isEmpty) {

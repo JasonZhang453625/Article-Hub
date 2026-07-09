@@ -60,7 +60,6 @@ class AiService {
     String title,
     String content, {
     String languageHint = '',
-    int verbosity = 0,
   }) async {
     if (!isConfigured) return (title: null, summary: null);
 
@@ -74,8 +73,6 @@ class AiService {
         title,
         chunkSummaries.join('\n\n---\n\n'),
         languageHint: languageHint,
-        verbosity: verbosity,
-        sourceLength: content.length,
       );
     }
 
@@ -83,8 +80,6 @@ class AiService {
       title,
       content,
       languageHint: languageHint,
-      verbosity: verbosity,
-      sourceLength: content.length,
     );
   }
 
@@ -92,8 +87,6 @@ class AiService {
     String title,
     String content, {
     required String languageHint,
-    required int verbosity,
-    required int sourceLength,
   }) async {
     final isChinese =
         languageHint.contains('Chinese') || languageHint.contains('中文');
