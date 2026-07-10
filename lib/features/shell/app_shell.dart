@@ -264,10 +264,10 @@ class _DesktopShell extends StatelessWidget {
                 theme.colorScheme.surfaceContainerLowest,
             leading: Padding(
               padding: const EdgeInsets.only(top: 8, bottom: 8),
-              child: Icon(
-                Icons.article_rounded,
-                size: 28,
-                color: theme.colorScheme.primary,
+              child: Image.asset(
+                'assets/branding/memora_icon.png',
+                width: 32,
+                height: 32,
               ),
             ),
             destinations: destinations.map((d) {

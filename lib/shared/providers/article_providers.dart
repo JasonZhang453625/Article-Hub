@@ -105,6 +105,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
       summary: summary,
       summaryFeedback: Article.clearValue,
       coverImageUrl: coverImageUrl ?? current.coverImageUrl,
+      lastProcessedAt: DateTime.now(),
     );
     await repo.update(updated);
     await _enqueueArticle(updated);

@@ -310,7 +310,8 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
     final summary = widget.article.summary;
     final aiConfigured = ref.watch(aiConfiguredProvider);
     final s = ref.watch(stringsProvider);
-    final regenerating = _isRegenerating();
+    final pipelineGenerating = widget.article.processingStage == ProcessingStage.summary;
+    final regenerating = _isRegenerating() || pipelineGenerating;
 
     if (summary == null || summary.isEmpty) {
       return Container(
