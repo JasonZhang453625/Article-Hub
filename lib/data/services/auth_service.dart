@@ -35,14 +35,21 @@ class AuthService {
   Future<void> sendOtp(String email) async {
     if (!BackendConfig.isConfigured) throw BackendNotConfiguredException();
 
-    final response = await http
-        .post(
-          BackendConfig.uri('/auth/request-otp'),
-          headers: const {'Content-Type': 'application/json'},
-          body: jsonEncode({'email': email.trim(), 'purpose': 'login'}),
-        )
-        .timeout(const Duration(seconds: 20));
-    _throwIfFailed(response);
+    final uri = BackendConfig.uri('/auth/request-otp');
+    debugPrint('[Auth] sendOtp -> $uri');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email.trim(), 'purpose': 'login'}),
+          )
+          .timeout(const Duration(seconds: 20));
+      _throwIfFailed(response);
+    } catch (e, st) {
+      debugPrint('[Auth] sendOtp ERROR: $e\n$st');
+      rethrow;
+    }
   }
 
   Future<AuthSession> verifyOtp(String email, String token) async {

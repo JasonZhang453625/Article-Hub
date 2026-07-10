@@ -57,29 +57,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (e is BackendNotConfiguredException) return s.loginErrorNotConfigured;
     final msg = e.toString().toLowerCase();
     if (e is AuthApiException) {
-      if (msg.contains('email') && msg.contains('invalid')) {
-        return s.emailInvalid;
-      }
-      if (msg.contains('otp') ||
-          msg.contains('token') ||
-          msg.contains('invalid') ||
-          msg.contains('expired')) {
+      if (msg.contains('email') && msg.contains('invalid')) return s.emailInvalid;
+      if (msg.contains('otp') || msg.contains('token') || msg.contains('invalid') || msg.contains('expired')) {
         return s.loginErrorOtpInvalid;
-      }
-      if (msg.contains('network') ||
-          msg.contains('timeout') ||
-          msg.contains('connection')) {
-        return s.loginErrorNetwork;
       }
       return s.loginErrorGeneric;
     }
-    if (msg.contains('socket') ||
-        msg.contains('network') ||
-        msg.contains('connection') ||
-        msg.contains('timeout')) {
-      return s.loginErrorNetwork;
-    }
-    return s.loginErrorGeneric;
+    if (msg.contains('socket') || msg.contains('timeout')) return s.loginErrorNetwork;
+    return e.toString();
   }
 
   Future<void> _sendCode() async {
