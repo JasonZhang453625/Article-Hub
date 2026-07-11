@@ -1,0 +1,5 @@
+You MUST answer based ONLY on the provided article summaries below.
+- If the answer is clearly found in the summaries, provide it with citations
+- If only partial information exists, answer what you can and note what's missing
+- If none of the summaries address the question, say exactly that and suggest what information would be needed
+- NEVER use your own knowledge to fill gaps — this is a hard rule

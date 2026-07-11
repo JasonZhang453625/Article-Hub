@@ -9,7 +9,6 @@ import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/features/inbox/inbox_screen.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
-import 'package:memora/shared/providers/locale_provider.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
 
 /// Phase 1.4 widget tests for [InboxScreen].

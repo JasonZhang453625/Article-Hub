@@ -52,6 +52,10 @@ class Article extends HiveObject {
   DateTime? lastProcessedAt;
   String? suggestedFolderId;
 
+  /// True when the knowledge text is the extracted full page body
+  /// (full-text save), false when it is an AI-generated summary.
+  bool isFullText;
+
   Article({
     required this.id,
     required this.url,
@@ -72,6 +76,7 @@ class Article extends HiveObject {
     this.retryCount = 0,
     this.lastProcessedAt,
     this.suggestedFolderId,
+    this.isFullText = false,
   }) : createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -107,6 +112,7 @@ class Article extends HiveObject {
     int? retryCount,
     Object? lastProcessedAt = _unset,
     Object? suggestedFolderId = _unset,
+    bool? isFullText,
   }) {
     return Article(
       id: id ?? this.id,
@@ -156,6 +162,7 @@ class Article extends HiveObject {
           : (identical(suggestedFolderId, clearValue)
               ? null
               : suggestedFolderId as String?),
+      isFullText: isFullText ?? this.isFullText,
     );
   }
 
@@ -183,6 +190,7 @@ class Article extends HiveObject {
       'retryCount': retryCount,
       'lastProcessedAt': lastProcessedAt?.toIso8601String(),
       'suggestedFolderId': suggestedFolderId,
+      'isFullText': isFullText,
     };
   }
 
@@ -228,6 +236,7 @@ class Article extends HiveObject {
       suggestedFolderId: json['suggestedFolderId'] is String
           ? json['suggestedFolderId'] as String
           : null,
+      isFullText: json['isFullText'] == true,
     );
   }
 
@@ -277,13 +286,14 @@ class ArticleAdapter extends TypeAdapter<Article> {
       retryCount: fields[16] is int ? fields[16] as int : 0,
       lastProcessedAt: fields[17] as DateTime?,
       suggestedFolderId: fields[18] as String?,
+      isFullText: fields[19] as bool? ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(19)
+      ..writeByte(20)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -321,7 +331,9 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(17)
       ..write(obj.lastProcessedAt)
       ..writeByte(18)
-      ..write(obj.suggestedFolderId);
+      ..write(obj.suggestedFolderId)
+      ..writeByte(19)
+      ..write(obj.isFullText);
   }
 }
 

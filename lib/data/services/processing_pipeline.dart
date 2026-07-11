@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import '../models/passage.dart';
 import '../models/settings.dart';
@@ -30,6 +30,9 @@ import 'prompt_service.dart';
 /// 403/timeout/network errors. This happens transparently without user
 /// intervention.
 class ProcessingPipeline {
+  /// Cap text sent to tag/folder AI prompts when the body is very long.
+  static const int _aiContextMaxChars = 6000;
+
   final ArticlesNotifier _articles;
   final AppSettings? Function() _getSettings;
   final List<Folder> Function() _getFolders;
@@ -132,6 +135,60 @@ class ProcessingPipeline {
     await _articles.update(current);
 
     // Incrementally update the vector index.
+    await _updateIndex(current);
+    _fetchedPageCache.remove(current.id);
+
+    return current;
+  }
+
+  /// Full-text save path: metadata → extract body → store body as summary
+  /// (no AI compression) → tags → folder → index.
+  ///
+  /// Title still comes from metadata. Tags/folder still use AI when configured.
+  /// User thoughts remain in [Article.notes] and are never overwritten.
+  Future<Article?> processFullText(Article article) async {
+    _settings = _getSettings();
+    _folders = List<Folder>.from(_getFolders());
+
+    var current = article.copyWith(
+      processingStatus: ProcessingStatus.processing,
+      processingStage: ProcessingStage.metadata,
+    );
+    await _articles.update(current);
+
+    current = await _stageMetadata(current);
+    if (current.processingStatus == ProcessingStatus.failed) {
+      await _articles.update(current);
+      return current;
+    }
+
+    current = await _stageContent(current);
+    if (current.processingStatus == ProcessingStatus.failed) {
+      await _articles.update(current);
+      return current;
+    }
+
+    // Promote extracted body to summary without AI summarization.
+    _notifyStage(current, ProcessingStage.summary);
+    final body = _contentCache.remove(current.id) ?? '';
+    if (body.trim().isEmpty) {
+      current = _fail(current, 'summary', 'Could not extract page content');
+      await _articles.update(current);
+      return current;
+    }
+    current = current.copyWith(summary: body.trim(), isFullText: true);
+    await _articles.update(current);
+
+    current = await _stageTags(current);
+    current = await _stageFolderSuggestion(current);
+
+    current = current.copyWith(
+      processingStatus: ProcessingStatus.completed,
+      processingStage: Article.clearValue,
+      lastProcessedAt: DateTime.now(),
+    );
+    await _articles.update(current);
+
     await _updateIndex(current);
     _fetchedPageCache.remove(current.id);
 
@@ -283,6 +340,7 @@ class ProcessingPipeline {
       return article.copyWith(
         title: newTitle ?? article.title,
         summary: result.summary,
+        isFullText: false,
       );
     } catch (e) {
       return _fail(article, 'summary', e);
@@ -302,7 +360,10 @@ class ProcessingPipeline {
       final summary = article.summary ?? '';
       if (summary.isEmpty) return article;
 
-      final tags = await _generateTags(article.title, summary);
+      final tags = await _generateTags(
+        article.title,
+        _truncateForAi(summary),
+      );
       if (tags.isNotEmpty) {
         final existing = Set<String>.from(article.tags);
         final merged = [...article.tags];
@@ -378,7 +439,7 @@ class ProcessingPipeline {
 
       final suggested = await _suggestFolder(
         article.title,
-        article.summary ?? '',
+        _truncateForAi(article.summary ?? ''),
         folderNames,
       );
       developer.log('folder suggestion: AI returned "$suggested"',
@@ -483,6 +544,11 @@ class ProcessingPipeline {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
+
+  String _truncateForAi(String text) {
+    if (text.length <= _aiContextMaxChars) return text;
+    return text.substring(0, _aiContextMaxChars);
+  }
 
   Future<void> _updateIndex(Article article) async {
     final embedding = _embedding;

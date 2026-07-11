@@ -5,6 +5,7 @@ import '../../data/models/folder.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/locale_strings.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 
 class FoldersScreen extends ConsumerStatefulWidget {
   const FoldersScreen({super.key});
@@ -49,9 +50,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
               } catch (e) {
                 if (!context.mounted) return;
                 final s2 = ref.read(stringsProvider);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('${s2.saveFailed}: $e')),
-                );
+                showAppSnackBar(context, message: '${s2.saveFailed}: $e');
               }
             },
             child: Text(s.create),
@@ -88,9 +87,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
               } catch (e) {
                 if (!context.mounted) return;
                 final s2 = ref.read(stringsProvider);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('${s2.saveFailed}: $e')),
-                );
+                showAppSnackBar(context, message: '${s2.saveFailed}: $e');
               }
             },
             child: Text(s.rename),
@@ -120,9 +117,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
               } catch (e) {
                 if (!context.mounted) return;
                 final s2 = ref.read(stringsProvider);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('${s2.saveFailed}: $e')),
-                );
+                showAppSnackBar(context, message: '${s2.saveFailed}: $e');
               }
             },
             style: FilledButton.styleFrom(

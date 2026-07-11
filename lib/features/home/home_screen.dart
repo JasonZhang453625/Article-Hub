@@ -9,6 +9,7 @@ import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/breakpoints.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 import '../../config/routes.dart';
 import 'widgets/passage_card.dart';
 import 'widgets/search_filter_bar.dart';
@@ -99,18 +100,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   void _showClipboardSuggestion(String url) {
     final s = ref.read(stringsProvider);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 6),
-        content: Text('${s.clipboardLink}: ${extractDomain(url)}'),
-        action: SnackBarAction(
-          label: s.clipboardSave,
-          onPressed: () {
-            context.push(AppRoutes.addArticle, extra: url);
-          },
-        ),
+    showAppSnackBar(
+      context,
+      message: '${s.clipboardLink}: ${extractDomain(url)}',
+      clearExisting: true,
+      action: SnackBarAction(
+        label: s.clipboardSave,
+        onPressed: () {
+          context.push(AppRoutes.addArticle, extra: url);
+        },
       ),
     );
   }

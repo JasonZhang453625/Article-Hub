@@ -9,6 +9,7 @@ import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/sync_providers.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 
 class AccountScreen extends ConsumerWidget {
@@ -384,15 +385,12 @@ class AccountScreen extends ConsumerWidget {
               await Clipboard.setData(ClipboardData(text: recoveryKey));
               if (dialogContext.mounted) Navigator.of(dialogContext).pop();
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      _l(
-                        context,
-                        zh: '已复制同步恢复密钥',
-                        en: 'Sync recovery key copied',
-                      ),
-                    ),
+                showAppSnackBar(
+                  context,
+                  message: _l(
+                    context,
+                    zh: '已复制同步恢复密钥',
+                    en: 'Sync recovery key copied',
                   ),
                 );
               }
@@ -477,12 +475,9 @@ class AccountScreen extends ConsumerWidget {
       );
 
       if (imported == true && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _l(context, zh: '同步恢复密钥已导入', en: 'Sync recovery key imported'),
-            ),
-          ),
+        showAppSnackBar(
+          context,
+          message: _l(context, zh: '同步恢复密钥已导入', en: 'Sync recovery key imported'),
         );
       }
     } finally {
@@ -643,15 +638,12 @@ class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
               '同步完成：上传 ${result.pushed}，接收 ${result.applied}/${result.pulled}',
               'Synced: pushed ${result.pushed}, applied ${result.applied}/${result.pulled}',
             );
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      showAppSnackBar(context, message: message);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(widget.localize('同步失败：$error', 'Sync failed: $error')),
-        ),
+      showAppSnackBar(
+        context,
+        message: widget.localize('同步失败：$error', 'Sync failed: $error'),
       );
     } finally {
       if (mounted) setState(() => _syncing = false);

@@ -6,6 +6,7 @@ import '../../config/routes.dart';
 import '../../data/models/passage.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/embedding_service.dart';
+import '../../data/services/prompt_service.dart';
 import '../../data/services/rag_citation.dart';
 import '../../data/services/retrieval_log_service.dart';
 import '../../data/services/retrieval_service.dart';
@@ -29,6 +30,7 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final _prompts = PromptService();
   final List<ChatMessage> _messages = [];
   bool _loading = false;
 
@@ -166,41 +168,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final langHint = aiLanguagePrompt(settings.languageIndex);
 
     try {
-      final knowledgeRule = settings.chatKnowledgeSourceIndex == 0
-          ? 'You MUST answer based ONLY on the provided article summaries below.\n'
-              '- If the answer is clearly found in the summaries, provide it with citations\n'
-              '- If only partial information exists, answer what you can and note what\'s missing\n'
-              '- If none of the summaries address the question, say exactly that and suggest what information would be needed\n'
-              '- NEVER use your own knowledge to fill gaps — this is a hard rule'
+      final knowledgeRulePath = settings.chatKnowledgeSourceIndex == 0
+          ? 'chat/knowledge_only.txt'
           : candidates.isEmpty
-              ? 'No relevant articles were found in the knowledge base for this question. '
-                  'Answer using your general knowledge. Be thorough and factual.'
-              : 'Primarily use the provided article summaries. When the summaries '
-                  'don\'t cover the topic, you may supplement with your general '
-                  'knowledge, but prefix that portion with "Based on general knowledge:". '
-                  'Always cite article numbers [1], [2] when referencing knowledge base content.';
+              ? 'chat/knowledge_general.txt'
+              : 'chat/knowledge_hybrid.txt';
+      final lengthRulePath = settings.chatAnswerLengthIndex == 0
+          ? 'chat/length_concise.txt'
+          : 'chat/length_detailed.txt';
 
-      final lengthRule = settings.chatAnswerLengthIndex == 0
-          ? 'Keep answers concise — 2-3 sentences per point, use bullet points when possible.'
-          : 'Provide detailed explanations. Include examples, context, and reasoning when relevant.';
-
-      final systemPrompt =
-          'You are a personal knowledge assistant answering questions based on saved articles.\n\n'
-          '$knowledgeRule\n\n'
-          '$lengthRule\n\n'
-          'Citation rules:\n'
-          '- Cite relevant article numbers in brackets: [1], [2]\n'
-          '- Only cite articles that directly support or contradict your answer\n'
-          '- If you\'re unsure about a citation, do not include it\n'
-          '- If multiple articles support the same point, group them: [1,3]\n\n'
-          'Format rules:\n'
-          '- Start with the answer, then list supporting citations\n'
-          '- For information gaps, say: "关于X，当前知识库中没有足够信息"\n'
-          '${langHint.isNotEmpty ? "\n$langHint" : ""}';
-
-      final userMessage =
-          'Knowledge base context:\n${contextBuffer.toString()}\n---\n'
-          'Question: $query';
+      final knowledgeRule = await _prompts.load(knowledgeRulePath);
+      final lengthRule = await _prompts.load(lengthRulePath);
+      final systemPrompt = await _prompts.load('chat/system.txt', {
+        'knowledgeRule': knowledgeRule,
+        'lengthRule': lengthRule,
+        'langHint': langHint.isNotEmpty ? '\n$langHint' : '',
+      });
+      final userMessage = await _prompts.load('chat/user.txt', {
+        'context': contextBuffer.toString(),
+        'question': query,
+      });
 
       final history = <Map<String, String>>[];
       final recentMessages = _messages.length > 10
@@ -316,6 +303,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => ChatSettingsSheet(
+        s: ref.read(stringsProvider),
         answerLength: settings.chatAnswerLengthIndex,
         knowledgeSource: settings.chatKnowledgeSourceIndex,
         onChanged: (answerLength, knowledgeSource) {
@@ -352,7 +340,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.tune_rounded),
-            tooltip: 'Chat Settings',
+            tooltip: s.chatSettings,
             onPressed: _showChatSettings,
           ),
         ],

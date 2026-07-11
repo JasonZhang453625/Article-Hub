@@ -5,6 +5,7 @@ import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/locale_strings.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 
 class InboxScreen extends ConsumerStatefulWidget {
   const InboxScreen({super.key});
@@ -225,9 +226,7 @@ class _InboxTile extends ConsumerWidget {
                   ref.read(processingPipelineProvider).retry(article);
                 } catch (e) {
                   if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${s.saveFailed}: $e')),
-                  );
+                  showAppSnackBar(context, message: '${s.saveFailed}: $e');
                 }
               },
             ),
@@ -257,9 +256,7 @@ class _InboxTile extends ConsumerWidget {
                   await ref.read(articlesProvider.notifier).delete(article.id);
                 } catch (e) {
                   if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${s.saveFailed}: $e')),
-                  );
+                  showAppSnackBar(context, message: '${s.saveFailed}: $e');
                 }
               }
             },

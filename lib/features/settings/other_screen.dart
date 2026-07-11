@@ -7,6 +7,7 @@ import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/providers/pipeline_provider.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 import 'settings_widgets.dart';
 
@@ -68,9 +69,10 @@ class OtherScreen extends ConsumerWidget {
                           ref.invalidate(articlesProvider);
                           ref.invalidate(settingsProvider);
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text('${s.imported} ${result.articles} ${s.nWithoutSummary}'),
-                          ));
+                          showAppSnackBar(
+                            context,
+                            message: '${s.imported} ${result.articles} ${s.nWithoutSummary}',
+                          );
                         }
                       },
                       icon: const Icon(Icons.file_download_outlined),

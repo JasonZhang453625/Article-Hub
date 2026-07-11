@@ -92,6 +92,10 @@ class AppTheme {
         ),
       ),
       dividerColor: const Color(0xFFD7E3EA),
+      snackBarTheme: const SnackBarThemeData(
+        showCloseIcon: true,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
 
     return base.copyWith(
@@ -220,6 +224,10 @@ class AppTheme {
         ),
       ),
       dividerColor: _darkOutline,
+      snackBarTheme: const SnackBarThemeData(
+        showCloseIcon: true,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
 
     return base.copyWith(

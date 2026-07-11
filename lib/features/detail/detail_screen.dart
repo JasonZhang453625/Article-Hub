@@ -4,6 +4,7 @@ import '../../data/models/passage.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/date_formatter.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 
 class DetailScreen extends ConsumerStatefulWidget {
   final Article article;
@@ -74,9 +75,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     } catch (e) {
       if (!mounted) return;
       final s = ref.read(stringsProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${s.saveFailed}: $e')),
-      );
+      showAppSnackBar(context, message: '${s.saveFailed}: $e');
     }
   }
 
@@ -114,9 +113,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         }
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${s.saveFailed}: $e')),
-        );
+        showAppSnackBar(context, message: '${s.saveFailed}: $e');
       }
     }
   }

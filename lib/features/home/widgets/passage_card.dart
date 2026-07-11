@@ -27,7 +27,7 @@ class ArticleCard extends StatelessWidget {
         : theme.colorScheme.surface;
     final metadata = [
       article.source.displayName,
-      formatRelative(article.lastProcessedAt ?? article.updatedAt),
+      formatRelative(article.createdAt),
       extractDomain(article.url),
     ].join('  |  ');
 

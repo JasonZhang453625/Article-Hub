@@ -8,6 +8,7 @@ import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/date_formatter.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 import 'summary_regeneration_provider.dart';
 
 class SummaryScreen extends ConsumerWidget {
@@ -69,9 +70,7 @@ class SummaryScreen extends ConsumerWidget {
                 } catch (e) {
                   if (!context.mounted) return;
                   final s2 = ref.read(stringsProvider);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${s2.saveFailed}: $e')),
-                  );
+                  showAppSnackBar(context, message: '${s2.saveFailed}: $e');
                 }
               }
             },
@@ -286,12 +285,9 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
 
     final s = ref.read(stringsProvider);
     final detail = result.error;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          detail == null ? s.summaryFailed : '${s.summaryFailed}\n$detail',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      message: detail == null ? s.summaryFailed : '${s.summaryFailed}\n$detail',
     );
   }
 
@@ -393,20 +389,34 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
           Row(
             children: [
               Icon(
-                Icons.auto_awesome_rounded,
+                widget.article.isFullText
+                    ? Icons.article_outlined
+                    : Icons.auto_awesome_rounded,
                 size: 18,
                 color: theme.colorScheme.primary,
               ),
               const SizedBox(width: 8),
               Text(
-                s.aiSummary,
+                widget.article.isFullText
+                    ? s.memoryLabelOriginal
+                    : s.memoryLabelAi,
                 style: theme.textTheme.labelLarge?.copyWith(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
+              if (widget.article.lastProcessedAt != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  formatRelative(widget.article.lastProcessedAt!),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.65),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
               const Spacer(),
-              if (aiConfigured)
+              if (aiConfigured && !widget.article.isFullText)
                 InkWell(
                   borderRadius: BorderRadius.circular(16),
                   onTap: regenerating ? null : _regenerate,

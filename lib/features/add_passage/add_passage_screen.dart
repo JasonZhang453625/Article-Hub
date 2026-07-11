@@ -13,6 +13,8 @@ import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/file_content_utils.dart';
+import '../../shared/utils/snackbar_helpers.dart';
+import '../shell/share_save_sheet.dart';
 import 'widgets/url_input_field.dart';
 import 'widgets/tag_input.dart';
 
@@ -42,6 +44,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   Timer? _fetchDebounce;
   String _lastFetchedUrl = '';
   String? _selectedFolderId;
+  ShareSaveMode _saveMode = ShareSaveMode.aiMemory;
 
   @override
   void initState() {
@@ -125,19 +128,21 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
       // Capture pipeline BEFORE popping — ref is invalid after pop.
       final pipeline = ref.read(processingPipelineProvider);
+      final fullText = _saveMode == ShareSaveMode.fullText;
 
       if (mounted) {
         Navigator.of(context).pop();
       }
 
-      // Fire-and-forget: run the full pipeline.
-      pipeline.process(article);
+      if (fullText) {
+        pipeline.processFullText(article);
+      } else {
+        pipeline.process(article);
+      }
     } catch (e) {
       if (!mounted) return;
       final s = ref.read(stringsProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${s.saveFailed}: $e')),
-      );
+      showAppSnackBar(context, message: '${s.saveFailed}: $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -156,16 +161,15 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       final count = await ref.read(articlesProvider.notifier).addMany(urls);
       if (!mounted) return;
       final s = ref.read(stringsProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${s.addedNArticles} $count${count == 1 ? '' : ''}')),
+      showAppSnackBar(
+        context,
+        message: '${s.addedNArticles} $count${count == 1 ? '' : ''}',
       );
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
       final s = ref.read(stringsProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${s.saveFailed}: $e')),
-      );
+      showAppSnackBar(context, message: '${s.saveFailed}: $e');
     }
   }
 
@@ -190,9 +194,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
       if (content.trim().isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(s.fileReadError)),
-          );
+          showAppSnackBar(context, message: s.fileReadError);
         }
         return;
       }
@@ -217,9 +219,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       pipeline.processFile(article, content);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${s.fileReadError}: $e')),
-      );
+      showAppSnackBar(context, message: '${s.fileReadError}: $e');
     }
   }
 
@@ -318,11 +318,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 detectedPlatform: _detectedPlatform,
                 onPasteError: () {
                   if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(s.clipboardReadError),
-                    ),
-                  );
+                  showAppSnackBar(context, message: s.clipboardReadError);
                 },
               ),
               const SizedBox(height: 16),
@@ -347,6 +343,11 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+              _SaveModePicker(
+                mode: _saveMode,
+                onChanged: (mode) => setState(() => _saveMode = mode),
+              ),
+              const SizedBox(height: 16),
               TagInput(
                 controller: _tagController,
                 tags: _tags,
@@ -367,8 +368,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
               TextFormField(
                 controller: _notesController,
                 decoration: InputDecoration(
-                  labelText: s.notesOptional,
-                  hintText: s.addNotes,
+                  labelText: s.shareThoughtsLabel,
+                  hintText: s.shareThoughtsHint,
                   prefixIcon: const Icon(Icons.notes),
                 ),
                 maxLines: 3,
@@ -388,6 +389,123 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     child: Text(s.saveArticle),
                   ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SaveModePicker extends ConsumerWidget {
+  final ShareSaveMode mode;
+  final ValueChanged<ShareSaveMode> onChanged;
+
+  const _SaveModePicker({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _ModeOption(
+                selected: mode == ShareSaveMode.fullText,
+                icon: Icons.article_outlined,
+                title: s.saveModeFullText,
+                description: s.saveModeFullTextDesc,
+                isDark: isDark,
+                onTap: () => onChanged(ShareSaveMode.fullText),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _ModeOption(
+                selected: mode == ShareSaveMode.aiMemory,
+                icon: Icons.auto_awesome_rounded,
+                title: s.saveModeAiMemory,
+                description: s.saveModeAiMemoryDesc,
+                isDark: isDark,
+                onTap: () => onChanged(ShareSaveMode.aiMemory),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ModeOption extends StatelessWidget {
+  final bool selected;
+  final IconData icon;
+  final String title;
+  final String description;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _ModeOption({
+    required this.selected,
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    final borderColor = selected
+        ? primary
+        : theme.colorScheme.outline.withValues(alpha: 0.6);
+    final bg = selected
+        ? primary.withValues(alpha: isDark ? 0.18 : 0.08)
+        : theme.colorScheme.surface;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: borderColor, width: selected ? 1.6 : 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                icon,
+                size: 22,
+                color: selected ? primary : theme.colorScheme.onSurface,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: selected ? primary : null,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                description,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  height: 1.3,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
               ),
             ],

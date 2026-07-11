@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import '../../shared/utils/locale_strings.dart';
 
 class ChatSettingsSheet extends StatefulWidget {
+  final LocaleStrings s;
   final int answerLength;
   final int knowledgeSource;
   final void Function(int answerLength, int knowledgeSource) onChanged;
 
   const ChatSettingsSheet({
     super.key,
+    required this.s,
     required this.answerLength,
     required this.knowledgeSource,
     required this.onChanged,
@@ -31,6 +34,7 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bottom = MediaQuery.of(context).viewInsets.bottom;
+    final s = widget.s;
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -43,14 +47,14 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Chat Settings', style: theme.textTheme.titleMedium),
+          Text(s.chatSettings, style: theme.textTheme.titleMedium),
           const SizedBox(height: 20),
-          Text('Answer Length', style: theme.textTheme.labelLarge),
+          Text(s.chatAnswerLength, style: theme.textTheme.labelLarge),
           const SizedBox(height: 8),
           Row(children: [
             Expanded(
               child: _SettingsChip(
-                icon: Icons.short_text_rounded, label: 'Short',
+                icon: Icons.short_text_rounded, label: s.chatShort,
                 selected: _answerLength == 0,
                 onTap: () => setState(() => _answerLength = 0),
               ),
@@ -58,19 +62,19 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
             const SizedBox(width: 10),
             Expanded(
               child: _SettingsChip(
-                icon: Icons.notes_rounded, label: 'Detailed',
+                icon: Icons.notes_rounded, label: s.chatDetailed,
                 selected: _answerLength == 1,
                 onTap: () => setState(() => _answerLength = 1),
               ),
             ),
           ]),
           const SizedBox(height: 20),
-          Text('Knowledge Source', style: theme.textTheme.labelLarge),
+          Text(s.chatKnowledgeSource, style: theme.textTheme.labelLarge),
           const SizedBox(height: 8),
           Row(children: [
             Expanded(
               child: _SettingsChip(
-                icon: Icons.library_books_rounded, label: 'Knowledge Base Only',
+                icon: Icons.library_books_rounded, label: s.chatKnowledgeBaseOnly,
                 selected: _knowledgeSource == 0,
                 onTap: () => setState(() => _knowledgeSource = 0),
               ),
@@ -78,7 +82,7 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
             const SizedBox(width: 10),
             Expanded(
               child: _SettingsChip(
-                icon: Icons.public_rounded, label: 'KB + General',
+                icon: Icons.public_rounded, label: s.chatKbPlusGeneral,
                 selected: _knowledgeSource == 1,
                 onTap: () => setState(() => _knowledgeSource = 1),
               ),
@@ -92,9 +96,9 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
                 widget.onChanged(_answerLength, _knowledgeSource);
                 Navigator.pop(context);
               },
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Apply'),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(s.chatApply),
               ),
             ),
           ),

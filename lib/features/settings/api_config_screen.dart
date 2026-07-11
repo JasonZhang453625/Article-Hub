@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/settings.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 import 'settings_widgets.dart';
 
@@ -48,7 +49,10 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     await ref.read(settingsProvider.notifier).setAiConfig(
       baseUrl: _aiBaseUrlCtrl.text.trim(), apiKey: _aiApiKeyCtrl.text.trim(), model: _aiModelCtrl.text.trim(),
     );
-    if (mounted) { setState(() => _aiSaving = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ref.read(stringsProvider).aiSettingsSaved))); }
+    if (mounted) {
+      setState(() => _aiSaving = false);
+      showAppSnackBar(context, message: ref.read(stringsProvider).aiSettingsSaved);
+    }
   }
 
   Future<void> _saveEmb() async {
@@ -56,7 +60,10 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     await ref.read(settingsProvider.notifier).setEmbeddingConfig(
       baseUrl: _embBaseUrlCtrl.text.trim(), apiKey: _embApiKeyCtrl.text.trim(), model: _embModelCtrl.text.trim(),
     );
-    if (mounted) { setState(() => _embSaving = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ref.read(stringsProvider).aiSettingsSaved))); }
+    if (mounted) {
+      setState(() => _embSaving = false);
+      showAppSnackBar(context, message: ref.read(stringsProvider).aiSettingsSaved);
+    }
   }
 
   @override

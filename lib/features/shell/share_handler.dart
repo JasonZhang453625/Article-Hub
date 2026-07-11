@@ -15,6 +15,8 @@ import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
+import '../../shared/utils/snackbar_helpers.dart';
+import 'share_save_sheet.dart';
 
 /// Handles share intents (URLs, backup files) received from other apps.
 ///
@@ -32,6 +34,7 @@ class ShareHandler extends ConsumerStatefulWidget {
 
 class _ShareHandlerState extends ConsumerState<ShareHandler> {
   StreamSubscription<List<SharedMediaFile>>? _shareSub;
+  bool _sheetOpen = false;
 
   @override
   void initState() {
@@ -62,7 +65,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
         }
       }
       final url = _extractUrlFromMedia(initial);
-      if (url != null) _quickSave(url);
+      if (url != null) _promptSave(url);
     } catch (_) {}
   }
 
@@ -91,7 +94,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
           }
         }
         final url = _extractUrlFromMedia(media);
-        if (url != null) _quickSave(url);
+        if (url != null) _promptSave(url);
       },
       onError: (_) {},
     );
@@ -108,10 +111,9 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
         ref.invalidate(articlesProvider);
         ref.invalidate(settingsProvider);
         final s = ref.read(stringsProvider);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${s.imported} ${result.articles} ${s.nWithoutSummary}'),
-          ),
+        showAppSnackBar(
+          context,
+          message: '${s.imported} ${result.articles} ${s.nWithoutSummary}',
         );
       }
       final file = File(path);
@@ -120,9 +122,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to import backup file')),
-        );
+        showAppSnackBar(context, message: 'Failed to import backup file');
       }
     }
   }
@@ -154,56 +154,66 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     return null;
   }
 
-  // ── Quick save ──
+  // ── Share prompt + save ──
 
-  Future<void> _quickSave(String url) async {
+  Future<void> _promptSave(String url) async {
     final s = ref.read(stringsProvider);
     final cleaned = cleanUrl(url);
-    if (!isValidUrl(cleaned)) return;
+    if (!isValidUrl(cleaned) || !mounted) return;
 
     final existing = ref.read(articlesProvider).valueOrNull;
     final duplicate = existing?.where((a) => a.url == cleaned).firstOrNull;
     if (duplicate != null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${s.alreadySaved}: ${duplicate.title}')),
+      showAppSnackBar(
+        context,
+        message: '${s.alreadySaved}: ${duplicate.title}',
       );
       return;
     }
+
+    if (_sheetOpen) return;
+    _sheetOpen = true;
+    try {
+      final result = await ShareSaveSheet.show(context, cleaned);
+      if (result == null || !mounted) return;
+      await _saveShared(cleaned, result);
+    } finally {
+      _sheetOpen = false;
+    }
+  }
+
+  Future<void> _saveShared(String cleaned, ShareSaveResult result) async {
+    final s = ref.read(stringsProvider);
 
     final article = Article(
       id: const Uuid().v4(),
       url: cleaned,
       title: extractDomain(cleaned),
       source: SourcePlatform.fromUrl(cleaned),
+      notes: result.notes,
       processingStatus: ProcessingStatus.pending,
     );
 
     await ref.read(articlesProvider.notifier).add(article);
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(s.savedProcessing)),
-    );
+    showAppSnackBar(context, message: s.savedProcessing);
 
-    // Fire-and-forget processing pipeline.
-    _processArticle(article);
+    _processArticle(article, fullText: result.mode == ShareSaveMode.fullText);
   }
 
-  void _processArticle(Article article) {
+  void _processArticle(Article article, {required bool fullText}) {
     final s = ref.read(stringsProvider);
     final pipeline = ref.read(processingPipelineProvider);
-    pipeline.process(article).then((result) {
+    final future =
+        fullText ? pipeline.processFullText(article) : pipeline.process(article);
+    future.then((result) {
       if (result != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              result.processingStatus == ProcessingStatus.completed
-                  ? '${s.processed}: ${result.title}'
-                  : '${s.failed}: ${result.processingError ?? "unknown error"}',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
+        showAppSnackBar(
+          context,
+          message: result.processingStatus == ProcessingStatus.completed
+              ? '${s.processed}: ${result.title}'
+              : '${s.failed}: ${result.processingError ?? "unknown error"}',
         );
       }
     }).catchError((_) => null);

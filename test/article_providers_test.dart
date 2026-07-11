@@ -20,7 +20,11 @@ class _InMemoryArticleRepository implements ArticleRepository {
     final entries = {for (final a in articles) a.id: a};
     for (final e in entries.entries) {
       final idx = _articles.indexWhere((a) => a.id == e.key);
-      if (idx != -1) _articles[idx] = e.value; else _articles.add(e.value);
+      if (idx != -1) {
+        _articles[idx] = e.value;
+      } else {
+        _articles.add(e.value);
+      }
     }
     return entries.length;
   }

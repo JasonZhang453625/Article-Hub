@@ -6,6 +6,7 @@ import '../../../shared/providers/filter_providers.dart';
 import '../../../shared/providers/locale_provider.dart';
 import '../../../shared/providers/settings_providers.dart';
 import '../../../shared/utils/locale_strings.dart';
+import '../../../shared/utils/snackbar_helpers.dart';
 
 /// A full-screen dialog for creating or editing a filter group.
 class FilterEditDialog extends ConsumerStatefulWidget {
@@ -56,9 +57,7 @@ class _FilterEditDialogState extends ConsumerState<FilterEditDialog> {
     final s = ref.read(stringsProvider);
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.pleaseEnterName)),
-      );
+      showAppSnackBar(context, message: s.pleaseEnterName);
       return;
     }
 

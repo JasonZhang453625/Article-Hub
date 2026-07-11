@@ -200,7 +200,7 @@ class _MobileShell extends StatelessWidget {
     return Scaffold(
       body: Column(
         children: [
-          if (offlineBanner != null) offlineBanner!,
+          ?offlineBanner,
           Expanded(child: navigationShell),
         ],
       ),
@@ -294,7 +294,7 @@ class _DesktopShell extends StatelessWidget {
           Expanded(
             child: Column(
               children: [
-                if (offlineBanner != null) offlineBanner!,
+                ?offlineBanner,
                 Expanded(child: navigationShell),
               ],
             ),

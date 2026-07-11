@@ -22,6 +22,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   String? _rebuildResult;
   String? _batchResult;
   bool _batchRunning = false;
+  String? _regenResult;
+  bool _regenRunning = false;
 
   Future<void> _rebuildIndex() async {
     setState(() {
@@ -86,6 +88,51 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     if (mounted) setState(() { _batchRunning = false; _batchResult = ref.read(stringsProvider).allProcessed; });
   }
 
+
+  Future<void> _regenerateAiMemories() async {
+    final articles = ref.read(articlesProvider).valueOrNull ?? [];
+    final toProcess = articles.where((a) => !a.isFullText).toList();
+    if (toProcess.isEmpty) return;
+    final s = ref.read(stringsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.regenerateAiMemoriesTitle),
+        content: Text('${toProcess.length} ${s.nAiMemories}.\n\n${s.regenerateAiMemoriesConfirm}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.start)),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() { _regenRunning = true; _regenResult = null; });
+    final pipeline = ref.read(processingPipelineProvider);
+    for (int i = 0; i < toProcess.length; i++) {
+      final article = toProcess[i];
+      final updated = article.copyWith(
+        summary: Article.clearValue,
+        summaryFeedback: Article.clearValue,
+        processingStatus: ProcessingStatus.pending,
+        processingStage: Article.clearValue,
+        processingError: Article.clearValue,
+        isFullText: false,
+      );
+      await ref.read(articlesProvider.notifier).update(updated);
+      await pipeline.process(updated);
+      if (mounted) {
+        setState(() => _regenResult = '${s.processedN} ${i + 1}/${toProcess.length}');
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _regenRunning = false;
+        _regenResult = s.allProcessed;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = ref.watch(stringsProvider);
@@ -95,6 +142,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     final outlineColor = theme.colorScheme.outline;
     final articles = ref.watch(articlesProvider).valueOrNull ?? [];
     final pendingBatchCount = articles.where((a) => a.summary == null || a.summary!.isEmpty).length;
+    final aiMemoryCount = articles.where((a) => !a.isFullText).length;
     final countAsync = ref.watch(indexCountProvider);
     final indexedCount = countAsync.valueOrNull;
     final settings = ref.watch(settingsProvider).valueOrNull;
@@ -190,7 +238,71 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 ),
               ),
 
+
               const SizedBox(height: 14),
+              // Regenerate all AI memories
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: cardColor, borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Icon(Icons.refresh_rounded, size: 20, color: theme.colorScheme.primary),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(s.regenerateAiMemoriesTitle, style: theme.textTheme.titleMedium)),
+                    ]),
+                    const SizedBox(height: 4),
+                    Text(s.regenerateAiMemoriesDesc,
+                      style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_regenRunning)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(children: [
+                          const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                          const SizedBox(width: 12),
+                          Text(_regenResult ?? '', style: theme.textTheme.bodyMedium),
+                        ]),
+                      )
+                    else if (_regenResult != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(children: [
+                          Icon(Icons.check_circle_rounded, size: 18, color: theme.colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(_regenResult!, style: theme.textTheme.bodyMedium),
+                        ]),
+                      )
+                    else ...[
+                      Text('$aiMemoryCount ${s.nAiMemories}',
+                        style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: aiMemoryCount == 0 || _regenRunning || _batchRunning
+                              ? null
+                              : _regenerateAiMemories,
+                          icon: const Icon(Icons.auto_awesome_rounded),
+                          label: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Text(aiMemoryCount == 0
+                                ? s.noAiMemoriesToRegen
+                                : '${s.regenerateAiMemoriesAction} ($aiMemoryCount)'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
 
               // Index rebuild
               SectionLabel(label: s.indexManagement, theme: theme),
