@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../data/models/passage.dart';
+import '../../../data/services/attachment_store.dart';
 import '../../../shared/utils/date_formatter.dart';
 import '../../../shared/utils/url_helpers.dart';
 
@@ -110,19 +112,13 @@ class ArticleCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (article.coverImageUrl != null) ...[
+                  if (article.isLocalImage ||
+                      article.isLocalPdf ||
+                      article.coverImageUrl != null) ...[
                     const SizedBox(width: 8),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        article.coverImageUrl!,
-                        width: 48,
-                        height: 48,
-                        fit: BoxFit.cover,
-                        cacheWidth: 144,
-                        cacheHeight: 144,
-                        errorBuilder: (_, e, s) => const SizedBox.shrink(),
-                      ),
+                      child: _coverThumb(article),
                     ),
                   ],
                   const SizedBox(width: 8),
@@ -151,6 +147,79 @@ class ArticleCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _coverThumb(Article article) {
+    // Local image body itself.
+    if (article.isLocalImage) {
+      return _LocalThumb(path: article.localFilePath);
+    }
+    // PDF cover saved as local relative path in coverImageUrl.
+    final cover = article.coverImageUrl;
+    if (cover != null &&
+        !cover.startsWith('http://') &&
+        !cover.startsWith('https://')) {
+      return _LocalThumb(path: cover);
+    }
+    if (cover != null) {
+      return Image.network(
+        cover,
+        width: 48,
+        height: 48,
+        fit: BoxFit.cover,
+        cacheWidth: 144,
+        cacheHeight: 144,
+        errorBuilder: (_, e, s) => const SizedBox.shrink(),
+      );
+    }
+    // PDF without cover yet.
+    return Container(
+      width: 48,
+      height: 48,
+      color: const Color(0xFFE8EEF2),
+      child: const Icon(Icons.picture_as_pdf_rounded, size: 22),
+    );
+  }
+
+}
+
+class _LocalThumb extends StatefulWidget {
+  final String? path;
+  const _LocalThumb({required this.path});
+
+  @override
+  State<_LocalThumb> createState() => _LocalThumbState();
+}
+
+class _LocalThumbState extends State<_LocalThumb> {
+  late final Future<File?> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = AttachmentStore().resolve(widget.path);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<File?>(
+      future: _future,
+      builder: (context, snapshot) {
+        final file = snapshot.data;
+        if (file == null) {
+          return const SizedBox(width: 48, height: 48);
+        }
+        return Image.file(
+          file,
+          width: 48,
+          height: 48,
+          fit: BoxFit.cover,
+          cacheWidth: 144,
+          cacheHeight: 144,
+          errorBuilder: (_, e, s) => const SizedBox(width: 48, height: 48),
+        );
+      },
     );
   }
 }

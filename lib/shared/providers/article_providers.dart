@@ -8,6 +8,7 @@ import '../../data/models/filter_group.dart';
 import '../../data/models/folder.dart';
 import '../../data/repositories/passage_repository.dart';
 import '../../data/repositories/article_repository.dart';
+import '../../data/services/attachment_store.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/sync_outbox_service.dart';
@@ -153,6 +154,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> delete(String id) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     await repo.delete(id);
+    await AttachmentStore().deleteForArticle(id);
     await _ref
         .read(syncOutboxProvider)
         .enqueue(

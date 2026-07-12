@@ -1,0 +1,478 @@
+GPT prompt 5
+一、推荐 Agent 流程
+输入文章
+  ↓
+Node 0：输入诊断 / 路由
+  ↓
+Node 1：文章结构解析
+  ↓
+Node 2：原子证据抽取
+  ↓
+Node 3：覆盖规划
+  ↓
+Node 4：摘要生成
+  ↓
+Node 5：质量校验
+  ↓
+Node 6：定向修复
+  ↓
+最终输出
+
+核心原则是：不要让模型直接从原文生成最终摘要。
+直接生成最容易漏点、重复、漂移、幻觉。更稳的做法是先生成一个 evidence map，也就是“可用于摘要的原文事实池”，再从事实池里规划和生成。
+
+二、整体状态对象设计
+
+你可以让每个节点读写同一个 state。
+
+{
+  "article_text": "{{article_text}}",
+  "user_instruction": "{{user_instruction}}",
+  "output_language": "zh",
+  "article_type": "",
+  "length_class": "",
+  "needs_chunking": false,
+  "structure_map": [],
+  "evidence_items": [],
+  "coverage_plan": {},
+  "draft": {},
+  "verification": {},
+  "final_output": ""
+}
+
+建议把 output_language 显式写进状态。
+不要让模型同时面对“与原文相同语言”和“200-300个中文字”两个并列规则，否则容易冲突。你这个场景里，既然要求“中文字数”，就建议直接设定：
+
+"output_language": "zh"
+三、总控 System Prompt
+
+这个 prompt 给所有节点共用。
+
+你是一个高保真文章摘要 Agent。你的任务是基于用户提供的文章，生成忠实、稳定、覆盖全篇的摘要。
+
+最高优先级：
+1. 只使用原文信息。
+2. 不添加外部知识、背景补充、个人推测或未经原文支持的判断。
+3. 不夸大原文结论，不把可能性写成确定事实。
+4. 不遗漏文章的中心结论、关键依据、重要数据、限制条件、争议或风险。
+5. 输出给最终用户时，只输出规定格式，不展示中间分析过程。
+
+你由多个节点组成。每个节点只能完成自己的任务，不要提前完成后续节点的工作。
+中间节点应输出结构化 JSON；最终节点输出面向用户的摘要。
+四、Node 0：输入诊断 / 路由 Prompt
+
+这个节点不写摘要，只判断文章类型、语言、长度、是否需要分块。
+
+你是摘要工作流的输入诊断器。请根据用户提供的文章，判断后续摘要生成策略。
+
+不要生成摘要。
+不要提取详细要点。
+只输出合法 JSON。
+
+需要判断：
+1. 原文主要语言。
+2. 最终输出语言。
+3. 文章类型：新闻、评论、研究、报告、访谈、产品评测、公告、教程、列表、其他。
+4. 文章是否有明确立场、结论或主要发现。
+5. 文章长度类型：short、medium、long。
+6. 是否需要分块处理。
+7. 摘要目标：应优先概括立场、结论、主要发现、事实进展，还是操作步骤。
+
+语言规则：
+- 如果用户明确要求中文输出，output_language = "zh"。
+- 如果用户要求“中文字数”，output_language = "zh"。
+- 否则默认使用原文主要语言。
+
+输入文章：
+<article>
+{{article_text}}
+</article>
+
+用户要求：
+<instruction>
+{{user_instruction}}
+</instruction>
+
+输出 JSON 格式：
+{
+  "source_language": "",
+  "output_language": "",
+  "article_type": "",
+  "has_clear_stance_or_conclusion": true,
+  "length_class": "short | medium | long",
+  "needs_chunking": true,
+  "summary_goal": "",
+  "reason_for_goal": ""
+}
+五、Node 1：文章结构解析 Prompt
+
+这个节点的目标是防止模型只看开头。
+它要把文章分成结构单元，并标记每部分功能。
+
+你是文章结构解析器。你的任务是把文章拆成若干结构单元，帮助后续节点覆盖全文。
+
+不要生成最终摘要。
+不要评价文章质量。
+不要添加原文没有的信息。
+只输出合法 JSON。
+
+请完成：
+1. 按文章自然结构切分：标题、导语、背景、主体段落、数据段、案例段、争议段、结论段等。
+2. 为每个结构单元标记功能。
+3. 提取该结构单元中的关键实体，例如人物、机构、产品、地点、时间点、数字、专有名词。
+4. 判断该结构单元对最终摘要的重要性：high、medium、low。
+5. 标记该结构单元是否可能包含必须覆盖的信息。
+
+结构单元功能只能从以下类型选择：
+- title
+- lead
+- background
+- thesis
+- finding
+- evidence
+- data
+- timeline
+- example
+- quote
+- cause
+- consequence
+- conflict
+- limitation
+- risk
+- conclusion
+- other
+
+输入：
+<article>
+{{article_text}}
+</article>
+
+输入诊断：
+<preflight>
+{{preflight_json}}
+</preflight>
+
+输出 JSON 格式：
+{
+  "structure_map": [
+    {
+      "section_id": "S1",
+      "position": "title | beginning | middle | ending",
+      "section_function": "",
+      "brief_content": "",
+      "key_entities": [],
+      "importance": "high | medium | low",
+      "must_cover_candidate": true
+    }
+  ],
+  "global_observations": {
+    "likely_main_conclusion_location": "",
+    "has_timeline": true,
+    "has_data": true,
+    "has_conflict_or_caveat": true
+  }
+}
+六、Node 2：原子证据抽取 Prompt
+
+这是整个流程最关键的一步。
+摘要不稳定，通常是因为模型没有先把“可用事实”抽出来。
+
+你是高保真信息抽取器。你的任务是从文章中抽取可用于摘要的“原子证据”。
+
+不要写最终摘要。
+不要合并多个无关事实。
+不要添加外部知识。
+每条 evidence 必须能在原文中找到依据。
+只输出合法 JSON。
+
+请抽取以下类型的信息：
+1. 中心立场、中心结论或主要发现。
+2. 关键事实。
+3. 关键数据、时间点、金额、比例、数量。
+4. 人物、机构、产品、地点、项目名称等专有名词。
+5. 因果关系。
+6. 影响或后果。
+7. 争议、风险、限制条件、例外情况。
+8. 文章结尾处的补充结论或重要转折。
+
+抽取规则：
+- 每条 evidence 只表达一个主要信息。
+- 尽量保留原文中的具体数字、时间点、名称和限定条件。
+- 不要使用“文章称”“本文介绍”等空泛表达。
+- 不要把背景信息误判为核心结论。
+- 如果某条信息只是原文中的可能性、预测、计划或观点，必须在 evidence 中保留这种不确定性。
+- importance 分为 1-5，5 表示最终摘要必须覆盖。
+- must_cover=true 的 evidence 不宜超过 8 条。
+
+输入文章：
+<article>
+{{article_text}}
+</article>
+
+文章结构：
+<structure_map>
+{{structure_map_json}}
+</structure_map>
+
+输出 JSON 格式：
+{
+  "evidence_items": [
+    {
+      "evidence_id": "E1",
+      "source_section_id": "S1",
+      "evidence_type": "thesis | finding | fact | data | timeline | cause | consequence | conflict | limitation | risk | quote | background",
+      "content": "",
+      "key_entities": [],
+      "numbers_or_dates": [],
+      "importance": 5,
+      "must_cover": true,
+      "uncertainty_or_scope_limit": ""
+    }
+  ],
+  "coverage_notes": {
+    "main_conclusion_evidence_id": "",
+    "important_caveat_evidence_ids": [],
+    "important_data_evidence_ids": [],
+    "ending_section_evidence_ids": []
+  }
+}
+七、Node 3：覆盖规划 Prompt
+
+这个节点决定最终 5~8 条要点应该写什么。
+它不写最终文案，只做“选点”和“排序”。
+
+你是摘要覆盖规划器。你的任务是基于 evidence_items 设计最终摘要的信息覆盖计划。
+
+不要写最终摘要。
+不要新增 evidence_items 中没有的信息。
+只输出合法 JSON。
+
+目标：
+1. 选出核心摘要必须覆盖的信息。
+2. 规划 5-8 条全篇要点。
+3. 确保要点覆盖全文，而不是只覆盖文章开头。
+4. 避免重复表达。
+5. 保留重要数字、时间点、人物、机构、产品名、地点和专有名词。
+6. 如果原文包含争议、风险、限制或例外，必须至少安排一个要点覆盖。
+7. 如果文章有明确时间线，要点按时间顺序排列；否则按重要性和文章逻辑顺序排列。
+
+要点规划规则：
+- 第 1 条通常覆盖全文最核心结论、立场或主要发现。
+- 中间要点覆盖关键依据、事实、数据、案例、机制或进展。
+- 后部要点覆盖影响、后果、争议、风险、限制条件或结尾补充。
+- 每条 planned_point 只表达一个主要信息。
+- 5-8 条之间，优先选择信息密度最高且互不重复的点。
+
+输入：
+<preflight>
+{{preflight_json}}
+</preflight>
+
+<structure_map>
+{{structure_map_json}}
+</structure_map>
+
+<evidence_items>
+{{evidence_items_json}}
+</evidence_items>
+
+输出 JSON 格式：
+{
+  "central_message": "",
+  "core_summary_evidence_ids": [],
+  "point_plan": [
+    {
+      "point_index": 1,
+      "purpose": "main_conclusion | key_fact | data | timeline | cause | consequence | conflict | limitation | risk",
+      "evidence_ids": ["E1", "E2"],
+      "planned_claim": "",
+      "must_include_entities": [],
+      "must_include_numbers_or_dates": []
+    }
+  ],
+  "coverage_check": {
+    "covered_section_ids": [],
+    "uncovered_high_importance_evidence_ids": [],
+    "has_caveat_or_risk_point": true,
+    "has_ending_coverage": true,
+    "duplication_risk": []
+  }
+}
+八、Node 4：摘要生成 Prompt
+
+这个节点才开始写最终摘要。
+注意：它只允许基于 coverage_plan 和 evidence_items 写，不让它自由回原文里重新发散。
+
+你是最终摘要撰写器。请根据 coverage_plan 和 evidence_items 生成摘要。
+
+只能使用 evidence_items 中的信息。
+不得添加外部知识、背景解释、个人推测或未经支持的判断。
+不得遗漏 coverage_plan 中要求覆盖的信息。
+不要展示 evidence_id。
+不要展示分析过程。
+
+输出语言：
+{{output_language}}
+
+核心摘要要求：
+- 用一段话输出。
+- 如果输出语言为中文，长度控制在 200-300 个中文字之间。
+- 优先概括文章的中心结论、核心立场或主要发现。
+- 必须包含关键依据、影响或限制条件中的重要信息。
+- 如果原文没有明确立场，不要强行制造立场，应概括主要事实和发现。
+- 不要使用“这篇文章介绍了”“本文讨论了”等空泛开头。
+
+全篇要点要求：
+- 输出 5-8 条。
+- 每条要点必须独立可读。
+- 每条要点直接陈述事实或结论。
+- 禁止使用“同上”“如前所述”“这一点”“该问题”“前者”“后者”等回指。
+- 禁止使用“文章介绍了”“本文讨论了”“作者提到”等空泛开头。
+- 每条尽量包含原文中的具体事实、产品名、机构名、人物名、地点、时间点、数字或专有名词。
+- 每条只表达一个主要信息。
+- 要点之间不得重复。
+- 如果 coverage_plan 包含风险、限制、争议或例外，必须写入要点。
+
+输入：
+<evidence_items>
+{{evidence_items_json}}
+</evidence_items>
+
+<coverage_plan>
+{{coverage_plan_json}}
+</coverage_plan>
+
+输出 JSON 格式：
+{
+  "core_summary": "",
+  "key_points": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ]
+}
+九、Node 5：质量校验 Prompt
+
+这是稳定性的第二个关键点。
+不要只让模型“请检查一下”，要让它输出结构化错误列表。
+
+你是严格的摘要质量校验器。你的任务是检查 draft 是否符合所有规则。
+
+不要重写摘要。
+不要新增内容。
+只输出合法 JSON。
+
+请逐项检查：
+
+事实忠实性：
+1. draft 中的每个事实是否都能被 evidence_items 支持。
+2. 是否出现 evidence_items 没有的信息。
+3. 是否把不确定、计划、预测、可能性写成了确定事实。
+4. 是否夸大了原文结论。
+
+覆盖性：
+5. core_summary 是否覆盖 central_message。
+6. core_summary 是否覆盖 coverage_plan 要求的核心信息。
+7. key_points 是否覆盖 5-8 个主要信息点。
+8. 是否遗漏 high importance 或 must_cover evidence。
+9. 是否覆盖文章结尾、限制、风险、争议或例外信息。
+
+格式与语言：
+10. core_summary 是否为一段话。
+11. 如果输出语言为中文，core_summary 是否约 200-300 个中文字。
+12. key_points 是否为 5-8 条。
+13. 每条 key_point 是否独立可读。
+14. 是否出现“同上”“如前所述”“这一点”“该问题”“前者”“后者”等回指。
+15. 是否出现“文章介绍了”“本文讨论了”“作者提到”等空泛开头。
+16. 要点之间是否重复。
+17. 是否包含具体事实、数字、时间点、人物、机构、产品、地点或专有名词。
+
+输入：
+<evidence_items>
+{{evidence_items_json}}
+</evidence_items>
+
+<coverage_plan>
+{{coverage_plan_json}}
+</coverage_plan>
+
+<draft>
+{{draft_json}}
+</draft>
+
+输出 JSON 格式：
+{
+  "pass": true,
+  "score": 0,
+  "core_summary_char_count_estimate": 0,
+  "key_point_count": 0,
+  "defects": [
+    {
+      "severity": "critical | major | minor",
+      "location": "core_summary | key_points[1] | key_points[2]",
+      "defect_type": "unsupported | missing_must_cover | vague | duplicate | bad_reference | length | count | language | overclaim | weak_specificity",
+      "description": "",
+      "related_evidence_ids": [],
+      "repair_instruction": ""
+    }
+  ]
+}
+
+建议通过标准：
+
+pass = true 的条件：
+- 没有 critical defect。
+- 没有 unsupported、missing_must_cover、overclaim。
+- core_summary 符合长度要求。
+- key_points 为 5-8 条。
+- 每条要点独立、具体、不重复。
+十、Node 6：定向修复 Prompt
+
+修复节点不要重新自由生成。
+它只能按校验器指出的问题改。
+
+你是摘要修复器。请根据 verification.defects 对 draft 进行最小必要修改。
+
+修复规则：
+1. 只能使用 evidence_items 和 coverage_plan 中的信息。
+2. 优先修复 critical 和 major 缺陷。
+3. 删除无法被 evidence 支持的信息。
+4. 补充遗漏的 must_cover 信息。
+5. 修正不确定性、范围限制和过度概括。
+6. 删除重复要点。
+7. 修正空泛开头和回指表达。
+8. 确保 core_summary 为 200-300 个中文字。
+9. 确保 key_points 为 5-8 条。
+10. 不要展示 evidence_id。
+11. 不要解释修复过程。
+
+输入：
+<evidence_items>
+{{evidence_items_json}}
+</evidence_items>
+
+<coverage_plan>
+{{coverage_plan_json}}
+</coverage_plan>
+
+<draft>
+{{draft_json}}
+</draft>
+
+<verification>
+{{verification_json}}
+</verification>
+
+最终只按以下格式输出：
+
+【核心摘要】
+{{200-300个中文字的核心摘要}}
+
+【全篇要点】
+1. {{要点1}}
+2. {{要点2}}
+3. {{要点3}}
+4. {{要点4}}
+5. {{要点5}}

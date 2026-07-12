@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
+
 import '../../data/models/passage.dart';
+import '../../data/services/attachment_store.dart';
+import 'package:pdfrx/pdfrx.dart';
 import '../../data/services/headless_webview_page_loader.dart';
 import '../../shared/providers/settings_providers.dart';
 
@@ -48,6 +52,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   @override
   Widget build(BuildContext context) {
     final webZoom = ref.watch(webZoomProvider);
+    final isLocalImage = widget.article.isLocalImage;
+    final isLocalPdf = widget.article.isLocalPdf;
+    final isLocalFile = isLocalImage || isLocalPdf;
 
     return Scaffold(
       appBar: AppBar(
@@ -57,25 +64,31 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          IconButton(
-            icon: _reloading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh),
-            onPressed: _reloading ? null : _reload,
-            tooltip: 'Refresh',
-          ),
-          IconButton(
-            icon: const Icon(Icons.open_in_browser),
-            onPressed: _openInBrowser,
-            tooltip: 'Open in browser',
-          ),
+          if (!isLocalFile)
+            IconButton(
+              icon: _reloading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              onPressed: _reloading ? null : _reload,
+              tooltip: 'Refresh',
+            ),
+          if (!isLocalFile)
+            IconButton(
+              icon: const Icon(Icons.open_in_browser),
+              onPressed: _openInBrowser,
+              tooltip: 'Open in browser',
+            ),
         ],
       ),
-      body: Center(
+      body: isLocalImage
+          ? _LocalImageBody(article: widget.article)
+          : isLocalPdf
+              ? _LocalPdfBody(article: widget.article)
+          : Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 960),
           child: Column(
@@ -202,6 +215,104 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       ),
       ),
       ),
+    );
+  }
+}
+
+class _LocalImageBody extends StatefulWidget {
+  final Article article;
+  const _LocalImageBody({required this.article});
+
+  @override
+  State<_LocalImageBody> createState() => _LocalImageBodyState();
+}
+
+class _LocalImageBodyState extends State<_LocalImageBody> {
+  late final Future<File?> _fileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _fileFuture = AttachmentStore().resolve(widget.article.localFilePath);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<File?>(
+      future: _fileFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final file = snapshot.data;
+        if (file == null) {
+          return Center(
+            child: Text(
+              'Image file not found',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          );
+        }
+        return InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 5,
+          child: Center(
+            child: Image.file(
+              file,
+              fit: BoxFit.contain,
+              errorBuilder: (_, e, s) => const Center(
+                child: Icon(Icons.broken_image_outlined, size: 48),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+
+class _LocalPdfBody extends StatefulWidget {
+  final Article article;
+  const _LocalPdfBody({required this.article});
+
+  @override
+  State<_LocalPdfBody> createState() => _LocalPdfBodyState();
+}
+
+class _LocalPdfBodyState extends State<_LocalPdfBody> {
+  late final Future<File?> _fileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _fileFuture = AttachmentStore().resolve(widget.article.localFilePath);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<File?>(
+      future: _fileFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final file = snapshot.data;
+        if (file == null) {
+          return Center(
+            child: Text(
+              'PDF file not found',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          );
+        }
+        return PdfViewer.file(
+          file.path,
+          params: const PdfViewerParams(
+            margin: 8,
+          ),
+        );
+      },
     );
   }
 }

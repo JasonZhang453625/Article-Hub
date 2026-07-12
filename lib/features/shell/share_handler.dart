@@ -16,6 +16,8 @@ import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/snackbar_helpers.dart';
+import '../../data/services/attachment_store.dart';
+import '../../data/services/local_file_importer.dart';
 import 'share_save_sheet.dart';
 
 /// Handles share intents (URLs, backup files) received from other apps.
@@ -58,14 +60,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     try {
       final initial = await ReceiveSharingIntent.instance.getInitialMedia();
       if (initial.isEmpty || !mounted) return;
-      for (final file in initial) {
-        if (file.path.endsWith('.json')) {
-          _handleBackupFile(file.path);
-          return;
-        }
-      }
-      final url = _extractUrlFromMedia(initial);
-      if (url != null) _promptSave(url);
+      await _handleSharedMedia(initial);
     } catch (_) {}
   }
 
@@ -87,17 +82,87 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
       (media) {
         if (media.isEmpty || !mounted) return;
-        for (final file in media) {
-          if (file.path.endsWith('.json')) {
-            _handleBackupFile(file.path);
-            return;
-          }
-        }
-        final url = _extractUrlFromMedia(media);
-        if (url != null) _promptSave(url);
+        _handleSharedMedia(media);
       },
       onError: (_) {},
     );
+  }
+
+  Future<void> _handleSharedMedia(List<SharedMediaFile> media) async {
+    for (final file in media) {
+      if (file.path.endsWith('.json')) {
+        _handleBackupFile(file.path);
+        return;
+      }
+    }
+
+    // Prefer local image/PDF files for import.
+    for (final file in media) {
+      final path = file.path;
+      final mime = file.mimeType;
+      final looksImage = (mime != null && mime.startsWith('image/')) ||
+          isImagePath(path);
+      final looksPdf =
+          (mime != null && mime == 'application/pdf') || isPdfPath(path);
+      if (!looksImage && !looksPdf) continue;
+      // Skip if path is actually a URL string.
+      if (path.startsWith('http://') || path.startsWith('https://')) continue;
+      await _saveSharedLocalFile(path, isPdf: looksPdf);
+      return;
+    }
+
+    final url = _extractUrlFromMedia(media);
+    if (url != null) _promptSave(url);
+  }
+
+  Future<void> _saveSharedLocalFile(String path, {required bool isPdf}) async {
+    if (!mounted) return;
+    final s = ref.read(stringsProvider);
+    if (_sheetOpen) return;
+    _sheetOpen = true;
+    try {
+      showAppSnackBar(
+        context,
+        message: isPdf ? s.pdfExtracting : s.ocrRunning,
+      );
+      final importer = LocalFileImporter();
+      try {
+        final prepared = await importer.prepare(sourcePath: path);
+        if (prepared.content.trim().isEmpty) {
+          if (mounted) {
+            showAppSnackBar(
+              context,
+              message: isPdf ? s.pdfNoTextFound : s.ocrNoTextFound,
+            );
+          }
+          return;
+        }
+        await ref.read(articlesProvider.notifier).add(prepared.article);
+        if (!mounted) return;
+        showAppSnackBar(context, message: s.savedProcessing);
+        final pipeline = ref.read(processingPipelineProvider);
+        pipeline
+            .processFile(prepared.article, prepared.content)
+            .then((result) {
+          if (result != null && mounted) {
+            showAppSnackBar(
+              context,
+              message: result.processingStatus == ProcessingStatus.completed
+                  ? '${s.processed}: ${result.title}'
+                  : '${s.failed}: ${result.processingError ?? "unknown error"}',
+            );
+          }
+        }).catchError((_) => null);
+      } finally {
+        importer.dispose();
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppSnackBar(context, message: '${s.fileReadError}: $e');
+      }
+    } finally {
+      _sheetOpen = false;
+    }
   }
 
   // ── Backup import ──

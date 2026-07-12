@@ -9,7 +9,9 @@ import 'ai_service.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
 import 'index_service.dart';
+import 'local_file_importer.dart';
 import 'metadata_service.dart';
+
 import 'page_loader.dart';
 import 'prompt_service.dart';
 
@@ -195,37 +197,83 @@ class ProcessingPipeline {
     return current;
   }
 
-  /// Retry a failed article: bump retry count and re-run from scratch.
+  /// Retry a failed article: bump retry count and re-run.
+  ///
+  /// Local image/PDF articles re-extract content then re-enter [processFile].
+  /// URL articles re-run the full pipeline from scratch.
   Future<Article?> retry(Article article) async {
-    return process(article.copyWith(
+    final base = article.copyWith(
       processingStatus: ProcessingStatus.pending,
       processingError: Article.clearValue,
       retryCount: article.retryCount + 1,
-    ));
+    );
+    if (article.isLocalAttachment && article.localFilePath != null) {
+      try {
+        final importer = LocalFileImporter();
+        try {
+          final text = await importer.reExtract(base);
+          if (text.trim().isEmpty) {
+            final kind = article.isLocalPdf ? 'PDF' : 'image';
+            return _fail(
+              base,
+              'content',
+              article.isLocalPdf
+                  ? 'No extractable text in PDF (may be a scanned document)'
+                  : 'No text found in $kind',
+            );
+          }
+          return processFile(base, text, fullText: article.isFullText);
+        } finally {
+          importer.dispose();
+        }
+      } catch (e) {
+        final failed = _fail(base, 'content', e);
+        await _articles.update(failed);
+        return failed;
+      }
+    }
+    return process(base);
   }
 
   /// Process a file-based article: skip metadata/content stages and inject
-  /// [content] directly into the pipeline starting from the summary stage.
-  Future<Article?> processFile(Article article, String content) async {
+  /// [content] directly into the pipeline.
+  ///
+  /// When [fullText] is true, store OCR/text body as the knowledge text
+  /// without AI summarization (still runs tags/folder if AI is configured).
+  Future<Article?> processFile(
+    Article article,
+    String content, {
+    bool fullText = false,
+  }) async {
     _settings = _getSettings();
     _folders = List<Folder>.from(_getFolders());
 
     var current = article;
 
-    current = current.copyWith(
-      processingStatus: ProcessingStatus.processing,
-      processingStage: ProcessingStage.summary,
-    );
-    await _articles.update(current);
-
-    // Inject the file content directly — bypass metadata and content stages.
-    _contentCache[current.id] = content;
-
-    // Stage 3: AI summary
-    current = await _stageSummary(current);
-    if (current.processingStatus == ProcessingStatus.failed) {
+    if (fullText) {
+      current = current.copyWith(
+        processingStatus: ProcessingStatus.processing,
+        processingStage: ProcessingStage.summary,
+        summary: content,
+        isFullText: true,
+      );
       await _articles.update(current);
-      return current;
+    } else {
+      current = current.copyWith(
+        processingStatus: ProcessingStatus.processing,
+        processingStage: ProcessingStage.summary,
+      );
+      await _articles.update(current);
+
+      // Inject the file content directly — bypass metadata and content stages.
+      _contentCache[current.id] = content;
+
+      // Stage 3: AI summary
+      current = await _stageSummary(current);
+      if (current.processingStatus == ProcessingStatus.failed) {
+        await _articles.update(current);
+        return current;
+      }
     }
 
     // Stage 4: Tags

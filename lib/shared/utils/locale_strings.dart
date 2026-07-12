@@ -26,6 +26,12 @@ class LocaleStrings {
   final String addMultipleUrls;
   final String importFile;
   final String fileReadError;
+  final String ocrRunning;
+  final String ocrNoTextFound;
+  final String ocrNotSupportedOnWeb;
+  final String pdfExtracting;
+  final String pdfNoTextFound;
+  final String pdfNotSupportedOnWeb;
   final String save;
   final String supportedSources;
   final String supportedSourcesDesc;
@@ -303,6 +309,12 @@ class LocaleStrings {
     required this.addMultipleUrls,
     required this.importFile,
     required this.fileReadError,
+    required this.ocrRunning,
+    required this.ocrNoTextFound,
+    required this.ocrNotSupportedOnWeb,
+    required this.pdfExtracting,
+    required this.pdfNoTextFound,
+    required this.pdfNotSupportedOnWeb,
     required this.save,
     required this.supportedSources,
     required this.supportedSourcesDesc,
@@ -595,6 +607,12 @@ class LocaleStrings {
     addMultipleUrls: 'Add multiple URLs',
     importFile: 'Import File',
     fileReadError: 'Failed to read file',
+    ocrRunning: 'Running local OCR...',
+    ocrNoTextFound: 'No text found in image',
+    ocrNotSupportedOnWeb: 'Local OCR is not supported on Web',
+    pdfExtracting: 'Extracting PDF text...',
+    pdfNoTextFound: 'No extractable text in PDF (may be a scanned document)',
+    pdfNotSupportedOnWeb: 'PDF import is not supported on Web',
     save: 'Save',
     supportedSources: 'Supported sources',
     supportedSourcesDesc: 'Paste links from your enabled platforms and the app will detect the source automatically.',
@@ -873,6 +891,12 @@ class LocaleStrings {
     addMultipleUrls: '添加多个链接',
     importFile: '导入文件',
     fileReadError: '无法读取文件',
+    ocrRunning: '正在本地 OCR…',
+    ocrNoTextFound: '图片中未识别到文字',
+    ocrNotSupportedOnWeb: 'Web 端暂不支持本地 OCR',
+    pdfExtracting: '正在提取 PDF 文本…',
+    pdfNoTextFound: 'PDF 无可提取文本（可能是扫描件）',
+    pdfNotSupportedOnWeb: 'Web 端暂不支持 PDF 导入',
     save: '保存',
     supportedSources: '支持的来源',
     supportedSourcesDesc: '从已启用的平台粘贴链接，应用会自动识别来源。',

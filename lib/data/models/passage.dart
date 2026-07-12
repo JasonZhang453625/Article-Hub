@@ -56,6 +56,23 @@ class Article extends HiveObject {
   /// (full-text save), false when it is an AI-generated summary.
   bool isFullText;
 
+  bool get isLocalImage =>
+      localMimeType != null &&
+      localMimeType!.toLowerCase().startsWith('image/');
+
+  bool get isLocalPdf =>
+      localMimeType != null &&
+      localMimeType!.toLowerCase() == 'application/pdf';
+
+  bool get isLocalAttachment => localFilePath != null;
+
+  /// App-owned relative path under ApplicationSupport for a local attachment
+  /// (e.g. imported image). Null for URL articles.
+  String? localFilePath;
+
+  /// MIME type of [localFilePath], e.g. image/jpeg. Null for URL articles.
+  String? localMimeType;
+
   Article({
     required this.id,
     required this.url,
@@ -77,6 +94,8 @@ class Article extends HiveObject {
     this.lastProcessedAt,
     this.suggestedFolderId,
     this.isFullText = false,
+    this.localFilePath,
+    this.localMimeType,
   }) : createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -113,6 +132,8 @@ class Article extends HiveObject {
     Object? lastProcessedAt = _unset,
     Object? suggestedFolderId = _unset,
     bool? isFullText,
+    Object? localFilePath = _unset,
+    Object? localMimeType = _unset,
   }) {
     return Article(
       id: id ?? this.id,
@@ -163,6 +184,16 @@ class Article extends HiveObject {
               ? null
               : suggestedFolderId as String?),
       isFullText: isFullText ?? this.isFullText,
+      localFilePath: identical(localFilePath, _unset)
+          ? this.localFilePath
+          : (identical(localFilePath, clearValue)
+              ? null
+              : localFilePath as String?),
+      localMimeType: identical(localMimeType, _unset)
+          ? this.localMimeType
+          : (identical(localMimeType, clearValue)
+              ? null
+              : localMimeType as String?),
     );
   }
 
@@ -191,6 +222,8 @@ class Article extends HiveObject {
       'lastProcessedAt': lastProcessedAt?.toIso8601String(),
       'suggestedFolderId': suggestedFolderId,
       'isFullText': isFullText,
+      'localFilePath': localFilePath,
+      'localMimeType': localMimeType,
     };
   }
 
@@ -237,6 +270,12 @@ class Article extends HiveObject {
           ? json['suggestedFolderId'] as String
           : null,
       isFullText: json['isFullText'] == true,
+      localFilePath: json['localFilePath'] is String
+          ? json['localFilePath'] as String
+          : null,
+      localMimeType: json['localMimeType'] is String
+          ? json['localMimeType'] as String
+          : null,
     );
   }
 
@@ -287,13 +326,15 @@ class ArticleAdapter extends TypeAdapter<Article> {
       lastProcessedAt: fields[17] as DateTime?,
       suggestedFolderId: fields[18] as String?,
       isFullText: fields[19] as bool? ?? false,
+      localFilePath: fields[20] as String?,
+      localMimeType: fields[21] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(20)
+      ..writeByte(22)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -333,7 +374,11 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(18)
       ..write(obj.suggestedFolderId)
       ..writeByte(19)
-      ..write(obj.isFullText);
+      ..write(obj.isFullText)
+      ..writeByte(20)
+      ..write(obj.localFilePath)
+      ..writeByte(21)
+      ..write(obj.localMimeType);
   }
 }
 

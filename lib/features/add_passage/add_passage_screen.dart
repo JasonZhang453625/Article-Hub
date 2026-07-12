@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/metadata_service.dart';
+import '../../data/services/local_file_importer.dart';
 import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
@@ -178,18 +180,89 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['txt', 'md'],
+        allowedExtensions: const [
+          'txt',
+          'md',
+          'pdf',
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'bmp',
+          'gif',
+        ],
       );
       if (result == null || result.files.isEmpty) return;
       final file = result.files.single;
       if (file.path == null) return;
 
-      final raw = await File(file.path!).readAsString();
-      final isMd = file.name.toLowerCase().endsWith('.md');
+      final path = file.path!;
+      final lower = file.name.toLowerCase();
+      final isImage = lower.endsWith('.png') ||
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.webp') ||
+          lower.endsWith('.bmp') ||
+          lower.endsWith('.gif');
+      final isPdf = lower.endsWith('.pdf');
 
+      final pipeline = ref.read(processingPipelineProvider);
+      final notifier = ref.read(articlesProvider.notifier);
+      final fullText = _saveMode == ShareSaveMode.fullText;
+
+      if (isImage || isPdf) {
+        if (kIsWeb) {
+          if (mounted) {
+            showAppSnackBar(
+              context,
+              message: isPdf ? s.pdfNotSupportedOnWeb : s.ocrNotSupportedOnWeb,
+            );
+          }
+          return;
+        }
+        if (mounted) {
+          showAppSnackBar(
+            context,
+            message: isPdf ? s.pdfExtracting : s.ocrRunning,
+          );
+        }
+        final importer = LocalFileImporter();
+        try {
+          final prepared = await importer.prepare(
+            sourcePath: path,
+            notes: _notesController.text.trim(),
+            folderId: _selectedFolderId,
+          );
+          if (prepared.content.trim().isEmpty) {
+            if (mounted) {
+              showAppSnackBar(
+                context,
+                message: isPdf ? s.pdfNoTextFound : s.ocrNoTextFound,
+              );
+            }
+            return;
+          }
+          await notifier.add(prepared.article);
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+          pipeline.processFile(
+            prepared.article,
+            prepared.content,
+            fullText: fullText,
+          );
+        } finally {
+          importer.dispose();
+        }
+        return;
+      }
+
+      final raw = await File(path).readAsString();
+      final isMd = lower.endsWith('.md');
       final mdTitle = extractMarkdownTitle(raw);
-      final title = isMd && mdTitle.isNotEmpty ? mdTitle : file.name;
-      final titleWithoutExt = title.replaceAll(RegExp(r'\.[^.]+$'), '');
+      final title = isMd && mdTitle.isNotEmpty
+          ? mdTitle
+          : file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
       final content = isMd ? markdownToPlainText(raw) : raw;
 
       if (content.trim().isEmpty) {
@@ -199,24 +272,24 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
         return;
       }
 
+      final titleWithoutExt = title.replaceAll(RegExp(r'\.[^.]+$'), '');
       final article = Article(
         id: const Uuid().v4(),
-        url: 'file://${file.path}',
+        url: 'file://$path',
         title: titleWithoutExt.isNotEmpty ? titleWithoutExt : file.name,
         source: SourcePlatform.local,
+        notes: _notesController.text.trim(),
+        folderId: _selectedFolderId,
         processingStatus: ProcessingStatus.pending,
       );
 
-      final notifier = ref.read(articlesProvider.notifier);
       await notifier.add(article);
-
-      final pipeline = ref.read(processingPipelineProvider);
 
       if (mounted) {
         Navigator.of(context).pop();
       }
 
-      pipeline.processFile(article, content);
+      pipeline.processFile(article, content, fullText: fullText);
     } catch (e) {
       if (!mounted) return;
       showAppSnackBar(context, message: '${s.fileReadError}: $e');
