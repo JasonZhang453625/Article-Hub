@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
-import 'package:onnxruntime/onnxruntime.dart';
 
 import 'ocr_model_store.dart';
 import 'ppocr_postprocess.dart';
@@ -38,13 +38,15 @@ class PpOcrV6Engine {
   static const minTextLength = 1;
 
   final OcrModelStore _store;
+  final OnnxRuntime _runtime;
   OrtSession? _detSession;
   OrtSession? _recSession;
   List<String>? _characters;
-  bool _envReady = false;
   Future<void>? _initFuture;
 
-  PpOcrV6Engine({OcrModelStore? store}) : _store = store ?? OcrModelStore();
+  PpOcrV6Engine({OcrModelStore? store, OnnxRuntime? runtime})
+      : _store = store ?? OcrModelStore(),
+        _runtime = runtime ?? OnnxRuntime();
 
   Future<void> ensureReady({
     void Function(String stage, double? progress)? onProgress,
@@ -55,26 +57,25 @@ class PpOcrV6Engine {
   Future<void> _doInit({
     void Function(String stage, double? progress)? onProgress,
   }) async {
-    if (!_envReady) {
-      OrtEnv.instance.init();
-      _envReady = true;
-    }
-
     onProgress?.call('models', null);
     await _store.ensureModels(onProgress: onProgress);
 
-    final sessionOptions = OrtSessionOptions();
-    try {
-      if (_detSession == null) {
-        final detBytes = await _store.readDetBytes();
-        _detSession = OrtSession.fromBuffer(detBytes, sessionOptions);
-      }
-      if (_recSession == null) {
-        final recBytes = await _store.readRecBytes();
-        _recSession = OrtSession.fromBuffer(recBytes, sessionOptions);
-      }
-    } finally {
-      sessionOptions.release();
+    final sessionOptions = OrtSessionOptions(
+      providers: const [OrtProvider.CPU],
+    );
+    if (_detSession == null) {
+      final detFile = await _store.detModelFile();
+      _detSession = await _runtime.createSession(
+        detFile.path,
+        options: sessionOptions,
+      );
+    }
+    if (_recSession == null) {
+      final recFile = await _store.recModelFile();
+      _recSession = await _runtime.createSession(
+        recFile.path,
+        options: sessionOptions,
+      );
     }
 
     if (_characters == null) {
@@ -140,18 +141,17 @@ class PpOcrV6Engine {
 
   Future<List<OcrBox>> _detect(OrtSession session, img.Image image) async {
     final prepared = _prepareDetInput(image);
-    final inputOrt = OrtValueTensor.createTensorWithDataList(
-      [prepared.nchw],
-      [1, 3, prepared.resizedHeight, prepared.resizedWidth],
-    );
-    final runOptions = OrtRunOptions();
+    final inputOrt = await OrtValue.fromList(prepared.nchw, [
+      1,
+      3,
+      prepared.resizedHeight,
+      prepared.resizedWidth,
+    ]);
+    Map<String, OrtValue> outputs = const {};
     try {
-      final outputs = await session.runAsync(runOptions, {'x': inputOrt});
-      final out = outputs?.first;
-      if (out == null) return const [];
-      final value = out.value;
-      out.release();
-      outputs?.forEach((e) => e?.release());
+      outputs = await session.run({'x': inputOrt});
+      if (outputs.isEmpty) return const [];
+      final value = await outputs.values.first.asFlattenedList();
 
       final map = _asFloat32List(value);
       // Output shape is typically [1, 1, H, W]
@@ -180,8 +180,8 @@ class PpOcrV6Engine {
         originHeight: image.height,
       );
     } finally {
-      inputOrt.release();
-      runOptions.release();
+      await Future.wait(outputs.values.map((output) => output.dispose()));
+      await inputOrt.dispose();
     }
   }
 
@@ -191,18 +191,17 @@ class PpOcrV6Engine {
     List<String> characters,
   ) async {
     final prepared = _prepareRecInput(crop);
-    final inputOrt = OrtValueTensor.createTensorWithDataList(
-      [prepared.nchw],
-      [1, 3, recImageHeight, prepared.width],
-    );
-    final runOptions = OrtRunOptions();
+    final inputOrt = await OrtValue.fromList(prepared.nchw, [
+      1,
+      3,
+      recImageHeight,
+      prepared.width,
+    ]);
+    Map<String, OrtValue> outputs = const {};
     try {
-      final outputs = await session.runAsync(runOptions, {'x': inputOrt});
-      final out = outputs?.first;
-      if (out == null) return '';
-      final value = out.value;
-      out.release();
-      outputs?.forEach((e) => e?.release());
+      outputs = await session.run({'x': inputOrt});
+      if (outputs.isEmpty) return '';
+      final value = await outputs.values.first.asFlattenedList();
 
       final logits = _asFloat32List(value);
       // Expected shape [1, seq, classes] or [seq, classes]
@@ -217,8 +216,8 @@ class PpOcrV6Engine {
         characters: characters,
       );
     } finally {
-      inputOrt.release();
-      runOptions.release();
+      await Future.wait(outputs.values.map((output) => output.dispose()));
+      await inputOrt.dispose();
     }
   }
 
@@ -339,16 +338,15 @@ class PpOcrV6Engine {
     throw StateError('Unexpected ONNX output type: ${value.runtimeType}');
   }
 
-  void dispose() {
-    _detSession?.release();
-    _recSession?.release();
+  Future<void> dispose() async {
+    final sessions = [
+      _detSession,
+      _recSession,
+    ].whereType<OrtSession>().toList();
     _detSession = null;
     _recSession = null;
-    if (_envReady) {
-      OrtEnv.instance.release();
-      _envReady = false;
-    }
     _initFuture = null;
+    await Future.wait(sessions.map((session) => session.close()));
   }
 }
 

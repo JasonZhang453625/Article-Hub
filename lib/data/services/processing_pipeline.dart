@@ -224,7 +224,7 @@ class ProcessingPipeline {
           }
           return processFile(base, text, fullText: article.isFullText);
         } finally {
-          importer.dispose();
+          await importer.dispose();
         }
       } catch (e) {
         final failed = _fail(base, 'content', e);

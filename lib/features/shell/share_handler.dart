@@ -154,7 +154,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
           }
         }).catchError((_) => null);
       } finally {
-        importer.dispose();
+        await importer.dispose();
       }
     } catch (e) {
       if (mounted) {

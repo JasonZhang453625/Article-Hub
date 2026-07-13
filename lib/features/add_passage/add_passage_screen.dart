@@ -12,7 +12,6 @@ import '../../data/services/local_file_importer.dart';
 import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
-import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/file_content_utils.dart';
 import '../../shared/utils/snackbar_helpers.dart';
@@ -252,7 +251,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
             fullText: fullText,
           );
         } finally {
-          importer.dispose();
+          await importer.dispose();
         }
         return;
       }
@@ -298,7 +297,6 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final visiblePlatforms = ref.watch(visibleSourcePlatformsProvider);
     final s = ref.watch(stringsProvider);
 
     return Scaffold(
@@ -325,66 +323,6 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F6FD),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.supportedSources,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      s.supportedSourcesDesc,
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final platform in visiblePlatforms.take(6))
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  platform.icon,
-                                  size: 16,
-                                  color: platform.accentColor,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  platform.displayName,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
               UrlInputField(
                 controller: _urlController,
                 onChanged: _onUrlChanged,
@@ -722,4 +660,3 @@ class _BulkImportSheetState extends ConsumerState<_BulkImportSheet> {
     );
   }
 }
-

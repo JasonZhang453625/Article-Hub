@@ -33,5 +33,5 @@ class OcrService {
     return result.text.trim();
   }
 
-  void dispose() => _engine.dispose();
+  Future<void> dispose() => _engine.dispose();
 }

@@ -151,7 +151,7 @@ class LocalFileImporter {
     return pipeline.processFile(article, content, fullText: fullText);
   }
 
-  void dispose() => _ocr.dispose();
+  Future<void> dispose() => _ocr.dispose();
 
   String _titleFromPath(String path) {
     final name = path.replaceAll('\\', '/').split('/').last;
