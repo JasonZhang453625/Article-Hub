@@ -5,6 +5,7 @@ import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
 
+import 'ocr_image_decoder.dart';
 import 'ocr_model_store.dart';
 import 'ppocr_postprocess.dart';
 
@@ -13,11 +14,7 @@ class OcrLine {
   final OcrBox box;
   final double score;
 
-  const OcrLine({
-    required this.text,
-    required this.box,
-    required this.score,
-  });
+  const OcrLine({required this.text, required this.box, required this.score});
 }
 
 class OcrResult {
@@ -39,14 +36,20 @@ class PpOcrV6Engine {
 
   final OcrModelStore _store;
   final OnnxRuntime _runtime;
+  final OcrImageDecoder _imageDecoder;
   OrtSession? _detSession;
   OrtSession? _recSession;
   List<String>? _characters;
   Future<void>? _initFuture;
 
-  PpOcrV6Engine({OcrModelStore? store, OnnxRuntime? runtime})
-      : _store = store ?? OcrModelStore(),
-        _runtime = runtime ?? OnnxRuntime();
+  PpOcrV6Engine({
+    OcrModelStore? store,
+    OnnxRuntime? runtime,
+    OcrImageDecoder? imageDecoder,
+  }) : _store = store ?? OcrModelStore(),
+       _runtime = runtime ?? OnnxRuntime(),
+       _imageDecoder =
+           imageDecoder ?? const OcrImageDecoder(maxSide: detLimitSideLen);
 
   Future<void> ensureReady({
     void Function(String stage, double? progress)? onProgress,
@@ -92,20 +95,12 @@ class PpOcrV6Engine {
   }
 
   Future<OcrResult> recognizeFile(String path) async {
-    final bytes = await img.decodeImageFile(path).then((value) {
-      if (value == null) {
-        throw StateError('Could not decode image: $path');
-      }
-      return value;
-    });
-    return recognizeImage(bytes);
+    final image = await _imageDecoder.decodeFile(path);
+    return recognizeImage(image);
   }
 
   Future<OcrResult> recognizeBytes(Uint8List bytes) async {
-    final image = img.decodeImage(bytes);
-    if (image == null) {
-      throw StateError('Could not decode image bytes');
-    }
+    final image = await _imageDecoder.decodeBytes(bytes);
     return recognizeImage(image);
   }
 
@@ -118,8 +113,7 @@ class PpOcrV6Engine {
       throw StateError('OCR engine not initialized');
     }
 
-    final rgb =
-        image.numChannels == 3 ? image : image.convert(numChannels: 3);
+    final rgb = image.numChannels == 3 ? image : image.convert(numChannels: 3);
 
     final boxes = await _detect(det, rgb);
     if (boxes.isEmpty) {
