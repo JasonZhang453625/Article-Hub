@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/services/ai_service.dart';
 
 void main() {
@@ -25,7 +26,17 @@ void main() {
 
         final content = requestCount <= 3
             ? 'Chunk summary $requestCount'
-            : '{"title":"Useful title","summary":"Useful summary"}';
+            : jsonEncode({
+                'schemaVersion': 1,
+                'title': 'Useful title',
+                'tags': ['Agents', 'Tracing'],
+                'overview': 'Useful overview',
+                'keyPoints': [
+                  {'topic': 'Handoff', 'content': 'Agents can delegate work.'},
+                  {'topic': 'Tracing', 'content': 'Tracing records execution.'},
+                ],
+                'conclusion': 'Useful conclusion',
+              });
         return http.Response(
           jsonEncode({
             'choices': [
@@ -60,7 +71,14 @@ void main() {
       expect(userMessageLengths.take(3), everyElement(lessThan(12100)));
       expect(userMessageLengths.last, lessThan(1000));
       expect(result.title, 'Useful title');
-      expect(result.summary, 'Useful summary');
+      expect(result.tags, ['Agents', 'Tracing']);
+      expect(result.memory?.kind, MemoryKind.aiMemory);
+      expect(result.memory?.overview, 'Useful overview');
+      expect(result.memory?.keyPoints, hasLength(2));
+      expect(result.memory?.keyPoints.first.id, isNotEmpty);
+      expect(result.memory?.keyPoints.first.order, 1);
+      expect(result.memory?.keyPoints.last.order, 2);
+      expect(result.summary, contains('Useful overview'));
       expect(ai.lastError, isNull);
     },
   );
@@ -85,7 +103,7 @@ void main() {
       () => client,
     );
 
-    expect(result.summary, isNull);
+    expect(result.memory, isNull);
     expect(ai.lastError, 'HTTP 400: context length exceeded');
   });
 
@@ -103,7 +121,11 @@ void main() {
             {
               'message': {
                 'content':
-                    '{"title":"Embodied intelligence","summary":"Summary ready"}',
+                    '{"schemaVersion":1,"title":"Embodied intelligence",'
+                    '"tags":["Robotics","AI"],"overview":"Summary ready",'
+                    '"keyPoints":[{"topic":"Embodiment",'
+                    '"content":"Models act in the physical world."}],'
+                    '"conclusion":"Embodied systems connect models and action."}',
               },
               'finish_reason': 'stop',
             },
@@ -125,6 +147,70 @@ void main() {
 
     expect(requestedMaxCompletionTokens, 4000);
     expect(requestedThinking, {'type': 'disabled'});
-    expect(result.summary, 'Summary ready');
+    expect(result.memory?.overview, 'Summary ready');
+    expect(result.tags, ['Robotics', 'AI']);
   });
+
+  test('accepts fenced JSON but assigns key-point identity locally', () async {
+    final client = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'choices': [
+            {
+              'message': {
+                'content': '''```json
+{"schemaVersion":1,"title":"T","tags":["A","B"],"overview":"O","keyPoints":[{"id":"model-id","order":99,"topic":"Topic","content":"Fact"}],"conclusion":"C"}
+```''',
+              },
+            },
+          ],
+        }),
+        200,
+      ),
+    );
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'test-model',
+    );
+
+    final result = await http.runWithClient(
+      () => ai.summarizeWithTitle('Title', 'Content'),
+      () => client,
+    );
+
+    expect(result.memory?.keyPoints.single.id, isNot('model-id'));
+    expect(result.memory?.keyPoints.single.order, 1);
+  });
+
+  test(
+    'rejects incomplete structured JSON instead of storing raw output',
+    () async {
+      final client = MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {'content': '{"title":"Missing memory fields"}'},
+              },
+            ],
+          }),
+          200,
+        ),
+      );
+      final ai = AiService(
+        baseUrl: 'https://example.com/v1',
+        apiKey: 'test-key',
+        model: 'test-model',
+      );
+
+      final result = await http.runWithClient(
+        () => ai.summarizeWithTitle('Title', 'Content'),
+        () => client,
+      );
+
+      expect(result.memory, isNull);
+      expect(ai.lastError, contains('structured memory'));
+    },
+  );
 }

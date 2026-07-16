@@ -98,6 +98,10 @@ void main() {
   });
 
   group('BackupData', () {
+    test('structured Article exports use backup schema version 3', () {
+      expect(kBackupSchemaVersion, 3);
+    });
+
     test('full backup round-trips through JSON string', () {
       final backup = BackupData.create(
         articles: [

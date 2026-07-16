@@ -1,7 +1,8 @@
-﻿import 'dart:developer' as developer;
+import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/models/memory_document.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
@@ -13,13 +14,22 @@ import '../../shared/providers/settings_providers.dart';
 
 class SummaryRegenerationResult {
   final String? title;
-  final String? summary;
+  final MemoryDocument? memory;
+  final List<String> tags;
   final String? coverImageUrl;
   final String? error;
 
-  const SummaryRegenerationResult({this.title, this.summary, this.coverImageUrl, this.error});
+  const SummaryRegenerationResult({
+    this.title,
+    this.memory,
+    this.tags = const [],
+    this.coverImageUrl,
+    this.error,
+  });
 
-  bool get succeeded => summary != null && summary!.isNotEmpty;
+  String? get summary => memory?.toMarkdown();
+
+  bool get succeeded => memory != null && memory!.toRetrievalText().isNotEmpty;
 }
 
 typedef SummaryRegenerationRunner =
@@ -29,7 +39,13 @@ typedef SummaryRegenerationRunner =
     );
 
 typedef SaveGeneratedSummary =
-    Future<void> Function(String articleId, String? title, String summary, String? coverImageUrl);
+    Future<void> Function(
+      String articleId,
+      String? title,
+      MemoryDocument memory,
+      List<String> tags,
+      String? coverImageUrl,
+    );
 
 class SummaryRegenerationController extends StateNotifier<Set<String>> {
   final SummaryRegenerationRunner _runner;
@@ -73,7 +89,13 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
       );
       final result = await _runner(article, settings);
       if (result.succeeded) {
-        await _save(article.id, result.title, result.summary!, result.coverImageUrl);
+        await _save(
+          article.id,
+          result.title,
+          result.memory!,
+          result.tags,
+          result.coverImageUrl,
+        );
         developer.log(
           'background summary saved, articleId: ${article.id}',
           name: 'memora.ai',
@@ -137,8 +159,8 @@ final summaryRegenerationProvider =
               content,
               languageHint: aiLanguagePrompt(settings.languageIndex),
             );
-            final summary = result.summary;
-            if (summary == null || summary.isEmpty) {
+            final memory = result.memory;
+            if (memory == null || memory.toRetrievalText().isEmpty) {
               return SummaryRegenerationResult(
                 error: ai.lastError ?? 'AI returned an empty summary',
               );
@@ -152,9 +174,26 @@ final summaryRegenerationProvider =
               if (!looksLikeDomain) newTitle = generatedTitle;
             }
 
+            final generatedMemory = MemoryDocument.ai(
+              revision: (article.memory?.revision ?? 0) + 1,
+              overview: memory.overview,
+              keyPoints: memory.keyPoints,
+              conclusion: memory.conclusion,
+              generation: MemoryGeneration(
+                method: 'llm',
+                provider:
+                    Uri.tryParse(settings.aiBaseUrl)?.host.isNotEmpty == true
+                    ? Uri.parse(settings.aiBaseUrl).host
+                    : 'openai-compatible',
+                model: settings.aiModel,
+                promptVersion: 'full_summary_v1',
+                generatedAt: DateTime.now(),
+              ),
+            );
             return SummaryRegenerationResult(
               title: newTitle,
-              summary: summary,
+              memory: generatedMemory,
+              tags: result.tags,
               coverImageUrl: meta.imageUrl,
             );
           } catch (error, stackTrace) {

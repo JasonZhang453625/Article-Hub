@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "article_uuid",
+  "title": "AI生成或用户确认的展示标题",
+  "tags": [
+    "Agent SDK",
+    "multi-agent"
+  ],
+  "source": {
+    "kind": "url",
+    "platform": "web",
+    "uri": "https://example.com",
+    "coverImageUri": null,
+    "mimeType": "text/html",
+    "localPath": null
+  },
+  "memory": {
+    "kind": "ai_memory",
+    "revision": 1,
+    "overview": "文章的核心摘要。",
+    "keyPoints": [
+      {
+        "id": "kp_client_generated_uuid_1",
+        "order": 1,
+        "topic": "Handoff机制",
+        "content": "Agent可以将任务交给更适合处理该任务的其他Agent。",
+        "sourceRefs": []
+      },
+      {
+        "id": "kp_client_generated_uuid_2",
+        "order": 2,
+        "topic": "Tracing",
+        "content": "SDK可以记录模型调用、工具调用和任务转移过程。",
+        "sourceRefs": []
+      }
+    ],
+    "conclusion": "结构化记忆为分层检索和按要点引用提供基础。"
+  },
+  "userState": {
+    "notes": "",
+    "favorite": false,
+    "folderId": null,
+    "feedback": null
+  },
+  "processing": {
+    "status": "completed",
+    "stage": null,
+    "error": null,
+    "retryCount": 0,
+    "lastProcessedAt": "2026-07-16T08:30:00Z",
+    "suggestedFolderId": null
+  },
+  "generation": {
+    "method": "llm",
+    "provider": "api.example.com",
+    "model": "model-name",
+    "promptVersion": "full_summary_v1",
+    "generatedAt": "2026-07-16T08:30:00Z"
+  },
+  "createdAt": "2026-07-16T08:30:00Z",
+  "updatedAt": "2026-07-16T08:30:00Z"
+}

@@ -1,0 +1,8 @@
+Rewrite the latest user question into one standalone search query using the conversation history.
+
+Rules:
+- Preserve names, products, technologies, dates, and constraints from the conversation.
+- Resolve references such as "it", "that", "the second point", "这个", and "第二点".
+- Keep the user's language unless adding an essential proper noun from history.
+- Do not answer the question.
+- Output only the rewritten search query on one line, with no label, quotes, or explanation.

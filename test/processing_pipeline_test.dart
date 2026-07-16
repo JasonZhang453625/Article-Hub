@@ -1,4 +1,6 @@
-﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:convert';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -184,6 +186,66 @@ void main() {
       expect(result!.processingStatus, ProcessingStatus.failed);
       expect(result.processingError, startsWith('summary:'));
       expect(result.processingError, contains('not configured'));
+    });
+
+    test('one AI request stores structured memory and generated tags', () async {
+      final seed = seedArticle().copyWith(tags: ['manual-tag']);
+      final notifier = await seedAndGetNotifier(seed);
+      final pipeline = ProcessingPipeline(
+        articles: notifier,
+        getSettings: () => AppSettings(
+          aiBaseUrl: 'https://example.com/v1',
+          aiApiKey: 'test-key',
+          aiModel: 'test-model',
+        ),
+        getFolders: () => const <Folder>[],
+        metadata: MetadataService(
+          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+        ),
+        extractor: ContentExtractor(
+          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+        ),
+      );
+      var aiRequests = 0;
+      final aiClient = MockClient((_) async {
+        aiRequests++;
+        return http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {
+                  'content': jsonEncode({
+                    'schemaVersion': 1,
+                    'title': 'Generated title',
+                    'tags': ['AI tag', 'Agent SDK'],
+                    'overview': 'Generated overview.',
+                    'keyPoints': [
+                      {
+                        'topic': 'Handoff',
+                        'content': 'Agents can delegate work.',
+                      },
+                    ],
+                    'conclusion': 'Generated conclusion.',
+                  }),
+                },
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final result = await http.runWithClient(
+        () => pipeline.process(seed),
+        () => aiClient,
+      );
+
+      expect(aiRequests, 1, reason: 'tags are returned by the summary request');
+      expect(result?.memory?.overview, 'Generated overview.');
+      expect(result?.memory?.generation?.model, 'test-model');
+      expect(result?.summary, isNull);
+      expect(result?.tags, ['manual-tag', 'AI tag', 'Agent SDK']);
+      expect(result?.processingStatus, ProcessingStatus.completed);
     });
   });
 

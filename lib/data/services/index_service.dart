@@ -118,11 +118,11 @@ class IndexService {
     return box.length;
   }
 
-  /// Build the embedding input text for an article: title + summary + tags.
+  /// Build the embedding input text: title + canonical memory text + tags.
   static String buildEmbeddingInput(Article article) {
     final parts = <String>[
       article.title,
-      article.summary ?? '',
+      article.retrievalText,
       article.tags.join(', '),
     ];
     return parts.where((p) => p.isNotEmpty).join('\n');
@@ -148,10 +148,10 @@ Future<int> rebuildIndex({
   final toEmbed = <_IndexCandidate>[];
   for (final article in articles) {
     if (article.processingStatus != ProcessingStatus.completed) continue;
-    if (article.summary == null || article.summary!.isEmpty) continue;
+    if (!article.hasMemory) continue;
 
     final currentFp = contentFingerprint(
-        article.title, article.summary!, article.tags);
+        article.title, article.retrievalText, article.tags);
     final existing = existingRecords[article.id];
 
     // Skip if the content fingerprint and embedding model are unchanged.
@@ -194,8 +194,7 @@ Future<int> rebuildIndex({
   final validIds = articles
       .where((a) =>
           a.processingStatus == ProcessingStatus.completed &&
-          a.summary != null &&
-          a.summary!.isNotEmpty)
+          a.hasMemory)
       .map((a) => a.id)
       .toSet();
   final removedOrphans = await index.removeOrphans(validIds);

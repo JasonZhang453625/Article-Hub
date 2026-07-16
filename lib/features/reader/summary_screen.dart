@@ -303,13 +303,13 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
   Widget build(BuildContext context) {
     final theme = widget.theme;
     final isDark = widget.isDark;
-    final summary = widget.article.summary;
+    final summary = widget.article.displayMemoryMarkdown;
     final aiConfigured = ref.watch(aiConfiguredProvider);
     final s = ref.watch(stringsProvider);
     final pipelineGenerating = widget.article.processingStage == ProcessingStage.summary;
     final regenerating = _isRegenerating() || pipelineGenerating;
 
-    if (summary == null || summary.isEmpty) {
+    if (summary.isEmpty) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),

@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/services/ai_service.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/index_service.dart';
+import '../../data/services/prompt_service.dart';
+import '../../data/services/rag_conversation_service.dart';
 import '../../data/services/retrieval_service.dart';
 import '../../data/services/retrieval_log_service.dart';
 import 'article_providers.dart';
@@ -38,9 +41,52 @@ final retrievalServiceProvider = Provider<RetrievalService?>((ref) {
   final embedding = ref.watch(embeddingServiceProvider);
   final index = ref.watch(indexServiceProvider);
   if (embedding == null) return null;
-  return RetrievalService(embedding: embedding, index: index);
+  return RetrievalService(embedding: embedding, index: index, topK: 10);
 });
 
 final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
   return RetrievalLogService();
+});
+
+final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  final retrieval = ref.watch(retrievalServiceProvider);
+  if (settings == null ||
+      settings.aiBaseUrl.trim().isEmpty ||
+      settings.aiApiKey.trim().isEmpty ||
+      retrieval == null) {
+    return null;
+  }
+
+  final ai = AiService(
+    baseUrl: settings.aiBaseUrl,
+    apiKey: settings.aiApiKey,
+    model: settings.aiModel,
+  );
+  ai.onTokensUsed = (tokens) {
+    ref.read(settingsProvider.notifier).addTokenUsage(tokens);
+  };
+  final logService = ref.watch(retrievalLogServiceProvider);
+
+  return RagConversationService(
+    retrieve: retrieval.retrieve,
+    complete:
+        ({
+          required String systemPrompt,
+          required String userMessage,
+          List<Map<String, String>> history = const [],
+          double temperature = 0.3,
+          int maxTokens = 800,
+        }) {
+          return ai.chat(
+            systemPrompt: systemPrompt,
+            userMessage: userMessage,
+            history: history,
+            temperature: temperature,
+            maxTokens: maxTokens,
+          );
+        },
+    saveLog: logService.save,
+    promptService: PromptService(),
+  );
 });

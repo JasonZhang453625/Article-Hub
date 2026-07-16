@@ -7,7 +7,7 @@ import '../models/settings.dart';
 
 /// Current backup file schema version. Bump when the on-disk format changes in
 /// a way that needs migration on import.
-const int kBackupSchemaVersion = 2;
+const int kBackupSchemaVersion = 3;
 
 /// An in-memory representation of a full app backup: every article, filter
 /// group, folders, and the app settings. Pure data + (de)serialization, no

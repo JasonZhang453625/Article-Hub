@@ -1,5 +1,6 @@
 ﻿import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/services/embedding_service.dart';
+import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/services/index_service.dart';
@@ -105,6 +106,35 @@ void main() {
       expect(input, contains('My Title'));
       expect(input, contains('tag'));
       expect(input, isNot(contains('||')));
+    });
+
+    test('uses structured memory retrieval text without Markdown markers', () {
+      final article = Article(
+        id: 'structured',
+        url: 'https://example.com',
+        title: 'Agent SDK',
+        source: SourcePlatform.web,
+        tags: const ['agents'],
+        memory: MemoryDocument.ai(
+          overview: 'Unified framework.',
+          keyPoints: const [
+            MemoryKeyPoint(
+              id: 'kp-1',
+              order: 1,
+              topic: 'Handoff',
+              content: 'Agents delegate tasks.',
+            ),
+          ],
+          conclusion: 'Improves orchestration.',
+        ),
+      );
+
+      final input = IndexService.buildEmbeddingInput(article);
+
+      expect(input, contains('Unified framework.'));
+      expect(input, contains('Handoff'));
+      expect(input, contains('Agents delegate tasks.'));
+      expect(input, isNot(contains('**摘要**')));
     });
 
     test('omits empty tags', () {

@@ -1,7 +1,8 @@
-﻿import 'dart:developer' as developer;
+import 'dart:developer' as developer;
 import '../models/passage.dart';
 import 'embedding_service.dart';
 import 'index_service.dart';
+import 'retrieval_isolate.dart';
 
 /// The result of a retrieval operation.
 class RetrievalResult {
@@ -23,7 +24,8 @@ enum RetrievalMethod { vector, keyword, hybrid, none }
 /// Retrieves relevant articles from the knowledge base using hybrid search.
 ///
 /// When embeddings are configured, vector and keyword retrieval run in
-/// parallel and results are fused via Reciprocal Rank Fusion (RRF).
+/// parallel inside a background Isolate after the network embedding call
+/// completes. Results are fused via Reciprocal Rank Fusion (RRF).
 /// Falls back to pure keyword when embeddings are unavailable.
 class RetrievalService {
   final EmbeddingService _embedding;
@@ -36,138 +38,90 @@ class RetrievalService {
     required IndexService index,
     double minRelevance = 0.3,
     int topK = 5,
-  })  : _embedding = embedding,
-        _index = index,
-        _minRelevance = minRelevance,
-        _topK = topK;
+  }) : _embedding = embedding,
+       _index = index,
+       _minRelevance = minRelevance,
+       _topK = topK;
 
   /// Retrieve articles relevant to [query].
   ///
+  /// Network I/O (embedding API call, Hive reads) stays on the main thread.
+  /// CPU-heavy work (cosine similarity loop, keyword scoring, RRF fusion)
+  /// is dispatched to a background Isolate to avoid janking the UI.
+  ///
   /// [articles] is the full knowledge base (completed articles only).
-  Future<RetrievalResult> retrieve(
-      String query, List<Article> articles) async {
+  Future<RetrievalResult> retrieve(String query, List<Article> articles) async {
     final stopwatch = Stopwatch()..start();
 
-    // Run keyword synchronously; it's cheap and requires no I/O.
-    final keywordResults = _keywordRetrieve(query, articles);
+    final articleMaps = articles
+        .map(
+          (a) => {
+            'id': a.id,
+            'title': a.title,
+            'summary': a.retrievalText,
+            'tags': a.tags,
+          },
+        )
+        .toList();
 
-    // Try vector retrieval in parallel.
-    List<Article>? vectorResults;
+    // Collect query embedding on the main thread (network I/O).
+    List<double> queryVector = [];
     if (_embedding.isConfigured) {
       try {
-        vectorResults = await _vectorRetrieve(query, articles);
+        final result = await _embedding.embed(query);
+        if (result != null) {
+          queryVector = result.vector;
+        }
       } catch (e) {
-        developer.log('vector retrieval failed: $e',
-            name: 'memora.retrieval');
+        developer.log('embedding failed: $e', name: 'memora.retrieval');
       }
     }
+
+    // Pull index records (Hive I/O — fine on main thread).
+    final records = await _index.getAll();
+    final recordMaps = records
+        .map(
+          (r) => {
+            'articleId': r.articleId,
+            'model': r.model,
+            'vector': r.vector,
+          },
+        )
+        .toList();
+
+    // Dispatch CPU-heavy computation to a background Isolate.
+    final output = await runRetrievalInIsolate(
+      query: query,
+      queryVector: queryVector,
+      embeddingModel: _embedding.model,
+      records: recordMaps,
+      articles: articleMaps,
+      minRelevance: _minRelevance,
+      topK: _topK,
+    );
 
     stopwatch.stop();
 
-    // Neither method found anything.
-    if ((vectorResults == null || vectorResults.isEmpty) && keywordResults.isEmpty) {
-      return RetrievalResult(
-        articles: [],
-        method: RetrievalMethod.none,
-        duration: stopwatch.elapsed,
-      );
-    }
-
-    // Only keyword had results.
-    if (vectorResults == null || vectorResults.isEmpty) {
-      return RetrievalResult(
-        articles: keywordResults,
-        method: RetrievalMethod.keyword,
-        duration: stopwatch.elapsed,
-        candidateIds: keywordResults.map((a) => a.id).toList(),
-      );
-    }
-
-    // Only vector had results.
-    if (keywordResults.isEmpty) {
-      return RetrievalResult(
-        articles: vectorResults,
-        method: RetrievalMethod.vector,
-        duration: stopwatch.elapsed,
-        candidateIds: vectorResults.map((a) => a.id).toList(),
-      );
-    }
-
-    // Both methods produced results — fuse via RRF.
-    final fused = rrfFuse(vectorResults, keywordResults, topK: _topK);
-    return RetrievalResult(
-      articles: fused,
-      method: RetrievalMethod.hybrid,
-      duration: stopwatch.elapsed,
-      candidateIds: fused.map((a) => a.id).toList(),
-    );
-  }
-
-  /// Vector similarity retrieval.
-  Future<List<Article>?> _vectorRetrieve(
-      String query, List<Article> articles) async {
-    final records = await _index.getAll();
-    if (records.isEmpty) return null;
-
-    final queryEmbedding = await _embedding.embed(query);
-    if (queryEmbedding == null) return null;
-
-    // Build article lookup map.
     final articleMap = {for (final a in articles) a.id: a};
-
-    // Score each indexed article.
-    final scored = <({String id, double score})>[];
-    for (final record in records) {
-      if (!articleMap.containsKey(record.articleId)) continue;
-      // Skip records indexed with a different embedding model — their
-      // vectors live in an incompatible space and cosine similarity is
-      // meaningless. The stale entries will be cleaned up on next rebuild.
-      if (record.model != _embedding.model) continue;
-      final score = cosineSimilarity(queryEmbedding.vector, record.vector);
-      if (score >= _minRelevance) {
-        scored.add((id: record.articleId, score: score));
-      }
-    }
-
-    if (scored.isEmpty) return [];
-
-    // Sort by score descending, take top-k.
-    scored.sort((a, b) => b.score.compareTo(a.score));
-    final topIds = scored.take(_topK).map((s) => s.id).toList();
-
-    return topIds
+    final resultArticles = output.resultIds
         .map((id) => articleMap[id])
         .where((a) => a != null)
         .cast<Article>()
         .toList();
-  }
 
-  /// Keyword-based retrieval on title, summary, and tags.
-  List<Article> _keywordRetrieve(String query, List<Article> articles) {
-    final lower = query.toLowerCase();
-    final words = lower.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    if (words.isEmpty) return [];
+    final method = switch (output.method) {
+      'vector' => RetrievalMethod.vector,
+      'keyword' => RetrievalMethod.keyword,
+      'hybrid' => RetrievalMethod.hybrid,
+      _ => RetrievalMethod.none,
+    };
 
-    final scored = <({Article article, int score})>[];
-    for (final article in articles) {
-      int score = 0;
-      final titleLower = article.title.toLowerCase();
-      final summaryLower = (article.summary ?? '').toLowerCase();
-      final tagsLower = article.tags.map((t) => t.toLowerCase()).toList();
-
-      for (final word in words) {
-        if (titleLower.contains(word)) score += 3;
-        if (summaryLower.contains(word)) score += 2;
-        if (tagsLower.any((t) => t.contains(word))) score += 2;
-      }
-
-      if (score > 0) {
-        scored.add((article: article, score: score));
-      }
-    }
-
-    scored.sort((a, b) => b.score.compareTo(a.score));
-    return scored.take(_topK).map((s) => s.article).toList();
+    return RetrievalResult(
+      articles: resultArticles,
+      method: method,
+      duration: stopwatch.elapsed,
+      candidateIds: output.candidateIds,
+    );
   }
 }
 
@@ -176,9 +130,15 @@ class RetrievalService {
 /// RRF sums 1/(k + rank) for each article across both result lists, where
 /// k=60 dampens extreme rank differences. Articles appearing in both lists
 /// naturally get score-boosted without arbitrary weighting.
+///
+/// This is the synchronous, in-process variant suitable for tests or
+/// UI-thread-safe workloads. The Isolate-based variant used by
+/// [RetrievalService.retrieve] lives in `retrieval_isolate.dart`.
 List<Article> rrfFuse(
-    List<Article> vectorResults, List<Article> keywordResults,
-    {int topK = 5}) {
+  List<Article> vectorResults,
+  List<Article> keywordResults, {
+  int topK = 5,
+}) {
   const k = 60;
   final scores = <String, double>{};
 
@@ -192,7 +152,6 @@ List<Article> rrfFuse(
     scores[id] = (scores[id] ?? 0) + 1 / (k + i);
   }
 
-  // Build a merged set of unique articles keyed by id.
   final seen = <String, Article>{};
   for (final a in vectorResults) {
     seen[a.id] = a;

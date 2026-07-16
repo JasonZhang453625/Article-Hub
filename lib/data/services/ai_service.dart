@@ -2,8 +2,23 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 
+import '../models/memory_document.dart';
 import 'prompt_service.dart';
+
+class AiSummaryResult {
+  final String? title;
+  final List<String> tags;
+  final MemoryDocument? memory;
+
+  const AiSummaryResult({this.title, this.tags = const [], this.memory});
+
+  String? get summary {
+    final rendered = memory?.toMarkdown().trim();
+    return rendered == null || rendered.isEmpty ? null : rendered;
+  }
+}
 
 class AiService {
   static const int _singlePassLimit = 15000;
@@ -56,19 +71,19 @@ class AiService {
   }
 
   /// Summarize content and also generate a proper article title.
-  Future<({String? title, String? summary})> summarizeWithTitle(
+  Future<AiSummaryResult> summarizeWithTitle(
     String title,
     String content, {
     String languageHint = '',
   }) async {
-    if (!isConfigured) return (title: null, summary: null);
+    if (!isConfigured) return const AiSummaryResult();
 
     if (content.length > _singlePassLimit) {
       final chunkSummaries = await _summarizeChunks(
         content,
         languageHint: languageHint,
       );
-      if (chunkSummaries.isEmpty) return (title: null, summary: null);
+      if (chunkSummaries.isEmpty) return const AiSummaryResult();
       return _summarizeWithTitleSingle(
         title,
         chunkSummaries.join('\n\n---\n\n'),
@@ -83,7 +98,7 @@ class AiService {
     );
   }
 
-  Future<({String? title, String? summary})> _summarizeWithTitleSingle(
+  Future<AiSummaryResult> _summarizeWithTitleSingle(
     String title,
     String content, {
     required String languageHint,
@@ -115,15 +130,18 @@ class AiService {
         languageHint.contains('Chinese') || languageHint.contains('中文');
     final lang = isChinese ? 'zh' : 'en';
 
-    final instruction = await _prompts.load('summary/chunk_instruction_$lang.txt');
+    final instruction = await _prompts.load(
+      'summary/chunk_instruction_$lang.txt',
+    );
 
     final summaries = <String>[];
     final chunkCount = (content.length / _chunkSize).ceil();
 
     for (
-        var start = 0, index = 0;
-        start < content.length;
-        start += _chunkSize, index++) {
+      var start = 0, index = 0;
+      start < content.length;
+      start += _chunkSize, index++
+    ) {
       final end = (start + _chunkSize).clamp(0, content.length);
       final chunk = content.substring(start, end);
       final body = jsonEncode({
@@ -153,128 +171,190 @@ class AiService {
     return summaries;
   }
 
-  Future<({String? title, String? summary})> _postChatWithTitle(
-    Uri uri,
-    String body,
-  ) async {
+  Future<AiSummaryResult> _postChatWithTitle(Uri uri, String body) async {
     final text = await _postChat(uri, body);
-    if (text == null || text.isEmpty) return (title: null, summary: null);
+    if (text == null || text.isEmpty) return const AiSummaryResult();
 
     return _parseStructuredSummary(text);
   }
 
-  /// Parses the structured output format:
-  ///   【标题】...      /  【Title】...
-  ///   【摘要】...      /  【Summary】...
-  ///   【要点】...      /  【Key Points】...
-  ///   1. ...
-  ///   【总结】...      /  【Conclusion】...
-  ///   ✓
-  ///
-  /// Falls back to the old formats.
-  ({String? title, String? summary}) _parseStructuredSummary(String text) {
-    // Try the new 总分总 format first.
+  /// Parses the current JSON contract and keeps legacy tagged-text/JSON
+  /// compatibility for providers that cached an older prompt.
+  AiSummaryResult _parseStructuredSummary(String text) {
+    final jsonResult = _tryParseJsonMemory(text);
+    if (jsonResult != null) return jsonResult;
+
     final titleMatch = RegExp(
       r'【(?:标题|Title)】\s*\n?(.+?)(?=\n【(?:摘要|Summary)】)',
       dotAll: true,
     ).firstMatch(text);
-
     final summaryMatch = RegExp(
       r'【(?:摘要|Summary)】\s*\n?(.+?)(?=\n【(?:要点|Key\s+Points)】)',
       dotAll: true,
     ).firstMatch(text);
-
     final pointsMatch = RegExp(
       r'【(?:要点|Key\s+Points)】\s*\n?(.+?)(?=\n【(?:总结|Conclusion)】)',
       dotAll: true,
     ).firstMatch(text);
-
     final conclusionMatch = RegExp(
       r'【(?:总结|Conclusion)】\s*\n?(.+?)(?:\n✓\s*)?$',
       dotAll: true,
     ).firstMatch(text);
 
     if (titleMatch != null || summaryMatch != null || pointsMatch != null) {
-      final title = titleMatch?.group(1)?.trim();
-      final overview = summaryMatch?.group(1)?.trim() ?? '';
-      final points = pointsMatch?.group(1)?.trim() ?? '';
-      final conclusion = conclusionMatch?.group(1)?.trim() ?? '';
-
-      // Build Markdown for display: 摘要 → 要点 → 总结.
-      final displayParts = <String>[];
-      if (overview.isNotEmpty) {
-        displayParts.add('**摘要**\n\n$overview');
-      }
-      if (points.isNotEmpty) {
-        displayParts.add('\n\n**要点**\n\n$points');
-      }
-      if (conclusion.isNotEmpty) {
-        displayParts.add('\n\n**总结**\n\n$conclusion');
-      }
-      final displaySummary =
-          displayParts.isEmpty ? text : displayParts.join('');
-
-      return (
-        title: (title != null && title.isNotEmpty) ? title : null,
-        summary: displaySummary,
+      return AiSummaryResult(
+        title: _nonEmptyString(titleMatch?.group(1)),
+        memory: MemoryDocument.ai(
+          overview: summaryMatch?.group(1)?.trim() ?? '',
+          keyPoints: _keyPointsFromLegacyText(
+            pointsMatch?.group(1)?.trim() ?? '',
+          ),
+          conclusion: conclusionMatch?.group(1)?.trim() ?? '',
+        ),
       );
     }
 
-    // Fallback: old 一句话结论 / 核心摘要 / 全篇要点 format.
     final oldConclusion = RegExp(
       r'【(?:一句话结论|Key\s+Conclusion)】\s*\n?(.+?)(?=\n【(?:核心摘要|Core\s+Summary)】)',
       dotAll: true,
     ).firstMatch(text);
-
     final oldSummary = RegExp(
       r'【(?:核心摘要|Core\s+Summary)】\s*\n?(.+?)(?=\n【(?:全篇要点|Key\s+Points)】)',
       dotAll: true,
     ).firstMatch(text);
-
     final oldPoints = RegExp(
       r'【(?:全篇要点|Key\s+Points)】\s*\n?(.+?)(?:\n✓\s*)?$',
       dotAll: true,
     ).firstMatch(text);
 
     if (oldConclusion != null || oldSummary != null || oldPoints != null) {
-      final title = oldConclusion?.group(1)?.trim();
-      final core = oldSummary?.group(1)?.trim() ?? '';
-      final pts = oldPoints?.group(1)?.trim() ?? '';
-
-      final displayParts = <String>[];
-      if (core.isNotEmpty) displayParts.add('**核心摘要**\n\n$core');
-      if (pts.isNotEmpty) displayParts.add('\n\n**全篇要点**\n\n$pts');
-      final displaySummary = displayParts.isEmpty ? text : displayParts.join('');
-      return (
-        title: (title != null && title.isNotEmpty) ? title : null,
-        summary: displaySummary,
+      return AiSummaryResult(
+        title: _nonEmptyString(oldConclusion?.group(1)),
+        memory: MemoryDocument.ai(
+          overview: oldSummary?.group(1)?.trim() ?? '',
+          keyPoints: _keyPointsFromLegacyText(
+            oldPoints?.group(1)?.trim() ?? '',
+          ),
+          conclusion: '',
+        ),
       );
     }
 
-    // Fallback: old JSON format.
+    lastError = 'AI returned invalid structured memory JSON';
+    return const AiSummaryResult();
+  }
+
+  AiSummaryResult? _tryParseJsonMemory(String text) {
     try {
-      var jsonStr = text.trim();
-      final codeBlockPattern =
-          RegExp(r'^```(?:json)?\s*\n?(.*?)\n?```$', dotAll: true);
-      final match = codeBlockPattern.firstMatch(jsonStr);
-      if (match != null) {
-        jsonStr = match.group(1)!.trim();
+      var jsonText = text.trim();
+      final fence = RegExp(
+        r'^```(?:json)?\s*\n?(.*?)\n?```$',
+        dotAll: true,
+      ).firstMatch(jsonText);
+      if (fence != null) jsonText = fence.group(1)!.trim();
+
+      final decoded = jsonDecode(jsonText);
+      if (decoded is! Map<String, dynamic>) return null;
+
+      final title = _nonEmptyString(decoded['title']);
+      final legacySummary = _nonEmptyString(decoded['summary']);
+      if (legacySummary != null) {
+        return AiSummaryResult(
+          title: title,
+          memory: MemoryDocument.legacyMarkdown(body: legacySummary),
+        );
       }
 
-      final json = jsonDecode(jsonStr) as Map<String, dynamic>;
-      final aiTitle = json['title'] as String?;
-      final aiSummary = json['summary'] as String?;
-      return (
-        title: (aiTitle != null && aiTitle.trim().isNotEmpty)
-            ? aiTitle.trim()
-            : null,
-        summary: (aiSummary != null && aiSummary.trim().isNotEmpty)
-            ? aiSummary.trim()
-            : null,
+      final overview = _nonEmptyString(decoded['overview']);
+      final conclusion = decoded['conclusion'] is String
+          ? (decoded['conclusion'] as String).trim()
+          : null;
+      final rawTags = decoded['tags'];
+      final rawPoints = decoded['keyPoints'];
+      if (title == null ||
+          overview == null ||
+          conclusion == null ||
+          rawTags is! List ||
+          rawPoints is! List) {
+        lastError = 'AI returned incomplete structured memory JSON';
+        return const AiSummaryResult();
+      }
+
+      final tags = rawTags
+          .whereType<String>()
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toSet()
+          .take(5)
+          .toList();
+      if (tags.length < 2) {
+        lastError = 'AI returned fewer than 2 structured memory tags';
+        return const AiSummaryResult();
+      }
+
+      final keyPoints = <MemoryKeyPoint>[];
+      for (final rawPoint in rawPoints) {
+        if (rawPoint is! Map) continue;
+        final topic = _nonEmptyString(rawPoint['topic']);
+        final content = _nonEmptyString(rawPoint['content']);
+        if (topic == null || content == null) continue;
+        keyPoints.add(
+          MemoryKeyPoint(
+            id: 'kp_${const Uuid().v4()}',
+            order: keyPoints.length + 1,
+            topic: topic,
+            content: content,
+            sourceRefs:
+                (rawPoint['sourceRefs'] as List?)
+                    ?.whereType<String>()
+                    .toList() ??
+                const [],
+          ),
+        );
+      }
+      if (keyPoints.isEmpty) {
+        lastError = 'AI returned no valid structured memory key points';
+        return const AiSummaryResult();
+      }
+
+      return AiSummaryResult(
+        title: title,
+        tags: tags,
+        memory: MemoryDocument.ai(
+          overview: overview,
+          keyPoints: keyPoints,
+          conclusion: conclusion,
+        ),
       );
-    } catch (_) {
-      return (title: null, summary: text);
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
     }
+  }
+
+  List<MemoryKeyPoint> _keyPointsFromLegacyText(String text) {
+    final points = <MemoryKeyPoint>[];
+    for (final rawLine in text.split('\n')) {
+      final content = rawLine
+          .replaceFirst(RegExp(r'^\s*(?:\d+[.)]|[-*])\s*'), '')
+          .trim();
+      if (content.isEmpty) continue;
+      points.add(
+        MemoryKeyPoint(
+          id: 'kp_${const Uuid().v4()}',
+          order: points.length + 1,
+          topic: '',
+          content: content,
+        ),
+      );
+    }
+    return points;
+  }
+
+  String? _nonEmptyString(dynamic value) {
+    if (value is! String || value.trim().isEmpty) return null;
+    return value.trim();
   }
 
   Future<String?> chat({
@@ -372,10 +452,7 @@ class AiService {
       return null;
     } on TimeoutException {
       lastError = 'AI request timed out after ${timeout.inSeconds} seconds';
-      developer.log(
-        'AI API timeout ($timeout), url: $uri',
-        name: 'memora.ai',
-      );
+      developer.log('AI API timeout ($timeout), url: $uri', name: 'memora.ai');
       return null;
     } catch (e, st) {
       lastError = 'AI request failed: $e';

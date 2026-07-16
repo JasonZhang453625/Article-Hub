@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/services/retrieval_log_service.dart';
 
 void main() {
@@ -7,6 +7,7 @@ void main() {
       final log = RetrievalLog(
         id: 'log-1',
         query: 'flutter state management',
+        rewrittenQuery: 'Flutter state management approaches',
         method: 'vector',
         candidateIds: ['a1', 'a2', 'a3'],
         citedIds: ['a1', 'a3'],
@@ -21,6 +22,7 @@ void main() {
 
       expect(restored.id, 'log-1');
       expect(restored.query, 'flutter state management');
+      expect(restored.rewrittenQuery, 'Flutter state management approaches');
       expect(restored.method, 'vector');
       expect(restored.candidateIds, ['a1', 'a2', 'a3']);
       expect(restored.citedIds, ['a1', 'a3']);
@@ -42,6 +44,7 @@ void main() {
 
       final log = RetrievalLog.fromMap(map);
       expect(log.feedback, isNull);
+      expect(log.rewrittenQuery, isNull);
       expect(log.clickedCitationIds, isEmpty);
       expect(log.citedIds, isEmpty);
     });
@@ -105,7 +108,8 @@ void main() {
       expect(
         log.citedIds.every((id) => log.candidateIds.contains(id)),
         isTrue,
-        reason: 'All cited IDs should come from candidates (anti-hallucination)',
+        reason:
+            'All cited IDs should come from candidates (anti-hallucination)',
       );
     });
 
@@ -119,8 +123,9 @@ void main() {
         citedIds: ['real-1', 'fake-id'],
         durationMs: 150,
       );
-      final invalidCitations =
-          log.citedIds.where((id) => !log.candidateIds.contains(id));
+      final invalidCitations = log.citedIds.where(
+        (id) => !log.candidateIds.contains(id),
+      );
       expect(invalidCitations, isNotEmpty);
       expect(invalidCitations.first, 'fake-id');
     });

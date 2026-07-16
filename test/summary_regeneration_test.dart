@@ -1,13 +1,26 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/features/reader/summary_regeneration_provider.dart';
 
 void main() {
+  final generatedMemory = MemoryDocument.ai(
+    overview: 'Generated overview',
+    keyPoints: const [
+      MemoryKeyPoint(
+        id: 'kp-1',
+        order: 1,
+        topic: 'Topic',
+        content: 'Generated fact',
+      ),
+    ],
+    conclusion: 'Generated conclusion',
+  );
   final article = Article(
     id: 'article-1',
     url: 'https://example.com/article',
@@ -24,8 +37,10 @@ void main() {
     final saves = <SummaryRegenerationResult>[];
     final controller = SummaryRegenerationController(
       runner: (_, _) => completion.future,
-      save: (id, title, summary, coverImageUrl) async {
-        saves.add(SummaryRegenerationResult(title: title, summary: summary));
+      save: (id, title, memory, tags, coverImageUrl) async {
+        saves.add(
+          SummaryRegenerationResult(title: title, memory: memory, tags: tags),
+        );
       },
     );
 
@@ -33,16 +48,18 @@ void main() {
     expect(controller.state, contains(article.id));
 
     completion.complete(
-      const SummaryRegenerationResult(
+      SummaryRegenerationResult(
         title: 'Generated title',
-        summary: 'Generated summary',
+        memory: generatedMemory,
+        tags: const ['AI', 'Agents'],
       ),
     );
     final result = await job;
 
     expect(result.succeeded, isTrue);
     expect(saves.single.title, 'Generated title');
-    expect(saves.single.summary, 'Generated summary');
+    expect(saves.single.memory?.overview, 'Generated overview');
+    expect(saves.single.tags, ['AI', 'Agents']);
     expect(controller.state, isEmpty);
   });
 
@@ -54,16 +71,14 @@ void main() {
         runs++;
         return completion.future;
       },
-      save: (_, _, _, _) async {},
+      save: (_, _, _, _, _) async {},
     );
 
     final first = controller.regenerate(article, settings);
     final second = controller.regenerate(article, settings);
     expect(runs, 1);
 
-    completion.complete(
-      const SummaryRegenerationResult(summary: 'Generated summary'),
-    );
+    completion.complete(SummaryRegenerationResult(memory: generatedMemory));
     expect((await first).succeeded, isTrue);
     expect((await second).succeeded, isTrue);
   });
@@ -72,7 +87,7 @@ void main() {
     var saves = 0;
     final controller = SummaryRegenerationController(
       runner: (_, _) async => const SummaryRegenerationResult(error: 'failed'),
-      save: (_, _, _, _) async {
+      save: (_, _, _, _, _) async {
         saves++;
       },
     );

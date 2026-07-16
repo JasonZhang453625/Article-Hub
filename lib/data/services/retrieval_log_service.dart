@@ -1,10 +1,11 @@
-﻿import 'dart:developer' as developer;
+import 'dart:developer' as developer;
 import 'package:hive_flutter/hive_flutter.dart';
 
 /// A single retrieval log entry recorded locally after each RAG query.
 class RetrievalLog {
   final String id;
   final String query;
+  final String? rewrittenQuery;
   final String method; // vector, keyword, none
   final List<String> candidateIds;
   final List<String> citedIds;
@@ -16,6 +17,7 @@ class RetrievalLog {
   RetrievalLog({
     required this.id,
     required this.query,
+    this.rewrittenQuery,
     required this.method,
     required this.candidateIds,
     this.citedIds = const [],
@@ -26,21 +28,23 @@ class RetrievalLog {
   }) : timestamp = timestamp ?? DateTime.now();
 
   Map<String, dynamic> toMap() => {
-        'id': id,
-        'query': query,
-        'method': method,
-        'candidateIds': candidateIds,
-        'citedIds': citedIds,
-        'durationMs': durationMs,
-        'timestamp': timestamp.toIso8601String(),
-        'feedback': feedback,
-        'clickedCitationIds': clickedCitationIds,
-      };
+    'id': id,
+    'query': query,
+    'rewrittenQuery': rewrittenQuery,
+    'method': method,
+    'candidateIds': candidateIds,
+    'citedIds': citedIds,
+    'durationMs': durationMs,
+    'timestamp': timestamp.toIso8601String(),
+    'feedback': feedback,
+    'clickedCitationIds': clickedCitationIds,
+  };
 
   factory RetrievalLog.fromMap(Map<dynamic, dynamic> map) {
     return RetrievalLog(
       id: map['id'] as String,
       query: map['query'] as String,
+      rewrittenQuery: map['rewrittenQuery'] as String?,
       method: map['method'] as String,
       candidateIds: (map['candidateIds'] as List).cast<String>(),
       citedIds: (map['citedIds'] as List?)?.cast<String>() ?? const [],
@@ -60,6 +64,7 @@ class RetrievalLog {
     return RetrievalLog(
       id: id,
       query: query,
+      rewrittenQuery: rewrittenQuery,
       method: method,
       candidateIds: candidateIds,
       citedIds: citedIds ?? this.citedIds,
@@ -106,9 +111,9 @@ class RetrievalLogService {
     if (log.clickedCitationIds.contains(articleId)) return;
     await box.put(
       logId,
-      log.copyWith(
-        clickedCitationIds: [...log.clickedCitationIds, articleId],
-      ).toMap(),
+      log
+          .copyWith(clickedCitationIds: [...log.clickedCitationIds, articleId])
+          .toMap(),
     );
   }
 
@@ -120,7 +125,7 @@ class RetrievalLogService {
 
   /// Returns basic stats for the quality dashboard.
   Future<({int total, int useful, int notUseful, int noResult})>
-      getStats() async {
+  getStats() async {
     final logs = await getAll();
     int useful = 0, notUseful = 0, noResult = 0;
     for (final log in logs) {
@@ -132,7 +137,7 @@ class RetrievalLogService {
       total: logs.length,
       useful: useful,
       notUseful: notUseful,
-      noResult: noResult
+      noResult: noResult,
     );
   }
 

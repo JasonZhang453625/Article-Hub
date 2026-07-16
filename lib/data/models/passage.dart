@@ -1,12 +1,8 @@
 import 'package:hive/hive.dart';
+import 'memory_document.dart';
 import 'source_platform.dart';
 
-enum ProcessingStatus {
-  pending,
-  processing,
-  completed,
-  failed,
-}
+enum ProcessingStatus { pending, processing, completed, failed }
 
 enum ProcessingStage {
   metadata,
@@ -34,7 +30,11 @@ class Article extends HiveObject {
   String? coverImageUrl;
 
   /// AI-generated summary of the article content. Null when not yet summarized.
+  /// Legacy compatibility field. New writes use [memory].
   String? summary;
+
+  /// Canonical structured memory. Stored as a JSON-compatible map in Hive.
+  MemoryDocument? memory;
 
   /// User feedback on the AI summary: `null` = not yet rated, `1` = upvote
   /// (helpful), `-1` = downvote (not helpful). Reset to null when the summary
@@ -66,6 +66,14 @@ class Article extends HiveObject {
 
   bool get isLocalAttachment => localFilePath != null;
 
+  bool get hasMemory => retrievalText.trim().isNotEmpty;
+
+  String get displayMemoryMarkdown =>
+      memory?.toMarkdown() ?? summary?.trim() ?? '';
+
+  String get retrievalText =>
+      memory?.toRetrievalText() ?? summary?.trim() ?? '';
+
   /// App-owned relative path under ApplicationSupport for a local attachment
   /// (e.g. imported image). Null for URL articles.
   String? localFilePath;
@@ -85,6 +93,7 @@ class Article extends HiveObject {
     this.isFavorite = false,
     this.coverImageUrl,
     this.summary,
+    this.memory,
     this.summaryFeedback,
     this.folderId,
     this.processingStatus = ProcessingStatus.completed,
@@ -123,6 +132,7 @@ class Article extends HiveObject {
     bool? isFavorite,
     Object? coverImageUrl = _unset,
     Object? summary = _unset,
+    Object? memory = _unset,
     Object? summaryFeedback = _unset,
     Object? folderId = _unset,
     ProcessingStatus? processingStatus,
@@ -148,16 +158,19 @@ class Article extends HiveObject {
       coverImageUrl: identical(coverImageUrl, _unset)
           ? this.coverImageUrl
           : (identical(coverImageUrl, clearValue)
-              ? null
-              : coverImageUrl as String?),
+                ? null
+                : coverImageUrl as String?),
       summary: identical(summary, _unset)
           ? this.summary
           : (identical(summary, clearValue) ? null : summary as String?),
+      memory: identical(memory, _unset)
+          ? this.memory
+          : (identical(memory, clearValue) ? null : memory as MemoryDocument?),
       summaryFeedback: identical(summaryFeedback, _unset)
           ? this.summaryFeedback
           : (identical(summaryFeedback, clearValue)
-              ? null
-              : summaryFeedback as int?),
+                ? null
+                : summaryFeedback as int?),
       folderId: identical(folderId, _unset)
           ? this.folderId
           : (identical(folderId, clearValue) ? null : folderId as String?),
@@ -165,65 +178,83 @@ class Article extends HiveObject {
       processingStage: identical(processingStage, _unset)
           ? this.processingStage
           : (identical(processingStage, clearValue)
-              ? null
-              : processingStage as ProcessingStage?),
+                ? null
+                : processingStage as ProcessingStage?),
       processingError: identical(processingError, _unset)
           ? this.processingError
           : (identical(processingError, clearValue)
-              ? null
-              : processingError as String?),
+                ? null
+                : processingError as String?),
       retryCount: retryCount ?? this.retryCount,
       lastProcessedAt: identical(lastProcessedAt, _unset)
           ? this.lastProcessedAt
           : (identical(lastProcessedAt, clearValue)
-              ? null
-              : lastProcessedAt as DateTime?),
+                ? null
+                : lastProcessedAt as DateTime?),
       suggestedFolderId: identical(suggestedFolderId, _unset)
           ? this.suggestedFolderId
           : (identical(suggestedFolderId, clearValue)
-              ? null
-              : suggestedFolderId as String?),
+                ? null
+                : suggestedFolderId as String?),
       isFullText: isFullText ?? this.isFullText,
       localFilePath: identical(localFilePath, _unset)
           ? this.localFilePath
           : (identical(localFilePath, clearValue)
-              ? null
-              : localFilePath as String?),
+                ? null
+                : localFilePath as String?),
       localMimeType: identical(localMimeType, _unset)
           ? this.localMimeType
           : (identical(localMimeType, clearValue)
-              ? null
-              : localMimeType as String?),
+                ? null
+                : localMimeType as String?),
     );
   }
 
-  /// Serializes the article to a JSON-compatible map. The source platform is
-  /// stored as its stable integer value so the format stays robust against
-  /// enum reordering (same mapping used by the Hive adapter).
+  /// Serializes the article to the versioned nested storage/sync schema.
   Map<String, dynamic> toJson() {
+    final exportedMemory =
+        memory ??
+        (summary != null && summary!.trim().isNotEmpty
+            ? (isFullText
+                  ? MemoryDocument.fullText(
+                      body: summary!,
+                      format: localMimeType == 'text/markdown'
+                          ? 'markdown'
+                          : 'plain',
+                    )
+                  : MemoryDocument.legacyMarkdown(body: summary!))
+            : null);
     return {
+      'schemaVersion': 1,
       'id': id,
-      'url': url,
       'title': title,
-      'source': SourcePlatformAdapter.toStoredValue(source),
       'tags': tags,
-      'notes': notes,
+      'source': {
+        'kind': isLocalAttachment ? 'local_file' : 'url',
+        'platform': source.name,
+        'uri': url,
+        'coverImageUri': coverImageUrl,
+        'mimeType': localMimeType,
+        'localPath': localFilePath,
+      },
+      'memory': exportedMemory?.toContentJson(),
+      'userState': {
+        'notes': notes,
+        'favorite': isFavorite,
+        'folderId': folderId,
+        'feedback': summaryFeedback,
+      },
+      'processing': {
+        'status': processingStatus.name,
+        'stage': processingStage?.name,
+        'error': processingError,
+        'retryCount': retryCount,
+        'lastProcessedAt': lastProcessedAt?.toIso8601String(),
+        'suggestedFolderId': suggestedFolderId,
+      },
+      'generation': exportedMemory?.generation?.toJson(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
-      'isFavorite': isFavorite,
-      'coverImageUrl': coverImageUrl,
-      'summary': summary,
-      'summaryFeedback': summaryFeedback,
-      'folderId': folderId,
-      'processingStatus': processingStatus.index,
-      'processingStage': processingStage?.index,
-      'processingError': processingError,
-      'retryCount': retryCount,
-      'lastProcessedAt': lastProcessedAt?.toIso8601String(),
-      'suggestedFolderId': suggestedFolderId,
-      'isFullText': isFullText,
-      'localFilePath': localFilePath,
-      'localMimeType': localMimeType,
     };
   }
 
@@ -231,52 +262,101 @@ class Article extends HiveObject {
   /// required fields are missing or malformed.
   factory Article.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
-    final url = json['url'];
+    final sourceJson = _mapOf(json['source']);
+    final userState = _mapOf(json['userState']);
+    final processing = _mapOf(json['processing']);
+    final generation = _mapOf(json['generation']);
+    final memoryJson = _mapOf(json['memory']);
+    final url = json['url'] is String ? json['url'] : sourceJson?['uri'];
     if (id is! String || url is! String) {
       throw const FormatException('Article is missing required fields');
+    }
+    MemoryDocument? memory;
+    String? legacySummary = json['summary'] is String
+        ? json['summary'] as String
+        : null;
+    final legacyIsFullText = json['isFullText'] == true;
+    if (memoryJson != null) {
+      if (generation != null) {
+        memoryJson['generation'] = generation;
+      }
+      memory = MemoryDocument.fromJson(memoryJson);
+      legacySummary = null;
+    } else if (legacySummary != null && legacySummary.trim().isNotEmpty) {
+      final mimeType = sourceJson?['mimeType'] ?? json['localMimeType'];
+      memory = legacyIsFullText
+          ? MemoryDocument.fullText(
+              body: legacySummary,
+              format: mimeType == 'text/markdown' ? 'markdown' : 'plain',
+            )
+          : MemoryDocument.legacyMarkdown(body: legacySummary);
+      legacySummary = null;
     }
     return Article(
       id: id,
       url: url,
       title: json['title'] is String ? json['title'] as String : url,
-      source: SourcePlatformAdapter.fromStoredValue(
-        json['source'] is int ? json['source'] as int : 2,
-      ),
+      source: _sourceFromJson(json['source'], sourceJson),
       tags: (json['tags'] as List?)?.whereType<String>().toList() ?? const [],
-      notes: json['notes'] is String ? json['notes'] as String : '',
+      notes: userState?['notes'] is String
+          ? userState!['notes'] as String
+          : (json['notes'] is String ? json['notes'] as String : ''),
       createdAt: _parseDate(json['createdAt']),
       updatedAt: _parseDate(json['updatedAt']),
-      isFavorite: json['isFavorite'] == true,
-      coverImageUrl:
-          json['coverImageUrl'] is String ? json['coverImageUrl'] as String : null,
-      summary: json['summary'] is String ? json['summary'] as String : null,
-      summaryFeedback:
-          json['summaryFeedback'] is int ? json['summaryFeedback'] as int : null,
-      folderId: json['folderId'] is String ? json['folderId'] as String : null,
-      processingStatus: json['processingStatus'] is int
-          ? ProcessingStatus.values[json['processingStatus'] as int]
-          : ProcessingStatus.completed,
-      processingStage: json['processingStage'] is int
-          ? ProcessingStage.values[json['processingStage'] as int]
-          : null,
-      processingError: json['processingError'] is String
-          ? json['processingError'] as String
-          : null,
-      retryCount: json['retryCount'] is int ? json['retryCount'] as int : 0,
-      lastProcessedAt: json['lastProcessedAt'] is String
-          ? _parseDate(json['lastProcessedAt'])
-          : null,
-      suggestedFolderId: json['suggestedFolderId'] is String
-          ? json['suggestedFolderId'] as String
-          : null,
-      isFullText: json['isFullText'] == true,
-      localFilePath: json['localFilePath'] is String
-          ? json['localFilePath'] as String
-          : null,
-      localMimeType: json['localMimeType'] is String
-          ? json['localMimeType'] as String
-          : null,
+      isFavorite: userState?['favorite'] == true || json['isFavorite'] == true,
+      coverImageUrl: sourceJson?['coverImageUri'] is String
+          ? sourceJson!['coverImageUri'] as String
+          : (json['coverImageUrl'] is String
+                ? json['coverImageUrl'] as String
+                : null),
+      summary: legacySummary,
+      memory: memory,
+      summaryFeedback: userState?['feedback'] is int
+          ? userState!['feedback'] as int
+          : (json['summaryFeedback'] is int
+                ? json['summaryFeedback'] as int
+                : null),
+      folderId: userState?['folderId'] is String
+          ? userState!['folderId'] as String
+          : (json['folderId'] is String ? json['folderId'] as String : null),
+      processingStatus: _processingStatusFromJson(
+        processing?['status'] ?? json['processingStatus'],
+      ),
+      processingStage: _processingStageFromJson(
+        processing?['stage'] ?? json['processingStage'],
+      ),
+      processingError: processing?['error'] is String
+          ? processing!['error'] as String
+          : (json['processingError'] is String
+                ? json['processingError'] as String
+                : null),
+      retryCount: processing?['retryCount'] is int
+          ? processing!['retryCount'] as int
+          : (json['retryCount'] is int ? json['retryCount'] as int : 0),
+      lastProcessedAt: _optionalDate(
+        processing?['lastProcessedAt'] ?? json['lastProcessedAt'],
+      ),
+      suggestedFolderId: processing?['suggestedFolderId'] is String
+          ? processing!['suggestedFolderId'] as String
+          : (json['suggestedFolderId'] is String
+                ? json['suggestedFolderId'] as String
+                : null),
+      isFullText: memory?.kind == MemoryKind.fullText || legacyIsFullText,
+      localFilePath: sourceJson?['localPath'] is String
+          ? sourceJson!['localPath'] as String
+          : (json['localFilePath'] is String
+                ? json['localFilePath'] as String
+                : null),
+      localMimeType: sourceJson?['mimeType'] is String
+          ? sourceJson!['mimeType'] as String
+          : (json['localMimeType'] is String
+                ? json['localMimeType'] as String
+                : null),
     );
+  }
+
+  static DateTime? _optionalDate(dynamic value) {
+    return value is String ? DateTime.tryParse(value) : null;
   }
 
   static DateTime _parseDate(dynamic value) {
@@ -328,13 +408,16 @@ class ArticleAdapter extends TypeAdapter<Article> {
       isFullText: fields[19] as bool? ?? false,
       localFilePath: fields[20] as String?,
       localMimeType: fields[21] as String?,
+      memory: fields[22] is Map
+          ? MemoryDocument.fromJson(fields[22] as Map)
+          : null,
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(22)
+      ..writeByte(23)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -378,8 +461,54 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(20)
       ..write(obj.localFilePath)
       ..writeByte(21)
-      ..write(obj.localMimeType);
+      ..write(obj.localMimeType)
+      ..writeByte(22)
+      ..write(obj.memory?.toJson());
   }
+}
+
+Map<dynamic, dynamic>? _mapOf(dynamic value) => value is Map ? value : null;
+
+SourcePlatform _sourceFromJson(
+  dynamic rawSource,
+  Map<dynamic, dynamic>? sourceJson,
+) {
+  if (rawSource is int) {
+    return SourcePlatformAdapter.fromStoredValue(rawSource);
+  }
+  final platform = sourceJson?['platform'];
+  if (platform is String) {
+    return SourcePlatform.values.firstWhere(
+      (value) => value.name == platform,
+      orElse: () => SourcePlatform.web,
+    );
+  }
+  return SourcePlatform.web;
+}
+
+ProcessingStatus _processingStatusFromJson(dynamic value) {
+  if (value is int && value >= 0 && value < ProcessingStatus.values.length) {
+    return ProcessingStatus.values[value];
+  }
+  if (value is String) {
+    return ProcessingStatus.values.firstWhere(
+      (status) => status.name == value,
+      orElse: () => ProcessingStatus.completed,
+    );
+  }
+  return ProcessingStatus.completed;
+}
+
+ProcessingStage? _processingStageFromJson(dynamic value) {
+  if (value is int && value >= 0 && value < ProcessingStage.values.length) {
+    return ProcessingStage.values[value];
+  }
+  if (value is String) {
+    for (final stage in ProcessingStage.values) {
+      if (stage.name == value) return stage;
+    }
+  }
+  return null;
 }
 
 class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {

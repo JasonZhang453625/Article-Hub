@@ -1,5 +1,6 @@
 import 'package:hive/hive.dart';
 import '../models/passage.dart';
+import '../services/storage_migration_service.dart';
 import 'article_repository.dart';
 
 class HiveArticleRepository implements ArticleRepository {
@@ -9,6 +10,13 @@ class HiveArticleRepository implements ArticleRepository {
   @override
   Future<void> init() async {
     _box = await Hive.openBox<Article>(boxName);
+    try {
+      await StorageMigrationService().migrate(_box);
+    } catch (_) {
+      // Migration is best-effort. Legacy summary remains readable, and the
+      // migration will be retried on a later startup because no version was
+      // recorded after a failed run.
+    }
   }
 
   @override

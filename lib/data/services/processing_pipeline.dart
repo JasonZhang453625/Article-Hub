@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import '../models/memory_document.dart';
 import '../models/passage.dart';
 import '../models/settings.dart';
 import '../models/folder.dart';
@@ -67,15 +68,15 @@ class ProcessingPipeline {
     IndexService? index,
     Future<Folder?> Function(String name)? createFolder,
     PromptService? promptService,
-  })  : _articles = articles,
-        _getSettings = getSettings,
-        _getFolders = getFolders,
-        _metadata = metadata ?? MetadataService(),
-        _extractor = extractor ?? ContentExtractor(),
-        _embedding = embedding,
-        _index = index,
-        _createFolder = createFolder,
-        _prompts = promptService ?? PromptService();
+  }) : _articles = articles,
+       _getSettings = getSettings,
+       _getFolders = getFolders,
+       _metadata = metadata ?? MetadataService(),
+       _extractor = extractor ?? ContentExtractor(),
+       _embedding = embedding,
+       _index = index,
+       _createFolder = createFolder,
+       _prompts = promptService ?? PromptService();
 
   /// Process a single article through all stages. Returns the final article.
   Future<Article?> process(Article article) async {
@@ -86,7 +87,7 @@ class ProcessingPipeline {
     var current = article;
 
     final isResume = current.processingStatus == ProcessingStatus.processing;
-    final hasSummary = current.summary != null && current.summary!.isNotEmpty;
+    final hasSummary = current.hasMemory;
 
     // Mark as processing (skip if already processing = resuming).
     if (!isResume) {
@@ -122,8 +123,13 @@ class ProcessingPipeline {
       _notifyStage(current, ProcessingStage.summary);
     }
 
-    // Stage 4: Tags (AI-generated, non-fatal on failure)
-    current = await _stageTags(current);
+    // AI memory already includes tags. Full-text and legacy records still use
+    // the standalone classifier because no structured summary call ran.
+    if (current.memory?.kind == MemoryKind.aiMemory) {
+      _notifyStage(current, ProcessingStage.tags);
+    } else {
+      current = await _stageTags(current);
+    }
 
     // Stage 5: Folder suggestion (auto-classifies to folderId, non-fatal)
     current = await _stageFolderSuggestion(current);
@@ -178,7 +184,18 @@ class ProcessingPipeline {
       await _articles.update(current);
       return current;
     }
-    current = current.copyWith(summary: body.trim(), isFullText: true);
+    current = current.copyWith(
+      summary: Article.clearValue,
+      memory: MemoryDocument.fullText(
+        body: body.trim(),
+        format: 'plain',
+        generation: MemoryGeneration(
+          method: 'full_text',
+          generatedAt: DateTime.now(),
+        ),
+      ),
+      isFullText: true,
+    );
     await _articles.update(current);
 
     current = await _stageTags(current);
@@ -254,7 +271,17 @@ class ProcessingPipeline {
       current = current.copyWith(
         processingStatus: ProcessingStatus.processing,
         processingStage: ProcessingStage.summary,
-        summary: content,
+        summary: Article.clearValue,
+        memory: MemoryDocument.fullText(
+          body: content,
+          format: article.localMimeType == 'text/markdown'
+              ? 'markdown'
+              : 'plain',
+          generation: MemoryGeneration(
+            method: 'full_text',
+            generatedAt: DateTime.now(),
+          ),
+        ),
         isFullText: true,
       );
       await _articles.update(current);
@@ -319,8 +346,7 @@ class ProcessingPipeline {
     _notifyStage(article, ProcessingStage.content);
     try {
       final page = _fetchedPageCache.remove(article.id);
-      final content =
-          page == null ? null : _extractor.fromFetchedPage(page);
+      final content = page == null ? null : _extractor.fromFetchedPage(page);
 
       if (content == null || content.isEmpty) {
         return _fail(article, 'content', 'Could not extract page content');
@@ -367,7 +393,7 @@ class ProcessingPipeline {
         languageHint: langHint,
       );
 
-      if (result.summary == null || result.summary!.isEmpty) {
+      if (result.memory == null || result.memory!.toRetrievalText().isEmpty) {
         return _fail(
           article,
           'summary',
@@ -385,9 +411,26 @@ class ProcessingPipeline {
         }
       }
 
+      final generatedMemory = result.memory!.withGeneration(
+        MemoryGeneration(
+          method: 'llm',
+          provider: _providerLabel(settings.aiBaseUrl),
+          model: settings.aiModel,
+          promptVersion: 'full_summary_v1',
+          generatedAt: DateTime.now(),
+        ),
+      );
+      final mergedTags = [...article.tags];
+      final existingTags = article.tags.toSet();
+      for (final tag in result.tags) {
+        if (existingTags.add(tag)) mergedTags.add(tag);
+      }
+
       return article.copyWith(
         title: newTitle ?? article.title,
-        summary: result.summary,
+        tags: mergedTags,
+        summary: Article.clearValue,
+        memory: generatedMemory,
         isFullText: false,
       );
     } catch (e) {
@@ -405,13 +448,10 @@ class ProcessingPipeline {
     }
 
     try {
-      final summary = article.summary ?? '';
+      final summary = article.retrievalText;
       if (summary.isEmpty) return article;
 
-      final tags = await _generateTags(
-        article.title,
-        _truncateForAi(summary),
-      );
+      final tags = await _generateTags(article.title, _truncateForAi(summary));
       if (tags.isNotEmpty) {
         final existing = Set<String>.from(article.tags);
         final merged = [...article.tags];
@@ -469,71 +509,91 @@ class ProcessingPipeline {
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
         settings.aiApiKey.trim().isEmpty) {
-      developer.log('folder suggestion: skipped (AI not configured)',
-          name: 'memora.pipeline');
+      developer.log(
+        'folder suggestion: skipped (AI not configured)',
+        name: 'memora.pipeline',
+      );
       return article;
     }
 
     try {
       final folderNames = _folders.map((f) => f.name).toList();
-      developer.log('folder suggestion: ${folderNames.length} folders available',
-          name: 'memora.pipeline');
+      developer.log(
+        'folder suggestion: ${folderNames.length} folders available',
+        name: 'memora.pipeline',
+      );
 
       if (folderNames.isEmpty && _createFolder == null) {
-        developer.log('folder suggestion: skipped (no folders and cannot create)',
-            name: 'memora.pipeline');
+        developer.log(
+          'folder suggestion: skipped (no folders and cannot create)',
+          name: 'memora.pipeline',
+        );
         return article;
       }
 
       final suggested = await _suggestFolder(
         article.title,
-        _truncateForAi(article.summary ?? ''),
+        _truncateForAi(article.retrievalText),
         folderNames,
       );
-      developer.log('folder suggestion: AI returned "$suggested"',
-          name: 'memora.pipeline');
+      developer.log(
+        'folder suggestion: AI returned "$suggested"',
+        name: 'memora.pipeline',
+      );
 
       if (suggested == null) {
-        developer.log('folder suggestion: AI returned null/none',
-            name: 'memora.pipeline');
+        developer.log(
+          'folder suggestion: AI returned null/none',
+          name: 'memora.pipeline',
+        );
         return article;
       }
 
       // Match the suggested name back to a folder ID (case-insensitive).
-      final match = _folders.where(
-        (f) => f.name.toLowerCase() == suggested.toLowerCase(),
-      ).firstOrNull;
+      final match = _folders
+          .where((f) => f.name.toLowerCase() == suggested.toLowerCase())
+          .firstOrNull;
       if (match != null) {
-        developer.log('folder suggestion: matched existing folder "${match.name}"',
-            name: 'memora.pipeline');
+        developer.log(
+          'folder suggestion: matched existing folder "${match.name}"',
+          name: 'memora.pipeline',
+        );
         return article.copyWith(folderId: match.id);
       }
 
       // No existing folder matched — create a new one if possible.
       if (_createFolder != null) {
-        developer.log('folder suggestion: creating new folder "$suggested"',
-            name: 'memora.pipeline');
+        developer.log(
+          'folder suggestion: creating new folder "$suggested"',
+          name: 'memora.pipeline',
+        );
         final newFolder = await _createFolder(suggested);
         if (newFolder != null) {
           _folders.add(newFolder);
-          developer.log('folder suggestion: created and assigned folder "${newFolder.name}"',
-              name: 'memora.pipeline');
+          developer.log(
+            'folder suggestion: created and assigned folder "${newFolder.name}"',
+            name: 'memora.pipeline',
+          );
           return article.copyWith(folderId: newFolder.id);
         } else {
-          developer.log('folder suggestion: folder creation failed',
-              name: 'memora.pipeline');
+          developer.log(
+            'folder suggestion: folder creation failed',
+            name: 'memora.pipeline',
+          );
         }
       }
       return article;
     } catch (e) {
-      developer.log('folder suggestion failed: $e',
-          name: 'memora.pipeline');
+      developer.log('folder suggestion failed: $e', name: 'memora.pipeline');
       return article;
     }
   }
 
   Future<String?> _suggestFolder(
-      String title, String summary, List<String> folderNames) async {
+    String title,
+    String summary,
+    List<String> folderNames,
+  ) async {
     final settings = _settings!;
     final ai = AiService(
       baseUrl: settings.aiBaseUrl,
@@ -544,8 +604,9 @@ class ProcessingPipeline {
     final namesList = folderNames.map((n) => '"$n"').join(', ');
     final systemPrompt = folderNames.isEmpty
         ? await _prompts.load('folder/system_no_folders.txt')
-        : await _prompts.load('folder/system_with_folders.txt',
-            {'folderNames': namesList});
+        : await _prompts.load('folder/system_with_folders.txt', {
+            'folderNames': namesList,
+          });
 
     // Few-shot: prime the model with one example so it imitates the format
     // and stops returning "null"/"none" on weak models like gpt-4o-mini.
@@ -563,8 +624,7 @@ class ProcessingPipeline {
       },
     ];
 
-    final userMessage =
-        'Title: $title\n\nSummary: $summary\n\nFolder name:';
+    final userMessage = 'Title: $title\n\nSummary: $summary\n\nFolder name:';
     final response = await ai.chat(
       systemPrompt: systemPrompt,
       userMessage: userMessage,
@@ -602,7 +662,7 @@ class ProcessingPipeline {
     final embedding = _embedding;
     final index = _index;
     if (embedding == null || index == null) return;
-    if (article.summary == null || article.summary!.isEmpty) return;
+    if (!article.hasMemory) return;
 
     try {
       final input = IndexService.buildEmbeddingInput(article);
@@ -614,13 +674,18 @@ class ProcessingPipeline {
         );
         return;
       }
-      await index.put(IndexRecord(
-        articleId: article.id,
-        model: result.model,
-        fingerprint:
-            contentFingerprint(article.title, article.summary!, article.tags),
-        vector: result.vector,
-      ));
+      await index.put(
+        IndexRecord(
+          articleId: article.id,
+          model: result.model,
+          fingerprint: contentFingerprint(
+            article.title,
+            article.retrievalText,
+            article.tags,
+          ),
+          vector: result.vector,
+        ),
+      );
       developer.log(
         'index updated for article ${article.id}',
         name: 'memora.pipeline',
@@ -645,6 +710,11 @@ class ProcessingPipeline {
       processingError: msg,
       lastProcessedAt: DateTime.now(),
     );
+  }
+
+  String _providerLabel(String baseUrl) {
+    final host = Uri.tryParse(baseUrl)?.host.trim();
+    return host == null || host.isEmpty ? 'openai-compatible' : host;
   }
 
   void dispose() {

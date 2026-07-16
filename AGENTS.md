@@ -103,3 +103,11 @@ Known gaps (see `docs/ROADMAP.md` §1.4): per-stage success/failure tests for `P
 - `docs/OVERVIEW.md` — full product overview
 - `docs/PRD.md` — product requirements
 - `docs/ROADMAP.md` — phased development plan (Chinese)
+
+## LangChain documentation
+
+When implementing or reviewing LangChain, Dart LangChain, agent workflows, tool calling, or RAG orchestration, consult these official sources before relying on prior knowledge:
+
+- Dart LangChain package: <https://pub.dev/packages/langchain>
+- Dart LangChain API reference: <https://pub.dev/documentation/langchain/latest/>
+- LangChain Docs MCP: `langchain-docs` (`https://docs.langchain.com/mcp`)

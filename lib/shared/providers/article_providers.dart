@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
+import '../../data/models/memory_document.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/models/filter_group.dart';
@@ -94,16 +95,24 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> updateGeneratedSummary(
     String articleId,
     String? generatedTitle,
-    String summary,
+    MemoryDocument memory,
+    List<String> generatedTags,
     String? coverImageUrl,
   ) async {
     final repo = await _ref.read(articleRepositoryProvider.future);
     final current = repo.getById(articleId);
     if (current == null) return;
 
+    final mergedTags = [...current.tags];
+    final existingTags = current.tags.toSet();
+    for (final tag in generatedTags) {
+      if (existingTags.add(tag)) mergedTags.add(tag);
+    }
     final updated = current.copyWith(
       title: generatedTitle ?? current.title,
-      summary: summary,
+      tags: mergedTags,
+      summary: Article.clearValue,
+      memory: memory,
       summaryFeedback: Article.clearValue,
       coverImageUrl: coverImageUrl ?? current.coverImageUrl,
       lastProcessedAt: DateTime.now(),
@@ -126,7 +135,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     final embedding = _ref.read(embeddingServiceProvider);
     final index = _ref.read(indexServiceProvider);
     if (embedding == null) return;
-    if (article.summary == null || article.summary!.isEmpty) return;
+    if (!article.hasMemory) return;
 
     final input = IndexService.buildEmbeddingInput(article);
     embedding
@@ -139,7 +148,7 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
               model: result.model,
               fingerprint: contentFingerprint(
                 article.title,
-                article.summary!,
+                article.retrievalText,
                 article.tags,
               ),
               vector: result.vector,

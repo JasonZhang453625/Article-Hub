@@ -29,10 +29,16 @@ class OcrResult {
 /// Models are downloaded on first use and cached under app support storage.
 class PpOcrV6Engine {
   static const dictAsset = 'assets/ocr/ppocrv6_dict.txt';
-  static const detLimitSideLen = 960;
+  static const detLimitSideLen = 736;
   static const recImageHeight = 48;
   static const recMaxWidth = 320;
   static const minTextLength = 1;
+
+  /// Maximum number of detected boxes sent through the recognition model.
+  /// Caps runtime and transient memory on text-dense images (e.g. full-page
+  /// scans) where hundreds of boxes would otherwise each trigger a rec
+  /// inference. Boxes are already in reading order, so the first N are kept.
+  static const maxRecBoxes = 50;
 
   final OcrModelStore _store;
   final OnnxRuntime _runtime;
@@ -63,8 +69,13 @@ class PpOcrV6Engine {
     onProgress?.call('models', null);
     await _store.ensureModels(onProgress: onProgress);
 
+    // useArena: false — the CPU arena retains peak-sized allocations across
+    // runs and inflates resident RSS, which trips Android's LMK on memory
+    // constrained devices. Disabling it releases intermediate activations
+    // back to the OS after each inference.
     final sessionOptions = OrtSessionOptions(
       providers: const [OrtProvider.CPU],
+      useArena: false,
     );
     if (_detSession == null) {
       final detFile = await _store.detModelFile();
@@ -121,7 +132,9 @@ class PpOcrV6Engine {
     }
 
     final lines = <OcrLine>[];
-    for (final box in boxes) {
+    final recCap = math.min(boxes.length, maxRecBoxes);
+    for (var i = 0; i < recCap; i++) {
+      final box = boxes[i];
       final crop = _cropBox(rgb, box);
       if (crop == null) continue;
       final text = await _recognize(rec, crop, characters);

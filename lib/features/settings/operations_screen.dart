@@ -56,7 +56,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   Future<void> _processBatch() async {
     final articles = ref.read(articlesProvider).valueOrNull ?? [];
     final toProcess = articles
-        .where((a) => a.summary == null || a.summary!.isEmpty)
+        .where((a) => !a.hasMemory)
         .toList();
     if (toProcess.isEmpty) return;
     final confirmed = await showDialog<bool>(
@@ -113,6 +113,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
       final article = toProcess[i];
       final updated = article.copyWith(
         summary: Article.clearValue,
+        memory: Article.clearValue,
         summaryFeedback: Article.clearValue,
         processingStatus: ProcessingStatus.pending,
         processingStage: Article.clearValue,
@@ -141,7 +142,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     final cardColor = theme.colorScheme.surface;
     final outlineColor = theme.colorScheme.outline;
     final articles = ref.watch(articlesProvider).valueOrNull ?? [];
-    final pendingBatchCount = articles.where((a) => a.summary == null || a.summary!.isEmpty).length;
+    final pendingBatchCount = articles.where((a) => !a.hasMemory).length;
     final aiMemoryCount = articles.where((a) => !a.isFullText).length;
     final countAsync = ref.watch(indexCountProvider);
     final indexedCount = countAsync.valueOrNull;
