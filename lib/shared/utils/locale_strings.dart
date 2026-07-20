@@ -138,6 +138,8 @@ class LocaleStrings {
   final String startupPage;
   final String startupChat;
   final String startupKnowledge;
+  final String memorySortNewestFirst;
+  final String memorySortNewestFirstDesc;
   final String settingsAccount;
   final String settingsAccountDesc;
   final String accountTitle;
@@ -421,6 +423,8 @@ class LocaleStrings {
     required this.startupPage,
     required this.startupChat,
     required this.startupKnowledge,
+    required this.memorySortNewestFirst,
+    required this.memorySortNewestFirstDesc,
     required this.settingsAccount,
     required this.settingsAccountDesc,
     required this.accountTitle,
@@ -719,6 +723,8 @@ class LocaleStrings {
     startupPage: 'Open on startup',
     startupChat: 'Chat',
     startupKnowledge: 'Memora',
+    memorySortNewestFirst: 'Newest memories first',
+    memorySortNewestFirstDesc: 'Turn off to show the earliest created memories first.',
     settingsAccount: 'Account',
     settingsAccountDesc: 'Usage stats, security settings',
     accountTitle: 'Account',
@@ -1003,6 +1009,8 @@ class LocaleStrings {
     startupPage: '启动时打开',
     startupChat: '回忆',
     startupKnowledge: '记忆',
+    memorySortNewestFirst: '最新记忆优先',
+    memorySortNewestFirstDesc: '关闭后，最早创建的记忆排在最上面。',
     settingsAccount: '账号',
     settingsAccountDesc: '使用统计、安全设置',
     accountTitle: '账号',

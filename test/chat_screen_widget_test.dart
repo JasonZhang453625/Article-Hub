@@ -8,6 +8,7 @@ import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/features/chat/chat_screen.dart';
+import 'package:memora/shared/providers/settings_providers.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
 
 /// Phase 3.4 widget tests for the Chat screen states.
@@ -27,6 +28,7 @@ void main() {
         overrides: [
           // Never completes: keeps settings loading without touching Hive.
           hiveInitProvider.overrideWith((ref) => Completer<void>().future),
+          languageIndexProvider.overrideWith((ref) => 2),
           // In-memory repository: no file I/O, safe inside fake-async.
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
@@ -44,8 +46,8 @@ void main() {
       (tester) async {
     await pumpChat(tester, articles: []);
 
-    expect(find.text('Ask your Memora'), findsOneWidget);
-    expect(find.textContaining('Process some articles first'), findsOneWidget);
+    expect(find.text('Explore your Memora'), findsOneWidget);
+    expect(find.textContaining('Process some memories first'), findsOneWidget);
   });
 
   testWidgets('with knowledge available shows example prompts', (tester) async {
@@ -63,7 +65,7 @@ void main() {
       ],
     );
 
-    expect(find.text('Ask your Memora'), findsOneWidget);
+    expect(find.text('Explore your Memora'), findsOneWidget);
     expect(find.textContaining('Try:'), findsOneWidget);
   });
 

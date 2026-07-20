@@ -98,4 +98,22 @@ void main() {
     expect(saves, 0);
     expect(controller.state, isEmpty);
   });
+
+  test(
+    'regeneration is durably scheduled instead of being tied to the detail page',
+    () async {
+      final scheduled = <Article>[];
+      final controller = SummaryRegenerationController(
+        schedule: (value) async => scheduled.add(value),
+      );
+
+      final result = await controller.regenerate(article, settings);
+
+      expect(result.scheduled, isTrue);
+      expect(scheduled.single.memory, isNull);
+      expect(scheduled.single.summary, isNull);
+      expect(scheduled.single.processingStatus, ProcessingStatus.pending);
+      expect(controller.state, isEmpty);
+    },
+  );
 }

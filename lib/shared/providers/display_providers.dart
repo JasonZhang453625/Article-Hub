@@ -3,6 +3,7 @@ import '../../data/models/passage.dart';
 import '../../data/models/filter_group.dart';
 import 'article_providers.dart';
 import 'filter_providers.dart';
+import 'settings_providers.dart';
 
 final selectedArticleIdProvider = StateProvider<String?>((ref) => null);
 
@@ -12,6 +13,7 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final sourceName = ref.watch(selectedSourceProvider);
   final selectedFilterId = ref.watch(selectedFilterGroupProvider);
   final folderId = ref.watch(selectedFolderIdProvider);
+  final newestFirst = ref.watch(memorySortNewestFirstProvider);
 
   final filterGroupsAsync = selectedFilterId.isNotEmpty
       ? ref.watch(filterGroupsProvider)
@@ -65,9 +67,20 @@ final filteredArticlesProvider = Provider<AsyncValue<List<Article>>>((ref) {
       }
     }
 
-    return filtered;
+    return sortArticlesByCreatedAt(filtered, newestFirst: newestFirst);
   });
 });
+
+List<Article> sortArticlesByCreatedAt(
+  Iterable<Article> articles, {
+  required bool newestFirst,
+}) {
+  return articles.toList()..sort(
+    newestFirst
+        ? (a, b) => b.createdAt.compareTo(a.createdAt)
+        : (a, b) => a.createdAt.compareTo(b.createdAt),
+  );
+}
 
 final knowledgeBaseArticlesProvider = Provider<AsyncValue<List<Article>>>((
   ref,

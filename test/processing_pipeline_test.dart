@@ -37,21 +37,23 @@ void main() {
 
   setUp(() {
     repo = _InMemoryArticleRepository();
-    container = ProviderContainer(overrides: [
-      hiveInitProvider.overrideWith((ref) async {}),
-      articleRepositoryProvider.overrideWith((ref) async => repo),
-    ]);
+    container = ProviderContainer(
+      overrides: [
+        hiveInitProvider.overrideWith((ref) async {}),
+        articleRepositoryProvider.overrideWith((ref) async => repo),
+      ],
+    );
   });
 
   tearDown(() => container.dispose());
 
   Article seedArticle({String id = 'p1'}) => Article(
-        id: id,
-        url: 'https://example.com/post',
-        title: 'placeholder',
-        source: SourcePlatform.web,
-        processingStatus: ProcessingStatus.pending,
-      );
+    id: id,
+    url: 'https://example.com/post',
+    title: 'placeholder',
+    source: SourcePlatform.web,
+    processingStatus: ProcessingStatus.pending,
+  );
 
   Future<ArticlesNotifier> seedAndGetNotifier(Article seed) async {
     await repo.add(seed);
@@ -60,15 +62,13 @@ void main() {
     return notifier;
   }
 
-  http.Response htmlResponse(String body) => http.Response(
-        body,
-        200,
-        headers: {'content-type': 'text/html'},
-      );
+  http.Response htmlResponse(String body) =>
+      http.Response(body, 200, headers: {'content-type': 'text/html'});
 
   group('Stage 1: metadata', () {
     test('success applies og:title and og:image to the article', () async {
-      const html = '<html><head>'
+      const html =
+          '<html><head>'
           '<meta property="og:title" content="Real Title" />'
           '<meta property="og:image" content="https://cdn.example.com/c.png" />'
           '</head></html>';
@@ -82,7 +82,8 @@ void main() {
         ),
         extractor: ContentExtractor(
           http: mockHttp(
-              (_) async => htmlResponse('<html><body><p>body</p></body></html>')),
+            (_) async => htmlResponse('<html><body><p>body</p></body></html>'),
+          ),
         ),
       );
 
@@ -92,10 +93,7 @@ void main() {
       expect(result.coverImageUrl, 'https://cdn.example.com/c.png');
     });
 
-    test('network failure during metadata is non-fatal', () async {
-      // MetadataService swallows network errors and returns empty metadata,
-      // so the placeholder title survives and the pipeline proceeds to the
-      // content stage (where it fails — that is the observable outcome).
+    test('network failure is reported at the metadata stage', () async {
       final notifier = await seedAndGetNotifier(seedArticle());
       final pipeline = ProcessingPipeline(
         articles: notifier,
@@ -113,7 +111,7 @@ void main() {
       expect(result, isNotNull);
       expect(result!.title, 'placeholder');
       expect(result.processingStatus, ProcessingStatus.failed);
-      expect(result.processingError, startsWith('content:'));
+      expect(result.processingError, startsWith('metadata:'));
     });
   });
 
@@ -125,8 +123,10 @@ void main() {
         getSettings: () => null,
         getFolders: () => const <Folder>[],
         metadata: MetadataService(
-          http: mockHttp((_) async =>
-              htmlResponse('<html><head><title>X</title></head></html>')),
+          http: mockHttp(
+            (_) async =>
+                htmlResponse('<html><head><title>X</title></head></html>'),
+          ),
         ),
         extractor: ContentExtractor(
           http: mockHttp((_) async => http.Response('nope', 500)),
@@ -147,12 +147,15 @@ void main() {
         getSettings: () => null,
         getFolders: () => const <Folder>[],
         metadata: MetadataService(
-          http: mockHttp((_) async =>
-              htmlResponse('<html><head><title>X</title></head></html>')),
+          http: mockHttp(
+            (_) async =>
+                htmlResponse('<html><head><title>X</title></head></html>'),
+          ),
         ),
         extractor: ContentExtractor(
           http: mockHttp(
-              (_) async => htmlResponse('<html><body></body></html>')),
+            (_) async => htmlResponse('<html><body></body></html>'),
+          ),
         ),
       );
 
@@ -171,10 +174,12 @@ void main() {
         getSettings: () => AppSettings(aiBaseUrl: '', aiApiKey: ''),
         getFolders: () => const <Folder>[],
         metadata: MetadataService(
-          http: mockHttp((_) async => htmlResponse(
-                '<html><head><title>X</title></head>'
-                '<body><article>$_longArticleText</article></body></html>',
-              )),
+          http: mockHttp(
+            (_) async => htmlResponse(
+              '<html><head><title>X</title></head>'
+              '<body><article>$_longArticleText</article></body></html>',
+            ),
+          ),
         ),
         extractor: ContentExtractor(
           http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
@@ -188,65 +193,72 @@ void main() {
       expect(result.processingError, contains('not configured'));
     });
 
-    test('one AI request stores structured memory and generated tags', () async {
-      final seed = seedArticle().copyWith(tags: ['manual-tag']);
-      final notifier = await seedAndGetNotifier(seed);
-      final pipeline = ProcessingPipeline(
-        articles: notifier,
-        getSettings: () => AppSettings(
-          aiBaseUrl: 'https://example.com/v1',
-          aiApiKey: 'test-key',
-          aiModel: 'test-model',
-        ),
-        getFolders: () => const <Folder>[],
-        metadata: MetadataService(
-          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
-        ),
-        extractor: ContentExtractor(
-          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
-        ),
-      );
-      var aiRequests = 0;
-      final aiClient = MockClient((_) async {
-        aiRequests++;
-        return http.Response(
-          jsonEncode({
-            'choices': [
-              {
-                'message': {
-                  'content': jsonEncode({
-                    'schemaVersion': 1,
-                    'title': 'Generated title',
-                    'tags': ['AI tag', 'Agent SDK'],
-                    'overview': 'Generated overview.',
-                    'keyPoints': [
-                      {
-                        'topic': 'Handoff',
-                        'content': 'Agents can delegate work.',
-                      },
-                    ],
-                    'conclusion': 'Generated conclusion.',
-                  }),
-                },
-              },
-            ],
-          }),
-          200,
+    test(
+      'one AI request stores structured memory and generated tags',
+      () async {
+        final seed = seedArticle().copyWith(tags: ['manual-tag']);
+        final notifier = await seedAndGetNotifier(seed);
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => AppSettings(
+            aiBaseUrl: 'https://example.com/v1',
+            aiApiKey: 'test-key',
+            aiModel: 'test-model',
+          ),
+          getFolders: () => const <Folder>[],
+          metadata: MetadataService(
+            http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+          ),
+          extractor: ContentExtractor(
+            http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+          ),
         );
-      });
+        var aiRequests = 0;
+        final aiClient = MockClient((_) async {
+          aiRequests++;
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'message': {
+                    'content': jsonEncode({
+                      'schemaVersion': 1,
+                      'title': 'Generated title',
+                      'tags': ['AI tag', 'Agent SDK'],
+                      'overview': 'Generated overview.',
+                      'keyPoints': [
+                        {
+                          'topic': 'Handoff',
+                          'content': 'Agents can delegate work.',
+                        },
+                      ],
+                      'conclusion': 'Generated conclusion.',
+                    }),
+                  },
+                },
+              ],
+            }),
+            200,
+          );
+        });
 
-      final result = await http.runWithClient(
-        () => pipeline.process(seed),
-        () => aiClient,
-      );
+        final result = await http.runWithClient(
+          () => pipeline.process(seed),
+          () => aiClient,
+        );
 
-      expect(aiRequests, 1, reason: 'tags are returned by the summary request');
-      expect(result?.memory?.overview, 'Generated overview.');
-      expect(result?.memory?.generation?.model, 'test-model');
-      expect(result?.summary, isNull);
-      expect(result?.tags, ['manual-tag', 'AI tag', 'Agent SDK']);
-      expect(result?.processingStatus, ProcessingStatus.completed);
-    });
+        expect(
+          aiRequests,
+          1,
+          reason: 'tags are returned by the summary request',
+        );
+        expect(result?.memory?.overview, 'Generated overview.');
+        expect(result?.memory?.generation?.model, 'test-model');
+        expect(result?.summary, isNull);
+        expect(result?.tags, ['manual-tag', 'AI tag', 'Agent SDK']);
+        expect(result?.processingStatus, ProcessingStatus.completed);
+      },
+    );
   });
 
   group('Retry semantics', () {
@@ -257,8 +269,10 @@ void main() {
         getSettings: () => null,
         getFolders: () => const <Folder>[],
         metadata: MetadataService(
-          http: mockHttp((_) async =>
-              htmlResponse('<html><head><title>X</title></head></html>')),
+          http: mockHttp(
+            (_) async =>
+                htmlResponse('<html><head><title>X</title></head></html>'),
+          ),
         ),
         extractor: ContentExtractor(
           http: mockHttp((_) async => http.Response('nope', 500)),
@@ -277,33 +291,108 @@ void main() {
     });
   });
 
-  group('Stage 4 & 5: tags and folder suggestion are non-fatal', () {
+  group('Durable resume semantics', () {
     test(
-        'failed summary short-circuits the pipeline — no tags or folder suggestion',
-        () async {
-      // When the summary stage fails the pipeline returns immediately;
-      // tags and folder suggestion never run, so neither field is written.
-      final notifier = await seedAndGetNotifier(seedArticle());
+      'resume preserves a queued full-text job instead of converting it to an AI memory',
+      () async {
+        final queued = seedArticle().copyWith(
+          isFullText: true,
+          processingStatus: ProcessingStatus.processing,
+          processingStage: ProcessingStage.content,
+        );
+        final notifier = await seedAndGetNotifier(queued);
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => AppSettings(),
+          getFolders: () => const <Folder>[],
+          metadata: MetadataService(
+            http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+          ),
+          extractor: ContentExtractor(
+            http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+          ),
+        );
+
+        final result = await pipeline.resume(queued);
+
+        expect(result?.processingStatus, ProcessingStatus.completed);
+        expect(result?.isFullText, isTrue);
+        expect(
+          result?.memory?.body,
+          contains('sufficiently long article body'),
+        );
+      },
+    );
+
+    test('late stage writes cannot overwrite the completed state', () async {
+      final delayedRepo = _InMemoryArticleRepository(
+        delayedStage: ProcessingStage.content,
+        updateDelay: const Duration(milliseconds: 50),
+      );
+      final delayedContainer = ProviderContainer(
+        overrides: [
+          hiveInitProvider.overrideWith((ref) async {}),
+          articleRepositoryProvider.overrideWith((ref) async => delayedRepo),
+        ],
+      );
+      addTearDown(delayedContainer.dispose);
+
+      final seed = seedArticle();
+      await delayedRepo.add(seed);
+      final notifier = delayedContainer.read(articlesProvider.notifier);
+      await delayedContainer.read(articleRepositoryProvider.future);
       final pipeline = ProcessingPipeline(
         articles: notifier,
-        getSettings: () => AppSettings(aiBaseUrl: '', aiApiKey: ''),
+        getSettings: () => AppSettings(),
         getFolders: () => const <Folder>[],
         metadata: MetadataService(
-          http: mockHttp((_) async => htmlResponse(
-                '<html><head><title>X</title></head>'
-                '<body><article>$_longArticleText</article></body></html>',
-              )),
+          http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
         ),
         extractor: ContentExtractor(
           http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
         ),
       );
 
-      final result = await pipeline.process(seedArticle());
-      expect(result!.processingStatus, ProcessingStatus.failed);
-      expect(result.tags, isEmpty);
-      expect(result.suggestedFolderId, isNull);
+      final result = await pipeline.processFullText(seed);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      final persisted = delayedRepo.getById(seed.id);
+
+      expect(result?.processingStatus, ProcessingStatus.completed);
+      expect(persisted?.processingStatus, ProcessingStatus.completed);
+      expect(persisted?.processingStage, isNull);
     });
+  });
+
+  group('Stage 4 & 5: tags and folder suggestion are non-fatal', () {
+    test(
+      'failed summary short-circuits the pipeline — no tags or folder suggestion',
+      () async {
+        // When the summary stage fails the pipeline returns immediately;
+        // tags and folder suggestion never run, so neither field is written.
+        final notifier = await seedAndGetNotifier(seedArticle());
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => AppSettings(aiBaseUrl: '', aiApiKey: ''),
+          getFolders: () => const <Folder>[],
+          metadata: MetadataService(
+            http: mockHttp(
+              (_) async => htmlResponse(
+                '<html><head><title>X</title></head>'
+                '<body><article>$_longArticleText</article></body></html>',
+              ),
+            ),
+          ),
+          extractor: ContentExtractor(
+            http: mockHttp((_) async => htmlResponse(_longArticleHtml)),
+          ),
+        );
+
+        final result = await pipeline.process(seedArticle());
+        expect(result!.processingStatus, ProcessingStatus.failed);
+        expect(result.tags, isEmpty);
+        expect(result.suggestedFolderId, isNull);
+      },
+    );
   });
 
   group('Shared resilient page load', () {
@@ -313,7 +402,8 @@ void main() {
         FetchedPage(
           statusCode: 200,
           contentType: 'text/html',
-          body: '<html><head><title>One Fetch</title></head>'
+          body:
+              '<html><head><title>One Fetch</title></head>'
               '<body><article>$_longArticleText</article></body></html>',
           finalUrl: 'https://example.com/final',
           source: PageLoadSource.webView,
@@ -342,7 +432,8 @@ void main() {
         const FetchedPage(
           statusCode: 200,
           contentType: 'text/html',
-          body: '<html><head><title>安全验证</title></head>'
+          body:
+              '<html><head><title>安全验证</title></head>'
               '<body>请输入验证码后继续访问</body></html>',
           finalUrl: 'https://example.com/verify',
           source: PageLoadSource.webView,
@@ -372,13 +463,21 @@ void main() {
 /// Tiny in-memory [ArticleRepository] for service-level tests — no Hive.
 class _InMemoryArticleRepository implements ArticleRepository {
   final List<Article> _articles = [];
+  final ProcessingStage? delayedStage;
+  final Duration updateDelay;
+
+  _InMemoryArticleRepository({
+    this.delayedStage,
+    this.updateDelay = Duration.zero,
+  });
 
   @override
   Future<void> init() async {}
 
   @override
-  List<Article> getAll() => List<Article>.of(_articles)
-    ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  List<Article> getAll() =>
+      List<Article>.of(_articles)
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
   @override
   Article? getById(String id) {
@@ -399,6 +498,10 @@ class _InMemoryArticleRepository implements ArticleRepository {
 
   @override
   Future<void> update(Article article) async {
+    if (article.processingStage == delayedStage &&
+        updateDelay > Duration.zero) {
+      await Future<void>.delayed(updateDelay);
+    }
     final i = _articles.indexWhere((a) => a.id == article.id);
     if (i >= 0) {
       _articles[i] = article;

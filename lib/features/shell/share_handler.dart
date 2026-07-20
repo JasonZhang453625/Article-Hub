@@ -79,13 +79,10 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
   // ── Warm share (app already running) ──
 
   void _listenForShareIntents() {
-    _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-      (media) {
-        if (media.isEmpty || !mounted) return;
-        _handleSharedMedia(media);
-      },
-      onError: (_) {},
-    );
+    _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen((media) {
+      if (media.isEmpty || !mounted) return;
+      _handleSharedMedia(media);
+    }, onError: (_) {});
   }
 
   Future<void> _handleSharedMedia(List<SharedMediaFile> media) async {
@@ -100,8 +97,8 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     for (final file in media) {
       final path = file.path;
       final mime = file.mimeType;
-      final looksImage = (mime != null && mime.startsWith('image/')) ||
-          isImagePath(path);
+      final looksImage =
+          (mime != null && mime.startsWith('image/')) || isImagePath(path);
       final looksPdf =
           (mime != null && mime == 'application/pdf') || isPdfPath(path);
       if (!looksImage && !looksPdf) continue;
@@ -121,10 +118,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     if (_sheetOpen) return;
     _sheetOpen = true;
     try {
-      showAppSnackBar(
-        context,
-        message: isPdf ? s.pdfExtracting : s.ocrRunning,
-      );
+      showAppSnackBar(context, message: isPdf ? s.pdfExtracting : s.ocrRunning);
       final importer = LocalFileImporter();
       try {
         final prepared = await importer.prepare(sourcePath: path);
@@ -140,19 +134,6 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
         await ref.read(articlesProvider.notifier).add(prepared.article);
         if (!mounted) return;
         showAppSnackBar(context, message: s.savedProcessing);
-        final pipeline = ref.read(processingPipelineProvider);
-        pipeline
-            .processFile(prepared.article, prepared.content)
-            .then((result) {
-          if (result != null && mounted) {
-            showAppSnackBar(
-              context,
-              message: result.processingStatus == ProcessingStatus.completed
-                  ? '${s.processed}: ${result.title}'
-                  : '${s.failed}: ${result.processingError ?? "unknown error"}',
-            );
-          }
-        }).catchError((_) => null);
       } finally {
         await importer.dispose();
       }
@@ -249,6 +230,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
 
   Future<void> _saveShared(String cleaned, ShareSaveResult result) async {
     final s = ref.read(stringsProvider);
+    final fullText = result.mode == ShareSaveMode.fullText;
 
     final article = Article(
       id: const Uuid().v4(),
@@ -256,6 +238,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
       title: extractDomain(cleaned),
       source: SourcePlatform.fromUrl(cleaned),
       notes: result.notes,
+      isFullText: fullText,
       processingStatus: ProcessingStatus.pending,
     );
 
@@ -263,25 +246,6 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
 
     if (!mounted) return;
     showAppSnackBar(context, message: s.savedProcessing);
-
-    _processArticle(article, fullText: result.mode == ShareSaveMode.fullText);
-  }
-
-  void _processArticle(Article article, {required bool fullText}) {
-    final s = ref.read(stringsProvider);
-    final pipeline = ref.read(processingPipelineProvider);
-    final future =
-        fullText ? pipeline.processFullText(article) : pipeline.process(article);
-    future.then((result) {
-      if (result != null && mounted) {
-        showAppSnackBar(
-          context,
-          message: result.processingStatus == ProcessingStatus.completed
-              ? '${s.processed}: ${result.title}'
-              : '${s.failed}: ${result.processingError ?? "unknown error"}',
-        );
-      }
-    }).catchError((_) => null);
   }
 
   @override

@@ -120,13 +120,13 @@ class ProcessingPipeline {
         return current;
       }
     } else {
-      _notifyStage(current, ProcessingStage.summary);
+      await _notifyStage(current, ProcessingStage.summary);
     }
 
     // AI memory already includes tags. Full-text and legacy records still use
     // the standalone classifier because no structured summary call ran.
     if (current.memory?.kind == MemoryKind.aiMemory) {
-      _notifyStage(current, ProcessingStage.tags);
+      await _notifyStage(current, ProcessingStage.tags);
     } else {
       current = await _stageTags(current);
     }
@@ -177,7 +177,7 @@ class ProcessingPipeline {
     }
 
     // Promote extracted body to summary without AI summarization.
-    _notifyStage(current, ProcessingStage.summary);
+    await _notifyStage(current, ProcessingStage.summary);
     final body = _contentCache.remove(current.id) ?? '';
     if (body.trim().isEmpty) {
       current = _fail(current, 'summary', 'Could not extract page content');
@@ -214,6 +214,18 @@ class ProcessingPipeline {
     return current;
   }
 
+  /// Continues a durable queued job after an app restart.
+  ///
+  /// The processing state is persisted on [Article], while fetched HTML and
+  /// extracted text intentionally are not. URL jobs therefore re-fetch their
+  /// source; local attachments are re-extracted from the app-owned file.
+  Future<Article?> resume(Article article) async {
+    if (article.isLocalAttachment && article.localFilePath != null) {
+      return _resumeLocalAttachment(article);
+    }
+    return article.isFullText ? processFullText(article) : process(article);
+  }
+
   /// Retry a failed article: bump retry count and re-run.
   ///
   /// Local image/PDF articles re-extract content then re-enter [processFile].
@@ -224,32 +236,36 @@ class ProcessingPipeline {
       processingError: Article.clearValue,
       retryCount: article.retryCount + 1,
     );
+    return resume(base);
+  }
+
+  Future<Article?> _resumeLocalAttachment(Article article) async {
     if (article.isLocalAttachment && article.localFilePath != null) {
       try {
         final importer = LocalFileImporter();
         try {
-          final text = await importer.reExtract(base);
+          final text = await importer.reExtract(article);
           if (text.trim().isEmpty) {
             final kind = article.isLocalPdf ? 'PDF' : 'image';
             return _fail(
-              base,
+              article,
               'content',
               article.isLocalPdf
                   ? 'No extractable text in PDF (may be a scanned document)'
                   : 'No text found in $kind',
             );
           }
-          return processFile(base, text, fullText: article.isFullText);
+          return processFile(article, text, fullText: article.isFullText);
         } finally {
           await importer.dispose();
         }
       } catch (e) {
-        final failed = _fail(base, 'content', e);
+        final failed = _fail(article, 'content', e);
         await _articles.update(failed);
         return failed;
       }
     }
-    return process(base);
+    return article.isFullText ? processFullText(article) : process(article);
   }
 
   /// Process a file-based article: skip metadata/content stages and inject
@@ -324,10 +340,12 @@ class ProcessingPipeline {
   // ── Stage implementations ──────────────────────────────────────────────
 
   Future<Article> _stageMetadata(Article article) async {
-    _notifyStage(article, ProcessingStage.metadata);
+    await _notifyStage(article, ProcessingStage.metadata);
     try {
       final page = await _metadata.fetchPage(article.url);
-      if (page == null) return article;
+      if (page == null) {
+        return _fail(article, 'metadata', 'Could not load original page');
+      }
 
       _fetchedPageCache[article.id] = page;
       final meta = _metadata.fromFetchedPage(page);
@@ -343,7 +361,7 @@ class ProcessingPipeline {
   }
 
   Future<Article> _stageContent(Article article) async {
-    _notifyStage(article, ProcessingStage.content);
+    await _notifyStage(article, ProcessingStage.content);
     try {
       final page = _fetchedPageCache.remove(article.id);
       final content = page == null ? null : _extractor.fromFetchedPage(page);
@@ -361,7 +379,7 @@ class ProcessingPipeline {
   }
 
   Future<Article> _stageSummary(Article article) async {
-    _notifyStage(article, ProcessingStage.summary);
+    await _notifyStage(article, ProcessingStage.summary);
     final settings = _settings;
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
@@ -439,7 +457,7 @@ class ProcessingPipeline {
   }
 
   Future<Article> _stageTags(Article article) async {
-    _notifyStage(article, ProcessingStage.tags);
+    await _notifyStage(article, ProcessingStage.tags);
     final settings = _settings;
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
@@ -504,7 +522,7 @@ class ProcessingPipeline {
   /// Stage 5: Ask AI to suggest the best matching folder. Writes to
   /// [Article.folderId] directly (auto-classification).
   Future<Article> _stageFolderSuggestion(Article article) async {
-    _notifyStage(article, ProcessingStage.folderSuggestion);
+    await _notifyStage(article, ProcessingStage.folderSuggestion);
     final settings = _settings;
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
@@ -695,8 +713,8 @@ class ProcessingPipeline {
     }
   }
 
-  void _notifyStage(Article article, ProcessingStage stage) {
-    _articles.update(article.copyWith(processingStage: stage));
+  Future<void> _notifyStage(Article article, ProcessingStage stage) {
+    return _articles.update(article.copyWith(processingStage: stage));
   }
 
   Article _fail(Article article, String stage, Object error) {

@@ -179,6 +179,17 @@ class _AppearanceScreenState extends ConsumerState<AppearanceScreen> {
                       const SizedBox(height: 8),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
+                        title: Text(s.memorySortNewestFirst, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(s.memorySortNewestFirstDesc,
+                          style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                        ),
+                        value: settings.memorySortNewestFirst,
+                        onChanged: (v) => ref.read(settingsProvider.notifier).setMemorySortNewestFirst(v),
+                      ),
+                      Divider(height: 1, color: outlineColor.withValues(alpha: 0.25)),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
                         title: Text(s.hideInboxTab, style: const TextStyle(fontWeight: FontWeight.bold)),
                         subtitle: Text(s.hideInboxTabDesc,
                           style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),

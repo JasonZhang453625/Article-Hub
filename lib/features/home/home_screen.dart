@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/models/passage.dart';
-import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -51,20 +50,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _maybeDetectClipboardUrl();
-      _resumePendingArticles();
-    }
-  }
-
-  /// Resume processing for any articles that are pending or failed.
-  void _resumePendingArticles() {
-    final articles = ref.read(articlesProvider).valueOrNull;
-    if (articles == null) return;
-    final pipeline = ref.read(processingPipelineProvider);
-    for (final article in articles) {
-      if (article.processingStatus == ProcessingStatus.pending ||
-          article.processingStatus == ProcessingStatus.failed) {
-        pipeline.process(article).catchError((_) => null);
-      }
     }
   }
 
@@ -148,8 +133,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const DelayedReveal(delayMs: 80, child: SearchFilterBar()),
             Expanded(
               child: filteredArticles.when(
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
+                loading: () => const Center(child: CircularProgressIndicator()),
                 error: (error, stack) => Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -239,18 +223,15 @@ class _ArticleListView extends ConsumerWidget {
                 beginOffset: const Offset(0, 0.08),
                 child: ArticleCard(
                   article: article,
-                  isSelected:
-                      isMasterDetail && selectedId == article.id,
+                  isSelected: isMasterDetail && selectedId == article.id,
                   onTap: () {
                     if (isMasterDetail) {
                       if (selectedId == article.id) {
-                        ref
-                            .read(selectedArticleIdProvider.notifier)
-                            .state = null;
+                        ref.read(selectedArticleIdProvider.notifier).state =
+                            null;
                       } else {
-                        ref
-                            .read(selectedArticleIdProvider.notifier)
-                            .state = article.id;
+                        ref.read(selectedArticleIdProvider.notifier).state =
+                            article.id;
                       }
                     } else {
                       context.push(

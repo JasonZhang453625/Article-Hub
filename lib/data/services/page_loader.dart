@@ -124,12 +124,17 @@ class ResilientPageLoader implements PageLoader {
 class SerialPageLoadCoordinator {
   Future<void> _tail = Future<void>.value();
 
-  Future<T> run<T>(Future<T> Function() operation) {
+  Future<T> run<T>(Future<T> Function() operation, {Duration? timeout}) {
     final result = Completer<T>();
     final previous = _tail;
     _tail = previous.catchError((_) {}).then((_) async {
       try {
-        result.complete(await operation());
+        final operationFuture = operation();
+        result.complete(
+          await (timeout == null
+              ? operationFuture
+              : operationFuture.timeout(timeout)),
+        );
       } catch (error, stackTrace) {
         result.completeError(error, stackTrace);
       }

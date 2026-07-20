@@ -4,6 +4,7 @@ import '../../data/models/folder.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/content_extractor.dart';
 import '../../data/services/metadata_service.dart';
+import '../../data/services/processing_queue.dart';
 import '../../data/services/processing_pipeline.dart';
 import 'article_providers.dart';
 import 'filter_providers.dart';
@@ -28,16 +29,42 @@ final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
     embedding: embedding,
     index: index,
     createFolder: (name) async {
-      final folder = Folder(
-        id: const Uuid().v4(),
-        name: name,
-      );
+      final folder = Folder(id: const Uuid().v4(), name: name);
       await ref.read(foldersProvider.notifier).add(folder);
       return folder;
     },
   );
   ref.onDispose(pipeline.dispose);
   return pipeline;
+});
+
+/// Application-scoped worker for durable article processing.
+///
+/// Pending and in-progress records are discovered whenever articles or AI
+/// settings load. The queue serializes work and uses the persisted state to
+/// resume automatically after an app restart.
+final processingQueueProvider = Provider<ProcessingQueue>((ref) {
+  final articles = ref.read(articlesProvider.notifier);
+  final queue = ProcessingQueue(
+    getArticles: () => ref.read(articlesProvider).valueOrNull ?? const [],
+    save: articles.update,
+    process: (article) => ref.read(processingPipelineProvider).resume(article),
+    canProcess: (article) {
+      if (article.isFullText) return true;
+      final settings = ref.read(settingsProvider).valueOrNull;
+      return settings != null &&
+          settings.aiBaseUrl.trim().isNotEmpty &&
+          settings.aiApiKey.trim().isNotEmpty;
+    },
+  );
+
+  ref.listen(articlesProvider, (_, next) {
+    if (next.valueOrNull != null) queue.resume();
+  }, fireImmediately: true);
+  ref.listen(settingsProvider, (_, next) {
+    if (next.valueOrNull != null) queue.resume();
+  }, fireImmediately: true);
+  return queue;
 });
 
 final backupServiceProvider = Provider<BackupService>((ref) {
@@ -57,7 +84,9 @@ final backupServiceProvider = Provider<BackupService>((ref) {
       await ref.read(foldersProvider.notifier).add(folder as dynamic);
     },
     replaceSettings: (settings) async {
-      await ref.read(settingsProvider.notifier).replaceWith(settings as dynamic);
+      await ref
+          .read(settingsProvider.notifier)
+          .replaceWith(settings as dynamic);
     },
     getFolders: () => ref.read(foldersProvider).valueOrNull ?? [],
     getSettings: () => ref.read(settingsProvider).valueOrNull,

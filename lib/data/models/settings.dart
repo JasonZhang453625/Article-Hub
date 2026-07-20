@@ -69,6 +69,9 @@ class AppSettings {
   /// Startup tab: 0 = Chat, 1 = Knowledge
   int startupTabIndex;
 
+  /// Memory list order: true = newest created first, false = oldest first.
+  bool memorySortNewestFirst;
+
   /// First time the app was launched (milliseconds since epoch). Null until set.
   int? firstLaunchMs;
 
@@ -93,6 +96,7 @@ class AppSettings {
     this.hideInboxTab = false,
     this.fontWeightIndex = 0,
     this.startupTabIndex = 0,
+    this.memorySortNewestFirst = true,
     this.firstLaunchMs,
     this.totalTokensUsed = 0,
     List<String>? sourcePlatformOrder,
@@ -225,6 +229,7 @@ class AppSettings {
     bool? hideInboxTab,
     int? fontWeightIndex,
     int? startupTabIndex,
+    bool? memorySortNewestFirst,
     int? firstLaunchMs,
     int? totalTokensUsed,
     List<String>? sourcePlatformOrder,
@@ -252,6 +257,8 @@ class AppSettings {
       hideInboxTab: hideInboxTab ?? this.hideInboxTab,
       fontWeightIndex: fontWeightIndex ?? this.fontWeightIndex,
       startupTabIndex: startupTabIndex ?? this.startupTabIndex,
+      memorySortNewestFirst:
+          memorySortNewestFirst ?? this.memorySortNewestFirst,
       firstLaunchMs: firstLaunchMs ?? this.firstLaunchMs,
       totalTokensUsed: totalTokensUsed ?? this.totalTokensUsed,
       sourcePlatformOrder: sourcePlatformOrder ?? this.sourcePlatformOrder,
@@ -281,6 +288,7 @@ class AppSettings {
       'hideInboxTab': hideInboxTab,
       'fontWeightIndex': fontWeightIndex,
       'startupTabIndex': startupTabIndex,
+      'memorySortNewestFirst': memorySortNewestFirst,
       'firstLaunchMs': firstLaunchMs,
       'totalTokensUsed': totalTokensUsed,
       'sourcePlatformOrder': sourcePlatformOrder,
@@ -322,6 +330,9 @@ class AppSettings {
           : false,
       fontWeightIndex: (json['fontWeightIndex'] as num?)?.toInt() ?? 0,
       startupTabIndex: (json['startupTabIndex'] as num?)?.toInt() ?? 0,
+      memorySortNewestFirst: json['memorySortNewestFirst'] is bool
+          ? json['memorySortNewestFirst'] as bool
+          : true,
       firstLaunchMs: json['firstLaunchMs'] as int?,
       totalTokensUsed: (json['totalTokensUsed'] as num?)?.toInt() ?? 0,
       sourcePlatformOrder: (json['sourcePlatformOrder'] as List?)
@@ -362,6 +373,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       hideInboxTab: (fields[16] as bool?) ?? false,
       fontWeightIndex: (fields[17] as num?)?.toInt() ?? 0,
       startupTabIndex: (fields[18] as num?)?.toInt() ?? 0,
+      memorySortNewestFirst: (fields[21] as bool?) ?? true,
       firstLaunchMs: fields[19] as int?,
       totalTokensUsed: (fields[20] as num?)?.toInt() ?? 0,
       embeddingBaseUrl: (fields[10] as String?) ?? '',
@@ -373,7 +385,7 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(21)
+      ..writeByte(22)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -415,6 +427,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(19)
       ..write(obj.firstLaunchMs)
       ..writeByte(20)
-      ..write(obj.totalTokensUsed);
+      ..write(obj.totalTokensUsed)
+      ..writeByte(21)
+      ..write(obj.memorySortNewestFirst);
   }
 }

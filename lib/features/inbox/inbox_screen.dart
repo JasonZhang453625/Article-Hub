@@ -15,34 +15,10 @@ class InboxScreen extends ConsumerStatefulWidget {
 }
 
 class _InboxScreenState extends ConsumerState<InboxScreen> {
-  bool _recoveryStarted = false;
-
-  void _recoverInterrupted(List<Article> articles) {
-    if (_recoveryStarted) return;
-    final interrupted = articles
-        .where((a) => a.processingStatus == ProcessingStatus.processing)
-        .toList();
-    if (interrupted.isEmpty) return;
-    _recoveryStarted = true;
-    Future.microtask(() async {
-      final pipeline = ref.read(processingPipelineProvider);
-      for (final article in interrupted) {
-        await pipeline.process(article);
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final s = ref.watch(stringsProvider);
     final pendingAsync = ref.watch(pendingArticlesProvider);
-
-    // Reset recovery flag when data reloads (e.g. after all recovered).
-    pendingAsync.whenData((articles) {
-      if (articles.isEmpty) {
-        _recoveryStarted = false;
-      }
-    });
 
     return Scaffold(
       appBar: AppBar(title: Text(s.tabInbox)),
@@ -67,18 +43,18 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
         ),
         data: (articles) {
           if (articles.isEmpty) {
-            _recoveryStarted = false;
             return const _EmptyInbox();
           }
 
-          _recoverInterrupted(articles);
-
-          final processing =
-              articles.where((a) => a.processingStatus == ProcessingStatus.processing).toList();
-          final pending =
-              articles.where((a) => a.processingStatus == ProcessingStatus.pending).toList();
-          final failed =
-              articles.where((a) => a.processingStatus == ProcessingStatus.failed).toList();
+          final processing = articles
+              .where((a) => a.processingStatus == ProcessingStatus.processing)
+              .toList();
+          final pending = articles
+              .where((a) => a.processingStatus == ProcessingStatus.pending)
+              .toList();
+          final failed = articles
+              .where((a) => a.processingStatus == ProcessingStatus.failed)
+              .toList();
 
           return ListView(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -95,7 +71,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
               if (pending.isNotEmpty) ...[
                 _SectionHeader(s.waiting, pending.length),
                 for (final article in pending)
-                  _InboxTile(article: article, subtitle: s.queued, showRetry: false),
+                  _InboxTile(
+                    article: article,
+                    subtitle: s.queued,
+                    showRetry: false,
+                  ),
               ],
               if (failed.isNotEmpty) ...[
                 _SectionHeader(s.failedSection, failed.length),
@@ -147,8 +127,8 @@ class _SectionHeader extends StatelessWidget {
           Text(
             title,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(width: 8),
           Container(
@@ -189,11 +169,7 @@ class _InboxTile extends ConsumerWidget {
         _statusIcon(article.processingStatus),
         color: _statusColor(article.processingStatus, colorScheme),
       ),
-      title: Text(
-        article.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      title: Text(article.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
         subtitle,
         maxLines: 2,
@@ -213,17 +189,25 @@ class _InboxTile extends ConsumerWidget {
               child: Text(
                 'x${article.retryCount}',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           if (showRetry)
             IconButton(
               icon: const Icon(Icons.refresh_rounded),
               tooltip: s.retry,
-              onPressed: () {
+              onPressed: () async {
                 try {
-                  ref.read(processingPipelineProvider).retry(article);
+                  await ref
+                      .read(processingQueueProvider)
+                      .enqueue(
+                        article.copyWith(
+                          processingStatus: ProcessingStatus.pending,
+                          processingError: Article.clearValue,
+                          retryCount: article.retryCount + 1,
+                        ),
+                      );
                 } catch (e) {
                   if (!context.mounted) return;
                   showAppSnackBar(context, message: '${s.saveFailed}: $e');
@@ -309,16 +293,13 @@ class _EmptyInbox extends ConsumerWidget {
             color: Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(80),
           ),
           const SizedBox(height: 16),
-          Text(
-            s.inboxEmpty,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text(s.inboxEmpty, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Text(
             s.inboxEmptyDesc,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),

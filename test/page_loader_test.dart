@@ -1,4 +1,6 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+﻿import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memora/data/services/page_loader.dart';
 
@@ -109,6 +111,27 @@ void main() {
 
     expect(maxActive, 1);
   });
+
+  test(
+    'SerialPageLoadCoordinator releases the queue after a timeout',
+    () async {
+      final coordinator = SerialPageLoadCoordinator();
+      final neverCompletes = Completer<void>();
+      var secondOperationRan = false;
+
+      final stalled = coordinator.run(
+        () => neverCompletes.future,
+        timeout: const Duration(milliseconds: 20),
+      );
+      final next = coordinator.run(() async {
+        secondOperationRan = true;
+      });
+
+      await expectLater(stalled, throwsA(isA<TimeoutException>()));
+      await next.timeout(const Duration(seconds: 1));
+      expect(secondOperationRan, isTrue);
+    },
+  );
 }
 
 FetchedPage _usablePage(PageLoadSource source) {

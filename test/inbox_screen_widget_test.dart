@@ -59,9 +59,9 @@ void main() {
 
   testWidgets('empty inbox shows the empty state', (tester) async {
     await pumpInbox(tester, articles: []);
-    expect(find.text('No articles in progress'), findsOneWidget);
+    expect(find.text('No memories in progress'), findsOneWidget);
     expect(
-      find.textContaining('Articles being processed will appear here'),
+      find.textContaining('Memories being processed will appear here'),
       findsOneWidget,
     );
   });
@@ -74,7 +74,7 @@ void main() {
       ],
     );
     // Completed articles live in Library; they must not surface in Inbox.
-    expect(find.text('No articles in progress'), findsOneWidget);
+    expect(find.text('No memories in progress'), findsOneWidget);
     expect(find.text('Article done'), findsNothing);
   });
 

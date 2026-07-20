@@ -10,6 +10,12 @@ import 'package:pdfrx/pdfrx.dart';
 import '../../data/services/headless_webview_page_loader.dart';
 import '../../shared/providers/settings_providers.dart';
 
+/// A failed image, iframe, ad, or analytics request must not replace an
+/// otherwise healthy page with the full-page error state.
+bool shouldTreatWebResourceErrorAsPageFailure(bool? isForMainFrame) {
+  return isForMainFrame == true;
+}
+
 class ReaderScreen extends ConsumerStatefulWidget {
   final Article article;
 
@@ -171,6 +177,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 });
               },
               onReceivedError: (controller, request, error) {
+                if (!shouldTreatWebResourceErrorAsPageFailure(
+                  request.isForMainFrame,
+                )) {
+                  return;
+                }
                 setState(() {
                   _loadError = error.description;
                 });

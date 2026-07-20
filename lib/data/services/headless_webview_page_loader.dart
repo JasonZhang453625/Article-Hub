@@ -15,6 +15,9 @@ final SerialPageLoadCoordinator _headlessWebViewCoordinator =
     SerialPageLoadCoordinator();
 
 class HeadlessWebViewPageLoader implements PageLoader {
+  static const Duration _cleanupTimeout = Duration(seconds: 2);
+  static const Duration _watchdogGrace = Duration(seconds: 1);
+
   final Duration timeout;
   final Duration domWait;
   final Duration pollInterval;
@@ -28,8 +31,19 @@ class HeadlessWebViewPageLoader implements PageLoader {
   }) : coordinator = coordinator ?? _headlessWebViewCoordinator;
 
   @override
-  Future<FetchedPage?> fetch(String url) {
-    return coordinator.run(() => _fetchExclusive(url));
+  Future<FetchedPage?> fetch(String url) async {
+    try {
+      return await coordinator.run(
+        () => _fetchExclusive(url),
+        timeout: timeout + _cleanupTimeout + _watchdogGrace,
+      );
+    } on TimeoutException {
+      developer.log(
+        'background WebView total timeout ($timeout), url: $url',
+        name: 'memora.webview',
+      );
+      return null;
+    }
   }
 
   Future<FetchedPage?> _fetchExclusive(String url) async {
@@ -37,6 +51,18 @@ class HeadlessWebViewPageLoader implements PageLoader {
     final loadFinished = Completer<void>();
     String? mainFrameError;
     HeadlessInAppWebView? webView;
+
+    Duration remainingTime() {
+      final remaining = totalDeadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw TimeoutException('Background WebView deadline exceeded');
+      }
+      return remaining;
+    }
+
+    Future<T> beforeDeadline<T>(Future<T> future) {
+      return future.timeout(remainingTime());
+    }
 
     void finishLoad() {
       if (!loadFinished.isCompleted) loadFinished.complete();
@@ -79,10 +105,8 @@ class HeadlessWebViewPageLoader implements PageLoader {
         },
       );
 
-      await webView.run();
-      await loadFinished.future.timeout(
-        totalDeadline.difference(DateTime.now()),
-      );
+      await beforeDeadline(webView.run());
+      await beforeDeadline(loadFinished.future);
 
       if (mainFrameError != null) {
         developer.log(
@@ -109,8 +133,9 @@ class HeadlessWebViewPageLoader implements PageLoader {
       Map<String, dynamic>? snapshot;
 
       while (DateTime.now().isBefore(deadline)) {
-        final raw = await controller.evaluateJavascript(
-          source: '''
+        final raw = await beforeDeadline(
+          controller.evaluateJavascript(
+            source: '''
           (() => {
             const text = (document.body?.innerText || '').trim();
             return {
@@ -121,6 +146,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
             };
           })()
         ''',
+          ),
         );
         if (raw is Map) {
           snapshot = Map<String, dynamic>.from(raw);
@@ -157,8 +183,10 @@ class HeadlessWebViewPageLoader implements PageLoader {
         return null;
       }
 
-      final html = await controller.evaluateJavascript(
-        source: 'document.documentElement?.outerHTML || ""',
+      final html = await beforeDeadline(
+        controller.evaluateJavascript(
+          source: 'document.documentElement?.outerHTML || ""',
+        ),
       );
       if (html is! String || html.length < 200) {
         developer.log(
@@ -168,7 +196,8 @@ class HeadlessWebViewPageLoader implements PageLoader {
         return null;
       }
 
-      final finalUrl = (await controller.getUrl())?.toString() ?? url;
+      final finalUrl =
+          (await beforeDeadline(controller.getUrl()))?.toString() ?? url;
       developer.log(
         'background WebView loaded ${html.length} HTML chars, finalUrl: $finalUrl',
         name: 'memora.webview',
@@ -197,7 +226,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
     } finally {
       try {
         if (webView != null) {
-          await webView.dispose();
+          await webView.dispose().timeout(_cleanupTimeout);
           developer.log(
             'background WebView disposed, url: $url',
             name: 'memora.webview',

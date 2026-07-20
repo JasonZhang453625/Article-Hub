@@ -7,6 +7,7 @@ import 'config/theme.dart';
 import 'config/routes.dart';
 import 'shared/providers/locale_provider.dart';
 import 'shared/providers/settings_providers.dart';
+import 'shared/providers/pipeline_provider.dart';
 import 'shared/widgets/auto_sync_host.dart';
 
 class App extends ConsumerWidget {
@@ -14,6 +15,8 @@ class App extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Keep durable processing independent from whichever page is open.
+    ref.watch(processingQueueProvider);
     final themeMode = ref.watch(themeModeProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final fontWeightIdx = ref.watch(fontWeightIndexProvider);

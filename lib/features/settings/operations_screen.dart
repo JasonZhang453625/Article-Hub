@@ -21,9 +21,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   bool _rebuilding = false;
   String? _rebuildResult;
   String? _batchResult;
-  bool _batchRunning = false;
   String? _regenResult;
-  bool _regenRunning = false;
 
   Future<void> _rebuildIndex() async {
     setState(() {
@@ -43,51 +41,62 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     final index = ref.read(indexServiceProvider);
     final articles = ref.read(articlesProvider).valueOrNull ?? [];
     final count = await rebuildIndex(
-      articles: articles, embedding: embedding, index: index,
+      articles: articles,
+      embedding: embedding,
+      index: index,
     );
     if (mounted) {
       setState(() {
         _rebuilding = false;
-        _rebuildResult = '${ref.read(stringsProvider).indexedN} $count articles';
+        _rebuildResult =
+            '${ref.read(stringsProvider).indexedN} $count articles';
       });
     }
   }
 
   Future<void> _processBatch() async {
     final articles = ref.read(articlesProvider).valueOrNull ?? [];
-    final toProcess = articles
-        .where((a) => !a.hasMemory)
-        .toList();
+    final toProcess = articles.where((a) => !a.hasMemory).toList();
     if (toProcess.isEmpty) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(ref.read(stringsProvider).knowledgeBatchTitle),
-        content: Text('${toProcess.length} ${ref.read(stringsProvider).nWithoutSummary}.\n\n'
-            '${ref.read(stringsProvider).batchProcessConfirm}'),
+        content: Text(
+          '${toProcess.length} ${ref.read(stringsProvider).nWithoutSummary}.\n\n'
+          '${ref.read(stringsProvider).batchProcessConfirm}',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ref.read(stringsProvider).cancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('OK')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(ref.read(stringsProvider).cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
     if (confirmed != true) return;
 
-    setState(() { _batchRunning = true; _batchResult = null; });
-    final pipeline = ref.read(processingPipelineProvider);
-    for (int i = 0; i < toProcess.length; i++) {
-      final article = toProcess[i];
-      final updated = article.copyWith(
+    setState(() => _batchResult = null);
+    final queued = toProcess.map((article) {
+      return article.copyWith(
         processingStatus: ProcessingStatus.pending,
-        processingStage: null, processingError: null, retryCount: 0,
+        processingStage: Article.clearValue,
+        processingError: Article.clearValue,
+        retryCount: 0,
       );
-      await ref.read(articlesProvider.notifier).update(updated);
-      await pipeline.process(updated);
-      if (mounted) setState(() => _batchResult = '${ref.read(stringsProvider).processedN} ${i + 1}/${toProcess.length}');
+    });
+    await ref.read(processingQueueProvider).enqueueAll(queued);
+    if (mounted) {
+      setState(
+        () => _batchResult =
+            '${ref.read(stringsProvider).queued} ${toProcess.length}',
+      );
     }
-    if (mounted) setState(() { _batchRunning = false; _batchResult = ref.read(stringsProvider).allProcessed; });
   }
-
 
   Future<void> _regenerateAiMemories() async {
     final articles = ref.read(articlesProvider).valueOrNull ?? [];
@@ -98,20 +107,26 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(s.regenerateAiMemoriesTitle),
-        content: Text('${toProcess.length} ${s.nAiMemories}.\n\n${s.regenerateAiMemoriesConfirm}'),
+        content: Text(
+          '${toProcess.length} ${s.nAiMemories}.\n\n${s.regenerateAiMemoriesConfirm}',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.start)),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.start),
+          ),
         ],
       ),
     );
     if (confirmed != true) return;
 
-    setState(() { _regenRunning = true; _regenResult = null; });
-    final pipeline = ref.read(processingPipelineProvider);
-    for (int i = 0; i < toProcess.length; i++) {
-      final article = toProcess[i];
-      final updated = article.copyWith(
+    setState(() => _regenResult = null);
+    final queued = toProcess.map((article) {
+      return article.copyWith(
         summary: Article.clearValue,
         memory: Article.clearValue,
         summaryFeedback: Article.clearValue,
@@ -120,17 +135,10 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
         processingError: Article.clearValue,
         isFullText: false,
       );
-      await ref.read(articlesProvider.notifier).update(updated);
-      await pipeline.process(updated);
-      if (mounted) {
-        setState(() => _regenResult = '${s.processedN} ${i + 1}/${toProcess.length}');
-      }
-    }
+    });
+    await ref.read(processingQueueProvider).enqueueAll(queued);
     if (mounted) {
-      setState(() {
-        _regenRunning = false;
-        _regenResult = s.allProcessed;
-      });
+      setState(() => _regenResult = '${s.queued} ${toProcess.length}');
     }
   }
 
@@ -144,6 +152,14 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     final articles = ref.watch(articlesProvider).valueOrNull ?? [];
     final pendingBatchCount = articles.where((a) => !a.hasMemory).length;
     final aiMemoryCount = articles.where((a) => !a.isFullText).length;
+    final queuedCount = articles
+        .where(
+          (a) =>
+              a.processingStatus == ProcessingStatus.pending ||
+              a.processingStatus == ProcessingStatus.processing,
+        )
+        .length;
+    final queueBusy = queuedCount > 0;
     final countAsync = ref.watch(indexCountProvider);
     final indexedCount = countAsync.valueOrNull;
     final settings = ref.watch(settingsProvider).valueOrNull;
@@ -151,7 +167,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(s.operations)),
       body: DelayedReveal(
-        delayMs: 40, beginOffset: const Offset(0, 0.035),
+        delayMs: 40,
+        beginOffset: const Offset(0, 0.035),
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
@@ -161,20 +178,47 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
               SectionLabel(label: s.summaryStyle, theme: theme),
               const SizedBox(height: 8),
               Container(
-                width: double.infinity, padding: const EdgeInsets.all(16),
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: cardColor, borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: outlineColor.withValues(alpha: 0.3),
+                  ),
                 ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(s.summaryStyle, style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    ThemeModeButton(icon: Icons.short_text_rounded, label: s.brief, isSelected: (settings?.summaryVerbosityIndex ?? 0) == 0, onTap: () => ref.read(settingsProvider.notifier).setSummaryVerbosity(0), theme: theme),
-                    const SizedBox(width: 10),
-                    ThemeModeButton(icon: Icons.notes_rounded, label: s.detailed, isSelected: (settings?.summaryVerbosityIndex ?? 0) == 1, onTap: () => ref.read(settingsProvider.notifier).setSummaryVerbosity(1), theme: theme),
-                  ]),
-                ]),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(s.summaryStyle, style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        ThemeModeButton(
+                          icon: Icons.short_text_rounded,
+                          label: s.brief,
+                          isSelected:
+                              (settings?.summaryVerbosityIndex ?? 0) == 0,
+                          onTap: () => ref
+                              .read(settingsProvider.notifier)
+                              .setSummaryVerbosity(0),
+                          theme: theme,
+                        ),
+                        const SizedBox(width: 10),
+                        ThemeModeButton(
+                          icon: Icons.notes_rounded,
+                          label: s.detailed,
+                          isSelected:
+                              (settings?.summaryVerbosityIndex ?? 0) == 1,
+                          onTap: () => ref
+                              .read(settingsProvider.notifier)
+                              .setSummaryVerbosity(1),
+                          theme: theme,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 14),
               // Batch knowledge-ify
@@ -184,53 +228,99 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: cardColor, borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: outlineColor.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Icon(Icons.batch_prediction_rounded, size: 20, color: theme.colorScheme.primary),
-                      const SizedBox(width: 10),
-                      Text(s.knowledgeBatchTitle, style: theme.textTheme.titleMedium),
-                    ]),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.batch_prediction_rounded,
+                          size: 20,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          s.knowledgeBatchTitle,
+                          style: theme.textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 4),
-                    Text(s.knowledgeifyDesc,
-                      style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                    Text(
+                      s.knowledgeifyDesc,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
                     ),
                     const SizedBox(height: 12),
-                    if (_batchRunning)
+                    if (queueBusy)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Row(children: [
-                          const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                          const SizedBox(width: 12),
-                          Text(_batchResult ?? '', style: theme.textTheme.bodyMedium),
-                        ]),
+                        child: Row(
+                          children: [
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              '$queuedCount ${s.queued}',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
                       )
                     else if (_batchResult != null)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Row(children: [
-                          Icon(Icons.check_circle_rounded, size: 18, color: theme.colorScheme.primary),
-                          const SizedBox(width: 8),
-                          Text(_batchResult!, style: theme.textTheme.bodyMedium),
-                        ]),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.check_circle_rounded,
+                              size: 18,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _batchResult!,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
                       )
                     else ...[
-                      Text('$pendingBatchCount ${s.nWithoutSummary}',
-                        style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                      Text(
+                        '$pendingBatchCount ${s.nWithoutSummary}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isDark
+                              ? Colors.white54
+                              : const Color(0xFF6C8594),
+                        ),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
-                          onPressed: pendingBatchCount == 0 || _batchRunning ? null : _processBatch,
+                          onPressed: pendingBatchCount == 0 || queueBusy
+                              ? null
+                              : _processBatch,
                           icon: const Icon(Icons.auto_awesome_rounded),
                           label: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Text(pendingBatchCount == 0 ? s.allProcessed : '${s.processAll} ($pendingBatchCount)'),
+                            child: Text(
+                              pendingBatchCount == 0
+                                  ? s.allProcessed
+                                  : '${s.processAll} ($pendingBatchCount)',
+                            ),
                           ),
                         ),
                       ),
@@ -239,64 +329,107 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 ),
               ),
 
-
               const SizedBox(height: 14),
               // Regenerate all AI memories
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: cardColor, borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: outlineColor.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Icon(Icons.refresh_rounded, size: 20, color: theme.colorScheme.primary),
-                      const SizedBox(width: 10),
-                      Expanded(child: Text(s.regenerateAiMemoriesTitle, style: theme.textTheme.titleMedium)),
-                    ]),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.refresh_rounded,
+                          size: 20,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            s.regenerateAiMemoriesTitle,
+                            style: theme.textTheme.titleMedium,
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 4),
-                    Text(s.regenerateAiMemoriesDesc,
-                      style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                    Text(
+                      s.regenerateAiMemoriesDesc,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
                     ),
                     const SizedBox(height: 12),
-                    if (_regenRunning)
+                    if (queueBusy)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Row(children: [
-                          const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                          const SizedBox(width: 12),
-                          Text(_regenResult ?? '', style: theme.textTheme.bodyMedium),
-                        ]),
+                        child: Row(
+                          children: [
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              '$queuedCount ${s.queued}',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
                       )
                     else if (_regenResult != null)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Row(children: [
-                          Icon(Icons.check_circle_rounded, size: 18, color: theme.colorScheme.primary),
-                          const SizedBox(width: 8),
-                          Text(_regenResult!, style: theme.textTheme.bodyMedium),
-                        ]),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.check_circle_rounded,
+                              size: 18,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _regenResult!,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
                       )
                     else ...[
-                      Text('$aiMemoryCount ${s.nAiMemories}',
-                        style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                      Text(
+                        '$aiMemoryCount ${s.nAiMemories}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isDark
+                              ? Colors.white54
+                              : const Color(0xFF6C8594),
+                        ),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
-                          onPressed: aiMemoryCount == 0 || _regenRunning || _batchRunning
+                          onPressed: aiMemoryCount == 0 || queueBusy
                               ? null
                               : _regenerateAiMemories,
                           icon: const Icon(Icons.auto_awesome_rounded),
                           label: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Text(aiMemoryCount == 0
-                                ? s.noAiMemoriesToRegen
-                                : '${s.regenerateAiMemoriesAction} ($aiMemoryCount)'),
+                            child: Text(
+                              aiMemoryCount == 0
+                                  ? s.noAiMemoriesToRegen
+                                  : '${s.regenerateAiMemoriesAction} ($aiMemoryCount)',
+                            ),
                           ),
                         ),
                       ),
@@ -312,16 +445,26 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: cardColor, borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: outlineColor.withValues(alpha: 0.3)),
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: outlineColor.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(s.indexManagement, style: theme.textTheme.titleMedium),
                     const SizedBox(height: 4),
-                    Text(indexedCount != null ? '$indexedCount ${s.nArticlesIndexed}' : s.loadingIndexStatus,
-                      style: theme.textTheme.bodySmall?.copyWith(color: isDark ? Colors.white54 : const Color(0xFF6C8594)),
+                    Text(
+                      indexedCount != null
+                          ? '$indexedCount ${s.nArticlesIndexed}'
+                          : s.loadingIndexStatus,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -329,23 +472,34 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                       child: FilledButton.icon(
                         onPressed: _rebuilding ? null : _rebuildIndex,
                         icon: _rebuilding
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.build_rounded),
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.build_rounded),
                         label: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Text(_rebuilding ? s.rebuilding : s.rebuildIndex),
+                          child: Text(
+                            _rebuilding ? s.rebuilding : s.rebuildIndex,
+                          ),
                         ),
                       ),
                     ),
                     if (_rebuildResult != null) ...[
                       const SizedBox(height: 8),
-                      Text(_rebuildResult!, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)),
+                      Text(
+                        _rebuildResult!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
                     ],
                   ],
                 ),
               ),
-
-
             ],
           ),
         ),

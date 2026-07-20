@@ -1,16 +1,9 @@
-import 'dart:developer' as developer;
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/memory_document.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
-import '../../data/services/ai_service.dart';
-import '../../data/services/content_extractor.dart';
-import '../../data/services/metadata_service.dart';
-import '../../shared/providers/page_loader_provider.dart';
-import '../../shared/providers/passage_providers.dart';
-import '../../shared/providers/settings_providers.dart';
+import '../../shared/providers/pipeline_provider.dart';
 
 class SummaryRegenerationResult {
   final String? title;
@@ -18,6 +11,7 @@ class SummaryRegenerationResult {
   final List<String> tags;
   final String? coverImageUrl;
   final String? error;
+  final bool scheduled;
 
   const SummaryRegenerationResult({
     this.title,
@@ -25,11 +19,13 @@ class SummaryRegenerationResult {
     this.tags = const [],
     this.coverImageUrl,
     this.error,
+    this.scheduled = false,
   });
 
   String? get summary => memory?.toMarkdown();
 
-  bool get succeeded => memory != null && memory!.toRetrievalText().isNotEmpty;
+  bool get succeeded =>
+      scheduled || (memory != null && memory!.toRetrievalText().isNotEmpty);
 }
 
 typedef SummaryRegenerationRunner =
@@ -47,16 +43,25 @@ typedef SaveGeneratedSummary =
       String? coverImageUrl,
     );
 
+typedef ScheduleSummaryRegeneration = Future<void> Function(Article article);
+
 class SummaryRegenerationController extends StateNotifier<Set<String>> {
-  final SummaryRegenerationRunner _runner;
-  final SaveGeneratedSummary _save;
+  final SummaryRegenerationRunner? _runner;
+  final SaveGeneratedSummary? _save;
+  final ScheduleSummaryRegeneration? _schedule;
   final Map<String, Future<SummaryRegenerationResult>> _jobs = {};
 
   SummaryRegenerationController({
-    required SummaryRegenerationRunner runner,
-    required SaveGeneratedSummary save,
-  }) : _runner = runner,
+    SummaryRegenerationRunner? runner,
+    SaveGeneratedSummary? save,
+    ScheduleSummaryRegeneration? schedule,
+  }) : assert(
+         schedule != null || (runner != null && save != null),
+         'Provide durable scheduling or a runner and save callback.',
+       ),
+       _runner = runner,
        _save = save,
+       _schedule = schedule,
        super(const <String>{});
 
   Future<SummaryRegenerationResult> regenerate(
@@ -67,7 +72,9 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
     if (existing != null) return existing;
 
     state = {...state, article.id};
-    final job = _runAndSave(article, settings);
+    final job = _schedule == null
+        ? _runAndSave(article, settings)
+        : _scheduleAndPersist(article);
     _jobs[article.id] = job;
     job.whenComplete(() {
       _jobs.remove(article.id);
@@ -83,32 +90,37 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
     AppSettings settings,
   ) async {
     try {
-      developer.log(
-        'background summary started, articleId: ${article.id}',
-        name: 'memora.ai',
-      );
-      final result = await _runner(article, settings);
+      final result = await _runner!(article, settings);
       if (result.succeeded) {
-        await _save(
+        await _save!(
           article.id,
           result.title,
           result.memory!,
           result.tags,
           result.coverImageUrl,
         );
-        developer.log(
-          'background summary saved, articleId: ${article.id}',
-          name: 'memora.ai',
-        );
       }
       return result;
-    } catch (error, stackTrace) {
-      developer.log(
-        'background summary save failed',
-        name: 'memora.ai',
-        error: error,
-        stackTrace: stackTrace,
+    } catch (error) {
+      return SummaryRegenerationResult(error: error.toString());
+    }
+  }
+
+  Future<SummaryRegenerationResult> _scheduleAndPersist(Article article) async {
+    try {
+      await _schedule!(
+        article.copyWith(
+          summary: Article.clearValue,
+          memory: Article.clearValue,
+          summaryFeedback: Article.clearValue,
+          isFullText: false,
+          processingStatus: ProcessingStatus.pending,
+          processingStage: Article.clearValue,
+          processingError: Article.clearValue,
+        ),
       );
+      return const SummaryRegenerationResult(scheduled: true);
+    } catch (error) {
       return SummaryRegenerationResult(error: error.toString());
     }
   }
@@ -116,99 +128,7 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
 
 final summaryRegenerationProvider =
     StateNotifierProvider<SummaryRegenerationController, Set<String>>((ref) {
-      final articles = ref.read(articlesProvider.notifier);
-      final pageLoader = ref.read(pageLoaderProvider);
-
       return SummaryRegenerationController(
-        runner: (article, settings) async {
-          final metadataService = MetadataService(
-            loader: pageLoader,
-            ownsLoader: false,
-          );
-          final extractor = ContentExtractor(
-            loader: pageLoader,
-            ownsLoader: false,
-          );
-          final ai = AiService(
-            baseUrl: settings.aiBaseUrl,
-            apiKey: settings.aiApiKey,
-            model: settings.aiModel,
-          );
-          ai.onTokensUsed = (tokens) =>
-              ref.read(settingsProvider.notifier).addTokenUsage(tokens);
-
-          try {
-            // Fetch page once, reuse for both metadata and content extraction.
-            final page = await metadataService.fetchPage(article.url);
-            if (page == null) {
-              return const SummaryRegenerationResult(
-                error: 'Could not fetch page',
-              );
-            }
-
-            final meta = metadataService.fromFetchedPage(page);
-            final content = extractor.fromFetchedPage(page);
-            if (content == null || content.isEmpty) {
-              return const SummaryRegenerationResult(
-                error: 'Could not extract page content',
-              );
-            }
-
-            final result = await ai.summarizeWithTitle(
-              article.title,
-              content,
-              languageHint: aiLanguagePrompt(settings.languageIndex),
-            );
-            final memory = result.memory;
-            if (memory == null || memory.toRetrievalText().isEmpty) {
-              return SummaryRegenerationResult(
-                error: ai.lastError ?? 'AI returned an empty summary',
-              );
-            }
-
-            String? newTitle;
-            final generatedTitle = result.title;
-            if (generatedTitle != null && generatedTitle.isNotEmpty) {
-              final looksLikeDomain =
-                  generatedTitle.contains('.') && !generatedTitle.contains(' ');
-              if (!looksLikeDomain) newTitle = generatedTitle;
-            }
-
-            final generatedMemory = MemoryDocument.ai(
-              revision: (article.memory?.revision ?? 0) + 1,
-              overview: memory.overview,
-              keyPoints: memory.keyPoints,
-              conclusion: memory.conclusion,
-              generation: MemoryGeneration(
-                method: 'llm',
-                provider:
-                    Uri.tryParse(settings.aiBaseUrl)?.host.isNotEmpty == true
-                    ? Uri.parse(settings.aiBaseUrl).host
-                    : 'openai-compatible',
-                model: settings.aiModel,
-                promptVersion: 'full_summary_v1',
-                generatedAt: DateTime.now(),
-              ),
-            );
-            return SummaryRegenerationResult(
-              title: newTitle,
-              memory: generatedMemory,
-              tags: result.tags,
-              coverImageUrl: meta.imageUrl,
-            );
-          } catch (error, stackTrace) {
-            developer.log(
-              'background summary regeneration failed',
-              name: 'memora.ai',
-              error: error,
-              stackTrace: stackTrace,
-            );
-            return SummaryRegenerationResult(error: error.toString());
-          } finally {
-            extractor.dispose();
-            metadataService.dispose();
-          }
-        },
-        save: articles.updateGeneratedSummary,
+        schedule: ref.read(processingQueueProvider).enqueue,
       );
     });

@@ -9,7 +9,7 @@ import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/metadata_service.dart';
 import '../../data/services/local_file_importer.dart';
-import '../../shared/providers/pipeline_provider.dart';
+import '../../data/services/attachment_store.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/utils/url_helpers.dart';
@@ -111,6 +111,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       final title = _titleController.text.trim().isEmpty
           ? cleanedUrl
           : _titleController.text.trim();
+      final fullText = _saveMode == ShareSaveMode.fullText;
 
       final article = Article(
         id: const Uuid().v4(),
@@ -121,6 +122,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
         notes: _notesController.text.trim(),
         coverImageUrl: _fetchedCoverUrl,
         folderId: _selectedFolderId,
+        isFullText: fullText,
         processingStatus: ProcessingStatus.pending,
       );
 
@@ -128,17 +130,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       await notifier.add(article);
 
       // Capture pipeline BEFORE popping — ref is invalid after pop.
-      final pipeline = ref.read(processingPipelineProvider);
-      final fullText = _saveMode == ShareSaveMode.fullText;
-
       if (mounted) {
         Navigator.of(context).pop();
-      }
-
-      if (fullText) {
-        pipeline.processFullText(article);
-      } else {
-        pipeline.process(article);
       }
     } catch (e) {
       if (!mounted) return;
@@ -197,7 +190,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
       final path = file.path!;
       final lower = file.name.toLowerCase();
-      final isImage = lower.endsWith('.png') ||
+      final isImage =
+          lower.endsWith('.png') ||
           lower.endsWith('.jpg') ||
           lower.endsWith('.jpeg') ||
           lower.endsWith('.webp') ||
@@ -205,7 +199,6 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
           lower.endsWith('.gif');
       final isPdf = lower.endsWith('.pdf');
 
-      final pipeline = ref.read(processingPipelineProvider);
       final notifier = ref.read(articlesProvider.notifier);
       final fullText = _saveMode == ShareSaveMode.fullText;
 
@@ -241,15 +234,11 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
             }
             return;
           }
-          await notifier.add(prepared.article);
+          await notifier.add(prepared.article.copyWith(isFullText: fullText));
           if (mounted) {
             Navigator.of(context).pop();
           }
-          pipeline.processFile(
-            prepared.article,
-            prepared.content,
-            fullText: fullText,
-          );
+          // The application queue resumes the saved attachment from disk.
         } finally {
           await importer.dispose();
         }
@@ -272,13 +261,22 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       }
 
       final titleWithoutExt = title.replaceAll(RegExp(r'\.[^.]+$'), '');
+      final id = const Uuid().v4();
+      final localPath = await AttachmentStore().saveForArticle(
+        articleId: id,
+        sourcePath: path,
+        preferredName: file.name,
+      );
       final article = Article(
-        id: const Uuid().v4(),
+        id: id,
         url: 'file://$path',
         title: titleWithoutExt.isNotEmpty ? titleWithoutExt : file.name,
         source: SourcePlatform.local,
         notes: _notesController.text.trim(),
         folderId: _selectedFolderId,
+        isFullText: fullText,
+        localFilePath: localPath,
+        localMimeType: isMd ? 'text/markdown' : 'text/plain',
         processingStatus: ProcessingStatus.pending,
       );
 
@@ -287,8 +285,6 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
       if (mounted) {
         Navigator.of(context).pop();
       }
-
-      pipeline.processFile(article, content, fullText: fullText);
     } catch (e) {
       if (!mounted) return;
       showAppSnackBar(context, message: '${s.fileReadError}: $e');
@@ -337,9 +333,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
                 controller: _titleController,
                 decoration: InputDecoration(
                   labelText: s.titleOptional,
-                  hintText: _fetchingMetadata
-                      ? s.fetchingTitle
-                      : s.enterTitle,
+                  hintText: _fetchingMetadata ? s.fetchingTitle : s.enterTitle,
                   prefixIcon: const Icon(Icons.title),
                   suffixIcon: _fetchingMetadata
                       ? const Padding(
@@ -531,7 +525,10 @@ class _FolderDropdown extends ConsumerWidget {
   final String? selectedFolderId;
   final ValueChanged<String?> onChanged;
 
-  const _FolderDropdown({required this.selectedFolderId, required this.onChanged});
+  const _FolderDropdown({
+    required this.selectedFolderId,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -549,10 +546,7 @@ class _FolderDropdown extends ConsumerWidget {
             prefixIcon: const Icon(Icons.folder_rounded),
           ),
           items: [
-            DropdownMenuItem<String?>(
-              value: null,
-              child: Text(s.noFolder),
-            ),
+            DropdownMenuItem<String?>(value: null, child: Text(s.noFolder)),
             for (final folder in folders)
               DropdownMenuItem<String?>(
                 value: folder.id,
@@ -619,8 +613,10 @@ class _BulkImportSheetState extends ConsumerState<_BulkImportSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(s.bulkImportTitle,
-                style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              s.bulkImportTitle,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 4),
             Text(
               s.bulkImportDesc,

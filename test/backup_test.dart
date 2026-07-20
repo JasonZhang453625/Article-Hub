@@ -55,12 +55,14 @@ void main() {
         webZoomPercent: 120,
         themeModeIndex: 2,
         clipboardDetectionEnabled: false,
+        memorySortNewestFirst: false,
       );
       final restored = AppSettings.fromJson(original.toJson());
       expect(restored.fontSize, 18);
       expect(restored.webZoomPercent, 120);
       expect(restored.themeModeIndex, 2);
       expect(restored.clipboardDetectionEnabled, isFalse);
+      expect(restored.memorySortNewestFirst, isFalse);
     });
 
     test(
@@ -71,6 +73,11 @@ void main() {
         expect(restored.clipboardDetectionEnabled, isTrue);
       },
     );
+
+    test('AppSettings defaults memory sorting to newest first when absent', () {
+      final restored = AppSettings.fromJson({'fontSize': 14});
+      expect(restored.memorySortNewestFirst, isTrue);
+    });
 
     test('AppSettings.toJson excludes API keys from export payloads', () {
       // API keys stay local to the device and must not enter backup or sync

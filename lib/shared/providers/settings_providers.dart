@@ -127,6 +127,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(startupTabIndex: index));
   }
 
+  Future<void> setMemorySortNewestFirst(bool newestFirst) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(memorySortNewestFirst: newestFirst));
+  }
+
   Future<void> setEmbeddingConfig({
     String? baseUrl,
     String? apiKey,
@@ -298,6 +303,12 @@ final startupTabIndexProvider = Provider<int>((ref) {
   return ref
       .watch(settingsProvider)
       .maybeWhen(data: (s) => s.startupTabIndex, orElse: () => 0);
+});
+
+final memorySortNewestFirstProvider = Provider<bool>((ref) {
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.memorySortNewestFirst, orElse: () => true);
 });
 
 /// Computed days since first launch.
