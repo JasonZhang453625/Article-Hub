@@ -1,4 +1,4 @@
-﻿import 'dart:ui';
+import 'dart:ui';
 
 class LocaleStrings {
   final String appTitle;
@@ -26,9 +26,6 @@ class LocaleStrings {
   final String addMultipleUrls;
   final String importFile;
   final String fileReadError;
-  final String ocrRunning;
-  final String ocrNoTextFound;
-  final String ocrNotSupportedOnWeb;
   final String pdfExtracting;
   final String pdfNoTextFound;
   final String pdfNotSupportedOnWeb;
@@ -94,6 +91,7 @@ class LocaleStrings {
   final String notEnoughInfo;
   final String emptyAiResponse;
   final String aiError;
+  final String answerInterrupted;
   final String askKnowledgeBase;
   final String tryExamples;
   final String processFirst;
@@ -276,6 +274,11 @@ class LocaleStrings {
   final String regenerateAiMemoriesAction;
   final String nAiMemories;
   final String noAiMemoriesToRegen;
+  final String chatHistory;
+  final String chatNew;
+  final String chatNoHistory;
+  final String chatDelete;
+  final String chatDeleteConfirm;
   final String chatSettings;
   final String chatAnswerLength;
   final String chatShort;
@@ -311,9 +314,6 @@ class LocaleStrings {
     required this.addMultipleUrls,
     required this.importFile,
     required this.fileReadError,
-    required this.ocrRunning,
-    required this.ocrNoTextFound,
-    required this.ocrNotSupportedOnWeb,
     required this.pdfExtracting,
     required this.pdfNoTextFound,
     required this.pdfNotSupportedOnWeb,
@@ -379,6 +379,7 @@ class LocaleStrings {
     required this.notEnoughInfo,
     required this.emptyAiResponse,
     required this.aiError,
+    required this.answerInterrupted,
     required this.askKnowledgeBase,
     required this.tryExamples,
     required this.processFirst,
@@ -561,6 +562,11 @@ class LocaleStrings {
     required this.regenerateAiMemoriesAction,
     required this.nAiMemories,
     required this.noAiMemoriesToRegen,
+    required this.chatHistory,
+    required this.chatNew,
+    required this.chatNoHistory,
+    required this.chatDelete,
+    required this.chatDeleteConfirm,
     required this.chatSettings,
     required this.chatAnswerLength,
     required this.chatShort,
@@ -597,8 +603,10 @@ class LocaleStrings {
     end: 'End',
     add: 'Add',
     noArticlesYet: 'No memories yet',
-    addFirstArticle: 'Add your first memory to start building your knowledge base.',
-    homeDescription: 'One share to know. Turn scattered content from any platform into traceable, recallable personal memory.',
+    addFirstArticle:
+        'Add your first memory to start building your knowledge base.',
+    homeDescription:
+        'One share to know. Turn scattered content from any platform into traceable, recallable personal memory.',
     noArticlesMatch: 'No memories match the current filters',
     failedToLoad: 'Failed to load memories',
     alreadySaved: 'Already saved',
@@ -611,15 +619,13 @@ class LocaleStrings {
     addMultipleUrls: 'Add multiple URLs',
     importFile: 'Import File',
     fileReadError: 'Failed to read file',
-    ocrRunning: 'Running local OCR...',
-    ocrNoTextFound: 'No text found in image',
-    ocrNotSupportedOnWeb: 'Local OCR is not supported on Web',
     pdfExtracting: 'Extracting PDF text...',
     pdfNoTextFound: 'No extractable text in PDF (may be a scanned document)',
     pdfNotSupportedOnWeb: 'PDF import is not supported on Web',
     save: 'Save',
     supportedSources: 'Supported sources',
-    supportedSourcesDesc: 'Paste links from your enabled platforms and the app will detect the source automatically.',
+    supportedSourcesDesc:
+        'Paste links from your enabled platforms and the app will detect the source automatically.',
     titleOptional: 'Title (optional)',
     fetchingTitle: 'Fetching title...',
     enterTitle: 'Enter a title for this memory',
@@ -632,7 +638,8 @@ class LocaleStrings {
     saveArticle: 'Save memory',
     clipboardReadError: 'Could not read from clipboard',
     bulkImportTitle: 'Add multiple URLs',
-    bulkImportDesc: 'Paste one URL per line (or separated by spaces/commas). Sources are detected automatically.',
+    bulkImportDesc:
+        'Paste one URL per line (or separated by spaces/commas). Sources are detected automatically.',
     addNUrls: 'Add',
     addedNArticles: 'Added',
     articleDetails: 'Memory Details',
@@ -641,7 +648,8 @@ class LocaleStrings {
     addToFavorites: 'Add to favorites',
     delete: 'Delete',
     deleteArticle: 'Delete Memory',
-    deleteConfirm: 'Are you sure you want to delete this memory? This action cannot be undone.',
+    deleteConfirm:
+        'Are you sure you want to delete this memory? This action cannot be undone.',
     cancel: 'Cancel',
     title: 'Title',
     addTag: 'Add tag',
@@ -653,7 +661,8 @@ class LocaleStrings {
     openInBrowser: 'Open in browser',
     aiSummary: 'AI Memory',
     aiSummaryNotGenerated: 'AI memory not yet generated.',
-    aiSummaryNotAvailable: 'AI memory not available. Configure AI in Settings to enable.',
+    aiSummaryNotAvailable:
+        'AI memory not available. Configure AI in Settings to enable.',
     generateSummary: 'Generate Memory',
     generating: 'Generating...',
     summaryFailed: 'Memory generation failed. Check your AI settings.',
@@ -675,13 +684,20 @@ class LocaleStrings {
     inboxEmpty: 'No memories in progress',
     inboxEmptyDesc: 'Memories being processed will appear here.',
     configureAiFirst: 'Please configure your AI provider in Settings first.',
-    knowledgeBaseEmpty: 'Your Memora is empty. Process some memories first, then come back to ask questions.',
-    notEnoughInfo: 'I couldn\'t find enough relevant information in your Memora to answer this question.',
-    emptyAiResponse: 'The AI service returned an empty response. Please try again.',
+    knowledgeBaseEmpty:
+        'Your Memora is empty. Process some memories first, then come back to ask questions.',
+    notEnoughInfo:
+        'I couldn\'t find enough relevant information in your Memora to answer this question.',
+    emptyAiResponse:
+        'The AI service returned an empty response. Please try again.',
     aiError: 'Error communicating with AI service',
+    answerInterrupted:
+        'The previous answer was interrupted while generating.',
     askKnowledgeBase: 'Explore your Memora',
-    tryExamples: 'Try: "What are the key ideas about AI?" or "Summarize my saved memories on Flutter"',
-    processFirst: 'Process some memories first, then come back to ask questions.',
+    tryExamples:
+        'Try: "What are the key ideas about AI?" or "Summarize my saved memories on Flutter"',
+    processFirst:
+        'Process some memories first, then come back to ask questions.',
     askHint: 'Ask about your knowledge...',
     tryBroaderTerm: 'Try a broader term:',
     browseKnowledgeBase: 'Browse Memora',
@@ -695,7 +711,8 @@ class LocaleStrings {
     renameFolder: 'Rename Folder',
     rename: 'Rename',
     deleteFolder: 'Delete Folder',
-    deleteFolderConfirm: 'Delete this folder? Memories in this folder will become unfiled.',
+    deleteFolderConfirm:
+        'Delete this folder? Memories in this folder will become unfiled.',
     noFoldersYet: 'No folders yet',
     createFoldersDesc: 'Create folders to organize your memories',
     addSubfolder: 'Add subfolder',
@@ -713,10 +730,12 @@ class LocaleStrings {
     preview: 'Preview: The quick brown fox jumps over the lazy dog.',
     reader: 'Reader',
     defaultWebZoom: 'Default Web Zoom',
-    webZoomDesc: 'Controls the initial zoom level when opening memories in the built-in browser.',
+    webZoomDesc:
+        'Controls the initial zoom level when opening memories in the built-in browser.',
     sourcePlatforms: 'Source Platforms',
     reorderAndHide: 'Reorder And Hide',
-    reorderDesc: 'Drag to change the chip order. Turn off platforms you do not want to see in filters.',
+    reorderDesc:
+        'Drag to change the chip order. Turn off platforms you do not want to see in filters.',
     visibleInFilters: 'Visible in filters',
     hiddenFromFilters: 'Hidden from filters',
     preferences: 'Preferences',
@@ -724,7 +743,8 @@ class LocaleStrings {
     startupChat: 'Chat',
     startupKnowledge: 'Memora',
     memorySortNewestFirst: 'Newest memories first',
-    memorySortNewestFirstDesc: 'Turn off to show the earliest created memories first.',
+    memorySortNewestFirstDesc:
+        'Turn off to show the earliest created memories first.',
     settingsAccount: 'Account',
     settingsAccountDesc: 'Usage stats, security settings',
     accountTitle: 'Account',
@@ -746,9 +766,12 @@ class LocaleStrings {
     logoutConfirm: 'Are you sure you want to sign out?',
     resendCode: 'Resend code',
     resendCountdown: 'Resend in {}s',
-    loginErrorNetwork: 'Network error. Please check your connection and try again.',
-    loginErrorOtpInvalid: 'Invalid or expired verification code. Please try again.',
-    loginErrorNotConfigured: 'Login service is not configured. Please contact support.',
+    loginErrorNetwork:
+        'Network error. Please check your connection and try again.',
+    loginErrorOtpInvalid:
+        'Invalid or expired verification code. Please try again.',
+    loginErrorNotConfigured:
+        'Login service is not configured. Please contact support.',
     loginErrorGeneric: 'Login failed. Please try again later.',
     setPassword: 'Set Password',
     changePassword: 'Change Password',
@@ -756,12 +779,14 @@ class LocaleStrings {
     daysN: 'days',
     entriesN: 'entries',
     detectClipboard: 'Detect links from clipboard',
-    detectClipboardDesc: 'When you open the app, offer to save a link you have copied.',
+    detectClipboardDesc:
+        'When you open the app, offer to save a link you have copied.',
     hideInboxTab: 'Hide "Progress" Tab',
     hideInboxTabDesc: 'Remove the Progress tab from the bottom navigation bar',
     aiSummarySection: 'AI Memory',
     apiConfig: 'API Configuration',
-    apiConfigDesc: 'Enter your OpenAI-compatible API credentials. Your key is stored on this device only and is never included in exported backups.',
+    apiConfigDesc:
+        'Enter your OpenAI-compatible API credentials. Your key is stored on this device only and is never included in exported backups.',
     baseUrl: 'Base URL',
     apiKey: 'API Key',
     model: 'Model',
@@ -788,14 +813,17 @@ class LocaleStrings {
     configureAiFirstBtn: 'Configure AI first',
     nothingToProcess: 'Nothing to process',
     processNArticles: 'Process item(s)',
-    setupAiProvider: 'Set up your AI provider above to enable batch processing.',
-    batchProcessConfirm: 'Process item(s)? This will call your AI provider for each to generate memories and tags.',
+    setupAiProvider:
+        'Set up your AI provider above to enable batch processing.',
+    batchProcessConfirm:
+        'Process item(s)? This will call your AI provider for each to generate memories and tags.',
     start: 'Start',
     processedN: 'Processed',
     embeddingSection: 'Embedding & Index',
     embeddingConfig: 'Embedding Configuration',
     defaultLabel: 'Default',
-    usingBuiltIn: 'Using built-in embedding service. You can also bring your own OpenAI-compatible endpoint.',
+    usingBuiltIn:
+        'Using built-in embedding service. You can also bring your own OpenAI-compatible endpoint.',
     usingCustom: 'Using your custom OpenAI-compatible embeddings endpoint.',
     embeddingBaseUrl: 'Embedding Base URL',
     embeddingApiKey: 'Embedding API Key',
@@ -815,11 +843,13 @@ class LocaleStrings {
     configureEmbeddingFirst: 'Configure embedding first',
     data: 'Data',
     backupRestore: 'Backup & Restore',
-    backupDesc: 'Export all your articles, filters and settings to a JSON file, or import a backup. Importing merges into your current data.',
+    backupDesc:
+        'Export all your articles, filters and settings to a JSON file, or import a backup. Importing merges into your current data.',
     export: 'Export',
     import: 'Import',
     importBackup: 'Import backup',
-    importConfirm: 'Articles and filters from the backup will be merged into your current data. App settings will be replaced. Continue?',
+    importConfirm:
+        'Articles and filters from the backup will be merged into your current data. App settings will be replaced. Continue?',
     imported: 'Imported',
     invalidBackup: 'Invalid backup file',
     exportFailed: 'Export failed',
@@ -834,7 +864,8 @@ class LocaleStrings {
     tagKeywordsDesc: 'Memories matching any of these tags will be included.',
     addTagKeyword: 'Add tag keyword',
     sourcePlatformsFilter: 'Source Platforms',
-    sourcePlatformsDesc: 'Leave empty to include all sources, or select specific ones.',
+    sourcePlatformsDesc:
+        'Leave empty to include all sources, or select specific ones.',
     manageFilters: 'Manage Filters',
     newButton: 'New',
     noCustomFilters: 'No custom filters yet',
@@ -848,7 +879,8 @@ class LocaleStrings {
     shareSaveTitle: 'Save to Memora',
     saveModeFullText: 'Full text',
     saveModeAiMemory: 'AI memory',
-    saveModeFullTextDesc: 'Keep the full article text. Title, tags and folder still use AI.',
+    saveModeFullTextDesc:
+        'Keep the full article text. Title, tags and folder still use AI.',
     saveModeAiMemoryDesc: 'Generate an AI memory as your memory card.',
     shareThoughtsLabel: 'Thoughts right now',
     shareThoughtsHint: 'Jot down your thoughts — saved as your personal note',
@@ -856,11 +888,18 @@ class LocaleStrings {
     memoryLabelAi: 'AI memory',
     memoryLabelOriginal: 'Original memory',
     regenerateAiMemoriesTitle: 'Regenerate AI Memories',
-    regenerateAiMemoriesDesc: 'Re-run AI summary for all AI-memory items (skips full-text / original memories).',
-    regenerateAiMemoriesConfirm: 'Regenerate AI memory for these items? This will call your AI provider for each one.',
+    regenerateAiMemoriesDesc:
+        'Re-run AI summary for all AI-memory items (skips full-text / original memories).',
+    regenerateAiMemoriesConfirm:
+        'Regenerate AI memory for these items? This will call your AI provider for each one.',
     regenerateAiMemoriesAction: 'Regenerate All',
     nAiMemories: 'AI-memory item(s)',
     noAiMemoriesToRegen: 'No AI memories to regenerate',
+    chatHistory: 'Chat History',
+    chatNew: 'New Chat',
+    chatNoHistory: 'No saved chats yet',
+    chatDelete: 'Delete Chat',
+    chatDeleteConfirm: 'Delete this chat and all of its local messages?',
     chatSettings: 'Chat Settings',
     chatAnswerLength: 'Answer Length',
     chatShort: 'Short',
@@ -897,9 +936,6 @@ class LocaleStrings {
     addMultipleUrls: '添加多个链接',
     importFile: '导入文件',
     fileReadError: '无法读取文件',
-    ocrRunning: '正在本地 OCR…',
-    ocrNoTextFound: '图片中未识别到文字',
-    ocrNotSupportedOnWeb: 'Web 端暂不支持本地 OCR',
     pdfExtracting: '正在提取 PDF 文本…',
     pdfNoTextFound: 'PDF 无可提取文本（可能是扫描件）',
     pdfNotSupportedOnWeb: 'Web 端暂不支持 PDF 导入',
@@ -965,6 +1001,7 @@ class LocaleStrings {
     notEnoughInfo: '在记忆海中找不到足够的相关信息来回答此问题。',
     emptyAiResponse: 'AI 服务返回了空响应，请重试。',
     aiError: '与 AI 服务通信出错',
+    answerInterrupted: '上次回答在生成中被中断。',
     askKnowledgeBase: '探索我的记忆海',
     tryExamples: '试试：「关于 AI 的核心观点是什么？」或「总结我保存的 Flutter 记忆」',
     processFirst: '请先处理一些记忆，然后再来提问。',
@@ -1147,6 +1184,11 @@ class LocaleStrings {
     regenerateAiMemoriesAction: '全部重新生成',
     nAiMemories: '条 AI 记忆',
     noAiMemoriesToRegen: '没有可重新生成的 AI 记忆',
+    chatHistory: '对话历史',
+    chatNew: '新建对话',
+    chatNoHistory: '暂无已保存的对话',
+    chatDelete: '删除对话',
+    chatDeleteConfirm: '删除此对话及其全部本地消息？',
     chatSettings: '对话设置',
     chatAnswerLength: '回答长度',
     chatShort: '简洁',

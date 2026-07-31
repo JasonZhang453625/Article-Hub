@@ -17,7 +17,6 @@ import 'chat_empty_state.dart';
 import 'chat_history_sheet.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
-import 'chat_typing_indicator.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -56,20 +55,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     final chatState = ref.read(chatSessionsProvider).valueOrNull;
     if (chatState == null) return;
-    final history = chatState.messages
-        .where(
-          (message) =>
-              message.status == ChatMessageStatus.completed &&
-              message.role != ChatMessageRole.system &&
-              message.content.trim().isNotEmpty,
-        )
-        .map(
-          (message) => RagConversationTurn(
-            role: message.role == ChatMessageRole.user ? 'user' : 'assistant',
-            content: message.content,
-          ),
-        )
-        .toList();
+    final history = _completedHistory(chatState.messages);
 
     if (overrideQuery == null) _controller.clear();
     setState(() {
@@ -88,18 +74,58 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
       return;
     }
+    final pending = await sessions.addPendingMessage(
+      threadId: persistedUser.threadId,
+      query: query,
+    );
     _scrollToBottom();
+    await _runAnswer(pending: pending, history: history);
+  }
 
+  /// Re-runs a previously interrupted answer on its original message,
+  /// without duplicating the user question or creating a new placeholder.
+  Future<void> _retry(ChatMessage message) async {
+    final query = message.query ?? '';
+    if (query.isEmpty || _loading) return;
+    final chatState = ref.read(chatSessionsProvider).valueOrNull;
+    if (chatState == null) return;
+    final record = _findMessage(chatState.messages, message.id);
+    if (record == null || record.role != ChatMessageRole.assistant) return;
+    final history = _completedHistory(chatState.messages);
+
+    setState(() {
+      _loading = true;
+    });
+    await ref
+        .read(chatSessionsProvider.notifier)
+        .updateMessage(record.copyWith(status: ChatMessageStatus.sending));
+    _scrollToBottom();
+    await _runAnswer(
+      pending: record.copyWith(status: ChatMessageStatus.sending),
+      history: history,
+    );
+  }
+
+  /// Runs the RAG pipeline and writes the outcome back onto [pending].
+  Future<void> _runAnswer({
+    required ChatMessageRecord pending,
+    required List<RagConversationTurn> history,
+  }) async {
+    final sessions = ref.read(chatSessionsProvider.notifier);
     final settings = ref.read(settingsProvider).valueOrNull;
     final s = ref.read(stringsProvider);
+    Future<void> finish(ChatMessageRecord updated) =>
+        sessions.updateMessage(updated);
+
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
         settings.aiApiKey.trim().isEmpty) {
-      await sessions.addAssistantMessage(
-        threadId: persistedUser.threadId,
-        content: s.configureAiFirst,
-        status: ChatMessageStatus.failed,
-        errorCode: 'ai_not_configured',
+      await finish(
+        pending.copyWith(
+          content: s.configureAiFirst,
+          status: ChatMessageStatus.failed,
+          errorCode: 'ai_not_configured',
+        ),
       );
       _finishLoading();
       return;
@@ -107,11 +133,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     final conversation = ref.read(ragConversationServiceProvider);
     if (conversation == null) {
-      await sessions.addAssistantMessage(
-        threadId: persistedUser.threadId,
-        content: s.configureAiFirst,
-        status: ChatMessageStatus.failed,
-        errorCode: 'ai_unavailable',
+      await finish(
+        pending.copyWith(
+          content: s.configureAiFirst,
+          status: ChatMessageStatus.failed,
+          errorCode: 'ai_unavailable',
+        ),
       );
       _finishLoading();
       return;
@@ -126,11 +153,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .toList();
 
     if (completedArticles.isEmpty) {
-      await sessions.addAssistantMessage(
-        threadId: persistedUser.threadId,
-        content: s.knowledgeBaseEmpty,
-        isNoResult: true,
-        query: query,
+      await finish(
+        pending.copyWith(
+          content: s.knowledgeBaseEmpty,
+          isNoResult: true,
+          query: pending.query,
+        ),
       );
       _finishLoading();
       return;
@@ -139,7 +167,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     try {
       final result = await conversation.ask(
         RagConversationRequest(
-          question: query,
+          question: pending.query ?? '',
           history: history,
           articles: completedArticles,
           knowledgeOnly: settings.chatKnowledgeSourceIndex == 0,
@@ -149,45 +177,78 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
       switch (result.outcome) {
         case RagConversationOutcome.answer:
-          await sessions.addAssistantMessage(
-            threadId: persistedUser.threadId,
-            content: result.answer ?? '',
-            articleIds: result.citedIds,
-            method: result.method,
-            logId: result.logId,
+          await finish(
+            pending.copyWith(
+              content: result.answer ?? '',
+              articleIds: result.citedIds,
+              method: result.method,
+              logId: result.logId,
+            ),
           );
           break;
         case RagConversationOutcome.noResult:
-          await sessions.addAssistantMessage(
-            threadId: persistedUser.threadId,
-            content: s.notEnoughInfo,
-            isNoResult: true,
-            weakArticleIds: result.weakArticleIds,
-            method: result.method,
-            logId: result.logId,
-            query: query,
+          await finish(
+            pending.copyWith(
+              content: s.notEnoughInfo,
+              isNoResult: true,
+              weakArticleIds: result.weakArticleIds,
+              method: result.method,
+              logId: result.logId,
+              query: pending.query,
+            ),
           );
           break;
         case RagConversationOutcome.error:
-          await sessions.addAssistantMessage(
-            threadId: persistedUser.threadId,
-            content: '${s.aiError}: ${result.error ?? 'unknown error'}',
-            method: result.method,
-            logId: result.logId,
-            status: ChatMessageStatus.failed,
-            errorCode: 'rag_error',
+          await finish(
+            pending.copyWith(
+              content: '${s.aiError}: ${result.error ?? 'unknown error'}',
+              method: result.method,
+              logId: result.logId,
+              status: ChatMessageStatus.failed,
+              errorCode: 'rag_error',
+            ),
           );
           break;
       }
     } catch (error) {
-      await sessions.addAssistantMessage(
-        threadId: persistedUser.threadId,
-        content: '${s.aiError}: $error',
-        status: ChatMessageStatus.failed,
-        errorCode: 'unexpected_error',
+      await finish(
+        pending.copyWith(
+          content: '${s.aiError}: $error',
+          status: ChatMessageStatus.failed,
+          errorCode: 'unexpected_error',
+        ),
       );
     }
     _finishLoading();
+  }
+
+  List<RagConversationTurn> _completedHistory(
+    List<ChatMessageRecord> messages,
+  ) {
+    return messages
+        .where(
+          (message) =>
+              message.status == ChatMessageStatus.completed &&
+              message.role != ChatMessageRole.system &&
+              message.content.trim().isNotEmpty,
+        )
+        .map(
+          (message) => RagConversationTurn(
+            role: message.role == ChatMessageRole.user ? 'user' : 'assistant',
+            content: message.content,
+          ),
+        )
+        .toList();
+  }
+
+  ChatMessageRecord? _findMessage(
+    List<ChatMessageRecord> messages,
+    String id,
+  ) {
+    for (final message in messages) {
+      if (message.id == id) return message;
+    }
+    return null;
   }
 
   void _finishLoading() {
@@ -318,11 +379,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           horizontal: 16,
                           vertical: 12,
                         ),
-                        itemCount: messages.length + (_loading ? 1 : 0),
+                        itemCount: messages.length,
                         itemBuilder: (context, index) {
-                          if (index == messages.length) {
-                            return const ChatTypingIndicator();
-                          }
                           return ChatBubble(
                             message: messages[index],
                             articles: articles,
@@ -336,6 +394,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                               articleId,
                             ),
                             onSuggestionTap: _send,
+                            onRetry: _retry,
                             onBrowseKnowledge: () {
                               context.go(AppRoutes.knowledge);
                             },

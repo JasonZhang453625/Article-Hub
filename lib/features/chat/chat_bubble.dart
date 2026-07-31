@@ -3,10 +3,12 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/passage.dart';
+import '../../shared/providers/locale_provider.dart';
 import 'chat_message.dart';
 import 'chat_citation_chips.dart';
 import 'chat_feedback.dart';
 import 'chat_no_result.dart';
+import 'chat_typing_indicator.dart';
 
 class ChatBubble extends ConsumerWidget {
   final ChatMessage message;
@@ -14,6 +16,7 @@ class ChatBubble extends ConsumerWidget {
   final ValueChanged<int> onFeedback;
   final ValueChanged<String> onCitationClick;
   final ValueChanged<String> onSuggestionTap;
+  final ValueChanged<ChatMessage> onRetry;
   final VoidCallback onBrowseKnowledge;
 
   const ChatBubble({
@@ -23,6 +26,7 @@ class ChatBubble extends ConsumerWidget {
     required this.onFeedback,
     required this.onCitationClick,
     required this.onSuggestionTap,
+    required this.onRetry,
     required this.onBrowseKnowledge,
   });
 
@@ -30,6 +34,57 @@ class ChatBubble extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isUser = message.role == MessageRole.user;
+
+    if (message.isPending) {
+      // The in-flight answer is a real (persisted) message now — render the
+      // typing animation on it so an app restart can still recover it.
+      return const ChatTypingIndicator();
+    }
+
+    if (message.isInterrupted) {
+      final s = ref.watch(stringsProvider);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.error_outline_rounded,
+                    size: 20,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      s.answerInterrupted,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => onRetry(message),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: Text(s.retry),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     if (isUser) {
       return Align(
