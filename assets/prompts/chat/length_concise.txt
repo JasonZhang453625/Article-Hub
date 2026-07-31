@@ -1,1 +1,1 @@
-Keep answers concise — 2-3 sentences per point, use bullet points when possible.
+回答要简洁：每个要点 2-3 句话，优先用要点列表，不要冗余铺垫。

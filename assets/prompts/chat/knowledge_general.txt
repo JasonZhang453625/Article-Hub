@@ -1,1 +1,4 @@
-No relevant articles were found in the knowledge base for this question. Answer using your general knowledge. Be thorough and factual.
+没有检索到与问题相关的知识库文章。请基于你的常识作答，做到准确、有条理。
+
+- 如果问题涉及具体数据、时效性信息或专业细节，先提醒用户这部分不在其知识库中
+- 不要编造来源，不要使用 [n] 形式的引用

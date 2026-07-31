@@ -31,36 +31,41 @@ class ChatInputBar extends StatelessWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSend(),
-              decoration: InputDecoration(
-                hintText: s.askHint,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => onSend(),
+                  decoration: InputDecoration(
+                    hintText: s.askHint,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                  ),
                 ),
-                filled: true,
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 10),
               ),
-            ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: loading ? null : onSend,
+                icon: loading
+                    ? const SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_rounded),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            onPressed: loading ? null : onSend,
-            icon: loading
-                ? const SizedBox(
-                    width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.send_rounded),
-          ),
-        ],
+        ),
       ),
     );
   }

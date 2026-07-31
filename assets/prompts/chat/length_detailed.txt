@@ -1,1 +1,1 @@
-Provide detailed explanations. Include examples, context, and reasoning when relevant.
+回答要详细：包含示例、背景和推理过程，用小标题 + 分点的结构化方式组织。

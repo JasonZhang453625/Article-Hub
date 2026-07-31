@@ -1,15 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../config/routes.dart';
+import '../../data/models/chat_message_record.dart';
 import '../../data/models/passage.dart';
 import '../../data/services/rag_conversation_service.dart';
+import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
+import 'chat_history_sheet.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
 import 'chat_typing_indicator.dart';
@@ -24,7 +29,6 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
-  final List<ChatMessage> _messages = [];
   bool _loading = false;
 
   @override
@@ -50,51 +54,66 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final query = overrideQuery ?? _controller.text.trim();
     if (query.isEmpty || _loading) return;
 
-    final previousMessages = _messages.length > 10
-        ? _messages.sublist(_messages.length - 10)
-        : List<ChatMessage>.of(_messages);
-    final history = previousMessages
-        .where((message) => message.text.trim().isNotEmpty)
+    final chatState = ref.read(chatSessionsProvider).valueOrNull;
+    if (chatState == null) return;
+    final history = chatState.messages
+        .where(
+          (message) =>
+              message.status == ChatMessageStatus.completed &&
+              message.role != ChatMessageRole.system &&
+              message.content.trim().isNotEmpty,
+        )
         .map(
           (message) => RagConversationTurn(
-            role: message.role == MessageRole.user ? 'user' : 'assistant',
-            content: message.text,
+            role: message.role == ChatMessageRole.user ? 'user' : 'assistant',
+            content: message.content,
           ),
         )
         .toList();
 
     if (overrideQuery == null) _controller.clear();
     setState(() {
-      _messages.add(ChatMessage(role: MessageRole.user, text: query));
       _loading = true;
     });
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    late final PersistedUserMessage persistedUser;
+    try {
+      persistedUser = await sessions.addUserMessage(query);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return;
+    }
     _scrollToBottom();
 
     final settings = ref.read(settingsProvider).valueOrNull;
+    final s = ref.read(stringsProvider);
     if (settings == null ||
         settings.aiBaseUrl.trim().isEmpty ||
         settings.aiApiKey.trim().isEmpty) {
-      final s = ref.read(stringsProvider);
-      setState(() {
-        _messages.add(
-          ChatMessage(role: MessageRole.assistant, text: s.configureAiFirst),
-        );
-        _loading = false;
-      });
-      _scrollToBottom();
+      await sessions.addAssistantMessage(
+        threadId: persistedUser.threadId,
+        content: s.configureAiFirst,
+        status: ChatMessageStatus.failed,
+        errorCode: 'ai_not_configured',
+      );
+      _finishLoading();
       return;
     }
 
     final conversation = ref.read(ragConversationServiceProvider);
     if (conversation == null) {
-      final s = ref.read(stringsProvider);
-      setState(() {
-        _messages.add(
-          ChatMessage(role: MessageRole.assistant, text: s.configureAiFirst),
-        );
-        _loading = false;
-      });
-      _scrollToBottom();
+      await sessions.addAssistantMessage(
+        threadId: persistedUser.threadId,
+        content: s.configureAiFirst,
+        status: ChatMessageStatus.failed,
+        errorCode: 'ai_unavailable',
+      );
+      _finishLoading();
       return;
     }
 
@@ -107,18 +126,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .toList();
 
     if (completedArticles.isEmpty) {
-      final s = ref.read(stringsProvider);
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            role: MessageRole.assistant,
-            text: s.knowledgeBaseEmpty,
-            isNoResult: true,
-          ),
-        );
-        _loading = false;
-      });
-      _scrollToBottom();
+      await sessions.addAssistantMessage(
+        threadId: persistedUser.threadId,
+        content: s.knowledgeBaseEmpty,
+        isNoResult: true,
+        query: query,
+      );
+      _finishLoading();
       return;
     }
 
@@ -133,52 +147,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           languageHint: aiLanguagePrompt(settings.languageIndex),
         ),
       );
-      if (!mounted) return;
-
-      final s = ref.read(stringsProvider);
-      final message = switch (result.outcome) {
-        RagConversationOutcome.answer => ChatMessage(
-          role: MessageRole.assistant,
-          text: result.answer ?? '',
-          articleIds: result.citedIds,
-          method: result.method,
-          logId: result.logId,
-        ),
-        RagConversationOutcome.noResult => ChatMessage(
-          role: MessageRole.assistant,
-          text: s.notEnoughInfo,
-          isNoResult: true,
-          weakArticleIds: result.weakArticleIds,
-          method: result.method,
-          logId: result.logId,
-          query: query,
-        ),
-        RagConversationOutcome.error => ChatMessage(
-          role: MessageRole.assistant,
-          text: '${s.aiError}: ${result.error ?? 'unknown error'}',
-          method: result.method,
-          logId: result.logId,
-        ),
-      };
-
-      setState(() {
-        _messages.add(message);
-        _loading = false;
-      });
+      switch (result.outcome) {
+        case RagConversationOutcome.answer:
+          await sessions.addAssistantMessage(
+            threadId: persistedUser.threadId,
+            content: result.answer ?? '',
+            articleIds: result.citedIds,
+            method: result.method,
+            logId: result.logId,
+          );
+          break;
+        case RagConversationOutcome.noResult:
+          await sessions.addAssistantMessage(
+            threadId: persistedUser.threadId,
+            content: s.notEnoughInfo,
+            isNoResult: true,
+            weakArticleIds: result.weakArticleIds,
+            method: result.method,
+            logId: result.logId,
+            query: query,
+          );
+          break;
+        case RagConversationOutcome.error:
+          await sessions.addAssistantMessage(
+            threadId: persistedUser.threadId,
+            content: '${s.aiError}: ${result.error ?? 'unknown error'}',
+            method: result.method,
+            logId: result.logId,
+            status: ChatMessageStatus.failed,
+            errorCode: 'rag_error',
+          );
+          break;
+      }
     } catch (error) {
-      if (!mounted) return;
-      final s = ref.read(stringsProvider);
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            role: MessageRole.assistant,
-            text: '${s.aiError}: $error',
-          ),
-        );
-        _loading = false;
-      });
+      await sessions.addAssistantMessage(
+        threadId: persistedUser.threadId,
+        content: '${s.aiError}: $error',
+        status: ChatMessageStatus.failed,
+        errorCode: 'unexpected_error',
+      );
     }
-    _scrollToBottom();
+    _finishLoading();
+  }
+
+  void _finishLoading() {
+    if (mounted) {
+      setState(() => _loading = false);
+      _scrollToBottom();
+    }
   }
 
   void _showChatSettings() {
@@ -203,14 +219,51 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  void _onFeedback(String? logId, int feedback) {
-    if (logId == null) return;
-    ref.read(retrievalLogServiceProvider).updateFeedback(logId, feedback);
+  void _onFeedback(String messageId, String? logId, int feedback) {
+    unawaited(
+      ref
+          .read(chatSessionsProvider.notifier)
+          .updateFeedback(messageId, feedback),
+    );
+    if (logId != null) {
+      unawaited(
+        ref.read(retrievalLogServiceProvider).updateFeedback(logId, feedback),
+      );
+    }
   }
 
   void _onCitationClick(String? logId, String articleId) {
     if (logId == null) return;
     ref.read(retrievalLogServiceProvider).recordCitationClick(logId, articleId);
+  }
+
+  void _showChatHistory() {
+    final chatState = ref.read(chatSessionsProvider).valueOrNull;
+    if (chatState == null) return;
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => ChatHistorySheet(
+        threads: chatState.threads,
+        activeThreadId: chatState.activeThreadId,
+        s: ref.read(stringsProvider),
+        onNewThread: () async {
+          await sessions.startNewThread();
+          _controller.clear();
+        },
+        onSelectThread: (threadId) async {
+          await sessions.selectThread(threadId);
+          _scrollToBottom();
+        },
+        onDeleteThread: sessions.deleteThread,
+      ),
+    );
+  }
+
+  Future<void> _startNewThread() async {
+    await ref.read(chatSessionsProvider.notifier).startNewThread();
+    _controller.clear();
   }
 
   @override
@@ -220,11 +273,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       (a) => a.processingStatus == ProcessingStatus.completed && a.hasMemory,
     );
     final s = ref.watch(stringsProvider);
+    final chatAsync = ref.watch(chatSessionsProvider);
+    final chatState = chatAsync.valueOrNull;
+    final messages =
+        chatState?.messages
+            .map(ChatMessage.fromRecord)
+            .toList(growable: false) ??
+        const <ChatMessage>[];
+    final chatUnavailable = chatAsync.hasError || chatAsync.isLoading;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(s.tabChat),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history_rounded),
+            tooltip: s.chatHistory,
+            onPressed: _loading || chatState == null ? null : _showChatHistory,
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_comment_outlined),
+            tooltip: s.chatNew,
+            onPressed: _loading || chatState == null ? null : _startNewThread,
+          ),
           IconButton(
             icon: const Icon(Icons.tune_rounded),
             tooltip: s.chatSettings,
@@ -232,13 +303,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 900),
-          child: Column(
-            children: [
+      body: Column(
+        children: [
               Expanded(
-                child: _messages.isEmpty
+                child: chatAsync.isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : chatAsync.hasError
+                    ? Center(child: Text(s.failedToLoad))
+                    : messages.isEmpty
                     ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
                     : ListView.builder(
                         controller: _scrollController,
@@ -246,18 +318,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           horizontal: 16,
                           vertical: 12,
                         ),
-                        itemCount: _messages.length + (_loading ? 1 : 0),
+                        itemCount: messages.length + (_loading ? 1 : 0),
                         itemBuilder: (context, index) {
-                          if (index == _messages.length) {
+                          if (index == messages.length) {
                             return const ChatTypingIndicator();
                           }
                           return ChatBubble(
-                            message: _messages[index],
+                            message: messages[index],
                             articles: articles,
-                            onFeedback: (feedback) =>
-                                _onFeedback(_messages[index].logId, feedback),
+                            onFeedback: (feedback) => _onFeedback(
+                              messages[index].id,
+                              messages[index].logId,
+                              feedback,
+                            ),
                             onCitationClick: (articleId) => _onCitationClick(
-                              _messages[index].logId,
+                              messages[index].logId,
                               articleId,
                             ),
                             onSuggestionTap: _send,
@@ -270,13 +345,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
               ChatInputBar(
                 controller: _controller,
-                loading: _loading,
+                loading: _loading || chatUnavailable,
                 s: s,
                 onSend: () => _send(),
               ),
             ],
-          ),
-        ),
       ),
     );
   }

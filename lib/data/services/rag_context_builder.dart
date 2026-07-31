@@ -4,11 +4,16 @@ import 'rag_citation.dart';
 
 class RagEvidence {
   final String text;
+
+  /// Evidence type label rendered as `[label] text`: 概述 / 要点 / 结论.
+  /// Empty for legacy full-text chunks, which are rendered without a prefix.
+  final String label;
   final double score;
   final int sourceOrder;
 
   const RagEvidence({
     required this.text,
+    this.label = '',
     required this.score,
     required this.sourceOrder,
   });
@@ -67,8 +72,9 @@ class RagEvidenceReranker {
       ) {
         evidence.add(
           RagEvidence(
-            text: seeds[evidenceIndex],
-            score: _score(seeds[evidenceIndex], terms, normalizedQuery),
+            text: seeds[evidenceIndex].text,
+            label: seeds[evidenceIndex].label,
+            score: _score(seeds[evidenceIndex].text, terms, normalizedQuery),
             sourceOrder: evidenceIndex,
           ),
         );
@@ -142,20 +148,26 @@ class RagContextBuilder {
           tokenBudget - usedTokens - headerTokens - linePrefixTokens;
       if (remaining <= 0) break;
 
-      var bestText = item.evidence.first.text;
-      if (estimateTokens(bestText) > remaining) {
-        bestText = _truncateToTokens(bestText, remaining);
+      final evidence = item.evidence.first;
+      final labelPrefix = _labelPrefix(evidence.label);
+      var bestText = evidence.text;
+      if (estimateTokens(evidence.text) > remaining) {
+        bestText = _truncateToTokens(
+          evidence.text,
+          remaining - estimateTokens(labelPrefix),
+        );
       }
-      if (bestText.trim().isEmpty) continue;
+      final renderedText = labelPrefix + bestText;
+      if (renderedText.trim().isEmpty) continue;
 
-      final evidenceTokens = estimateTokens('- $bestText\n');
+      final evidenceTokens = estimateTokens('- $renderedText\n');
       final total = headerTokens + evidenceTokens;
       if (usedTokens + total > tokenBudget) continue;
       selected.add(
         _SelectedArticle(
           ranked: item,
-          evidence: [item.evidence.first],
-          renderedEvidence: [bestText],
+          evidence: [evidence],
+          renderedEvidence: [renderedText],
         ),
       );
       usedTokens += total;
@@ -185,7 +197,7 @@ class RagContextBuilder {
     extras.sort((a, b) => b.evidence.score.compareTo(a.evidence.score));
 
     for (final extra in extras) {
-      final text = extra.evidence.text;
+      final text = _labelPrefix(extra.evidence.label) + extra.evidence.text;
       final tokens = estimateTokens('- $text\n');
       if (usedTokens + tokens > tokenBudget) continue;
       final target = selected[extra.selectedIndex];
@@ -243,45 +255,100 @@ String _header(int citationNumber, Article article) {
   return '[$citationNumber] ${article.title}$tags\nEvidence:\n';
 }
 
-List<String> _evidenceSeeds(Article article) {
+/// A candidate evidence seed before lexical scoring.
+class _Seed {
+  final String label;
+  final String text;
+
+  const _Seed(this.label, this.text);
+}
+
+String _labelPrefix(String label) => label.isEmpty ? '' : '[$label] ';
+
+List<_Seed> _evidenceSeeds(Article article) {
   final memory = article.memory;
   if (memory?.kind == MemoryKind.aiMemory) {
     return [
-      if (memory!.overview.trim().isNotEmpty) memory.overview.trim(),
+      if (memory!.overview.trim().isNotEmpty)
+        _Seed('概述', memory.overview.trim()),
       for (final point in [
         ...memory.keyPoints,
       ]..sort((a, b) => a.order.compareTo(b.order)))
         if (point.content.trim().isNotEmpty)
-          point.topic.trim().isEmpty
-              ? point.content.trim()
-              : '${point.topic.trim()}: ${point.content.trim()}',
-      if (memory.conclusion.trim().isNotEmpty) memory.conclusion.trim(),
+          _Seed(
+            '要点',
+            point.topic.trim().isEmpty
+                ? point.content.trim()
+                : '${point.topic.trim()}: ${point.content.trim()}',
+          ),
+      if (memory.conclusion.trim().isNotEmpty)
+        _Seed('结论', memory.conclusion.trim()),
     ];
   }
 
-  return _chunkLegacyText(article.retrievalText);
+  return _chunkLegacyText(
+    article.retrievalText,
+  ).map((chunk) => _Seed('', chunk)).toList();
 }
 
+/// Splits legacy full text into bounded chunks, preferring sentence
+/// boundaries over hard character cuts.
 List<String> _chunkLegacyText(String text) {
+  const maxChars = 360;
   final chunks = <String>[];
   for (final paragraph in text.split(RegExp(r'\n+'))) {
     final trimmed = paragraph.trim();
     if (trimmed.isEmpty) continue;
-    const maxChars = 360;
-    const overlap = 40;
     if (trimmed.length <= maxChars) {
       chunks.add(trimmed);
       continue;
     }
-    var start = 0;
-    while (start < trimmed.length) {
-      final end = (start + maxChars).clamp(0, trimmed.length);
-      chunks.add(trimmed.substring(start, end).trim());
-      if (end >= trimmed.length) break;
-      start = end - overlap;
+
+    final sentences = _splitSentences(trimmed);
+    var current = <String>[];
+    var currentLength = 0;
+    for (final sentence in sentences) {
+      if (sentence.length > maxChars) {
+        // No sentence boundary nearby — hard-split the oversized sentence.
+        if (current.isNotEmpty) {
+          chunks.add(current.join(' '));
+          current = <String>[];
+          currentLength = 0;
+        }
+        for (var start = 0; start < sentence.length; start += maxChars) {
+          final end = (start + maxChars).clamp(0, sentence.length);
+          chunks.add(sentence.substring(start, end).trim());
+        }
+        continue;
+      }
+      final addLength = sentence.length + (current.isEmpty ? 0 : 1);
+      if (current.isNotEmpty && currentLength + addLength > maxChars) {
+        chunks.add(current.join(' '));
+        current = [sentence];
+        currentLength = sentence.length;
+      } else {
+        current.add(sentence);
+        currentLength += addLength;
+      }
     }
+    if (current.isNotEmpty) chunks.add(current.join(' '));
   }
   return chunks;
+}
+
+/// Splits text on Chinese/English sentence terminators, keeping the
+/// terminator attached to its sentence.
+List<String> _splitSentences(String text) {
+  final sentences = <String>[];
+  var start = 0;
+  for (final match in RegExp(r'[。！？!?\.]+').allMatches(text)) {
+    final sentence = text.substring(start, match.end).trim();
+    if (sentence.isNotEmpty) sentences.add(sentence);
+    start = match.end;
+  }
+  final tail = text.substring(start).trim();
+  if (tail.isNotEmpty) sentences.add(tail);
+  return sentences;
 }
 
 double _score(String text, Set<String> queryTerms, String normalizedQuery) {

@@ -1,4 +1,4 @@
-Knowledge base context:
+知识库上下文（[n] 是文章编号，每篇包含标题与若干摘要/要点片段）：
 {{context}}
 ---
-Question: {{question}}
+问题：{{question}}

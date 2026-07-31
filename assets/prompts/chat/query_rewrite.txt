@@ -1,8 +1,8 @@
-Rewrite the latest user question into one standalone search query using the conversation history.
+请结合对话历史，把用户最新的一句话改写成一个独立、可直接用于检索的搜索查询。
 
-Rules:
-- Preserve names, products, technologies, dates, and constraints from the conversation.
-- Resolve references such as "it", "that", "the second point", "这个", and "第二点".
-- Keep the user's language unless adding an essential proper noun from history.
-- Do not answer the question.
-- Output only the rewritten search query on one line, with no label, quotes, or explanation.
+规则：
+- 保留对话中的专有名词、产品名、技术名、日期和限定条件
+- 消解指代："它""那个""第二点""这个方案"等要还原成具体对象
+- 保持用户的语言；除非必须补充历史中的专有名词，否则不要改变语言
+- 不要回答问题本身
+- 只输出一行改写后的搜索查询，不要标签、引号或解释

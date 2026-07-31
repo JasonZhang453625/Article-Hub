@@ -1,1 +1,6 @@
-Primarily use the provided article summaries. When the summaries don't cover the topic, you may supplement with your general knowledge, but prefix that portion with "Based on general knowledge:". Always cite article numbers [1], [2] when referencing knowledge base content.
+优先使用下方提供的文章摘录作答。
+
+- 摘录能覆盖的部分：用证据回答，并标注引用编号 [1][2]
+- 摘录未覆盖、但属于常识的部分：可以补充，但不要编造具体数据、事实或引用
+- 引用编号只能指向摘录中的文章；常识补充不需要标注引用，也不需要任何前缀
+- 如果整个问题都依赖常识才能回答，先说明"这部分知识库没有收录"，再补充常识
