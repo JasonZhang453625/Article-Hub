@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/folder.dart';
 import '../../data/services/backup_service.dart';
 import '../../data/services/content_extractor.dart';
+import '../../data/services/image_understanding_service.dart';
 import '../../data/services/metadata_service.dart';
 import '../../data/services/processing_queue.dart';
 import '../../data/services/processing_pipeline.dart';
@@ -12,6 +13,18 @@ import 'folder_providers.dart';
 import 'ai_providers.dart';
 import 'page_loader_provider.dart';
 import 'settings_providers.dart';
+import 'auth_provider.dart';
+
+final imageUnderstandingServiceProvider = Provider<ImageUnderstandingService>((
+  ref,
+) {
+  final service = ImageUnderstandingService(
+    getSession: () => ref.read(currentSessionProvider),
+    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+  );
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
   final articles = ref.read(articlesProvider.notifier);
@@ -28,6 +41,7 @@ final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
     extractor: ContentExtractor(loader: pageLoader, ownsLoader: false),
     embedding: embedding,
     index: index,
+    imageUnderstanding: ref.read(imageUnderstandingServiceProvider),
     createFolder: (name) async {
       final folder = Folder(id: const Uuid().v4(), name: name);
       await ref.read(foldersProvider.notifier).add(folder);
@@ -50,7 +64,12 @@ final processingQueueProvider = Provider<ProcessingQueue>((ref) {
     save: articles.update,
     process: (article) => ref.read(processingPipelineProvider).resume(article),
     canProcess: (article) {
-      if (article.isFullText) return true;
+      if (article.isLocalImage) {
+        if (ref.read(currentSessionProvider) == null) return false;
+        if (article.isFullText) return true;
+      } else if (article.isFullText) {
+        return true;
+      }
       final settings = ref.read(settingsProvider).valueOrNull;
       return settings != null &&
           settings.aiBaseUrl.trim().isNotEmpty &&
@@ -62,6 +81,9 @@ final processingQueueProvider = Provider<ProcessingQueue>((ref) {
     if (next.valueOrNull != null) queue.resume();
   }, fireImmediately: true);
   ref.listen(settingsProvider, (_, next) {
+    if (next.valueOrNull != null) queue.resume();
+  }, fireImmediately: true);
+  ref.listen(authControllerProvider, (_, next) {
     if (next.valueOrNull != null) queue.resume();
   }, fireImmediately: true);
   return queue;

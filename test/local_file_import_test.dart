@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/services/attachment_store.dart';
+import 'package:memora/data/services/local_file_importer.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 
@@ -11,6 +12,14 @@ void main() {
       expect(isImagePath('x.PNG'), isTrue);
       expect(isImageMime('image/jpeg'), isTrue);
       expect(isPdfPath('x.jpg'), isFalse);
+    });
+
+    test('local importer does not run image recognition locally', () async {
+      final importer = LocalFileImporter();
+      await expectLater(
+        importer.extractContent('x.png', 'image/png'),
+        throwsA(isA<StateError>()),
+      );
     });
   });
 

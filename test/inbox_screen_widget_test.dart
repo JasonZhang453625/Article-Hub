@@ -45,17 +45,16 @@ void main() {
     ProcessingStage? stage,
     String? error,
     int retryCount = 0,
-  }) =>
-      Article(
-        id: id,
-        url: 'https://example.com/$id',
-        title: 'Article $id',
-        source: SourcePlatform.web,
-        processingStatus: status,
-        processingStage: stage,
-        processingError: error,
-        retryCount: retryCount,
-      );
+  }) => Article(
+    id: id,
+    url: 'https://example.com/$id',
+    title: 'Article $id',
+    source: SourcePlatform.web,
+    processingStatus: status,
+    processingStage: stage,
+    processingError: error,
+    retryCount: retryCount,
+  );
 
   testWidgets('empty inbox shows the empty state', (tester) async {
     await pumpInbox(tester, articles: []);
@@ -69,9 +68,7 @@ void main() {
   testWidgets('completed articles are not shown in the inbox', (tester) async {
     await pumpInbox(
       tester,
-      articles: [
-        seed(id: 'done', status: ProcessingStatus.completed),
-      ],
+      articles: [seed(id: 'done', status: ProcessingStatus.completed)],
     );
     // Completed articles live in Library; they must not surface in Inbox.
     expect(find.text('No memories in progress'), findsOneWidget);
@@ -96,21 +93,38 @@ void main() {
     expect(find.byIcon(Icons.refresh_rounded), findsNothing);
   });
 
-  testWidgets('pending article appears under the Waiting section',
-      (tester) async {
+  testWidgets('pending article appears under the Waiting section', (
+    tester,
+  ) async {
     await pumpInbox(
       tester,
-      articles: [
-        seed(id: 'q1', status: ProcessingStatus.pending),
-      ],
+      articles: [seed(id: 'q1', status: ProcessingStatus.pending)],
     );
     expect(find.text('Waiting'), findsOneWidget);
     expect(find.text('Queued'), findsOneWidget);
     expect(find.byIcon(Icons.refresh_rounded), findsNothing);
   });
 
-  testWidgets('failed article shows the error and exposes a retry button',
-      (tester) async {
+  testWidgets('image job exposes the image-understanding stage', (
+    tester,
+  ) async {
+    await pumpInbox(
+      tester,
+      articles: [
+        seed(
+          id: 'image-1',
+          status: ProcessingStatus.processing,
+          stage: ProcessingStage.imageUnderstanding,
+        ),
+      ],
+    );
+    expect(find.text('Processing'), findsOneWidget);
+    expect(find.text('Understanding images'), findsOneWidget);
+  });
+
+  testWidgets('failed article shows the error and exposes a retry button', (
+    tester,
+  ) async {
     await pumpInbox(
       tester,
       articles: [
@@ -128,17 +142,14 @@ void main() {
     expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
   });
 
-  testWidgets('mixed inbox renders Processing, Waiting and Failed sections',
-      (tester) async {
+  testWidgets('mixed inbox renders Processing, Waiting and Failed sections', (
+    tester,
+  ) async {
     await pumpInbox(
       tester,
       articles: [
         seed(id: 'q1', status: ProcessingStatus.pending),
-        seed(
-          id: 'f1',
-          status: ProcessingStatus.failed,
-          error: 'content: 500',
-        ),
+        seed(id: 'f1', status: ProcessingStatus.failed, error: 'content: 500'),
         // Completed should still be filtered out.
         seed(id: 'done', status: ProcessingStatus.completed),
       ],
@@ -158,8 +169,9 @@ class _InMemoryArticleRepository implements ArticleRepository {
   Future<void> init() async {}
 
   @override
-  List<Article> getAll() => List<Article>.of(_articles)
-    ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  List<Article> getAll() =>
+      List<Article>.of(_articles)
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
   @override
   Article? getById(String id) {
@@ -197,5 +209,3 @@ class _InMemoryArticleRepository implements ArticleRepository {
   @override
   Future<void> unsetFolderBatch(String folderId) async {}
 }
-
-

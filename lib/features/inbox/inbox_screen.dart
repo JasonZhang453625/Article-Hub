@@ -107,6 +107,8 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
         return s.suggestingFolder;
       case ProcessingStage.indexing:
         return s.indexing;
+      case ProcessingStage.imageUnderstanding:
+        return s.understandingImages;
       default:
         return s.processing;
     }

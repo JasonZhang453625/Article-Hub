@@ -20,8 +20,12 @@ class ChatInputBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: EdgeInsets.only(
-        left: 16, right: 8, top: 8,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+        left: 16,
+        right: 8,
+        top: 8,
+        // Scaffold's resize-to-avoid-inset already lifts this bar above the
+        // keyboard; keep only safe-area clearance (home indicator).
+        bottom: MediaQuery.of(context).padding.bottom + 8,
       ),
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
@@ -39,8 +43,11 @@ class ChatInputBar extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: controller,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => onSend(),
+                  // Auto-growing input: single line initially, expands up to
+                  // 5 lines as the user types, then scrolls internally.
+                  minLines: 1,
+                  maxLines: 5,
+                  keyboardType: TextInputType.multiline,
                   decoration: InputDecoration(
                     hintText: s.askHint,
                     border: OutlineInputBorder(

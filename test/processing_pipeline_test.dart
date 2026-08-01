@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,11 +7,16 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:memora/data/models/folder.dart';
+import 'package:memora/data/models/article_attachment.dart';
+import 'package:memora/data/models/image_understanding_document.dart';
+import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/data/services/content_extractor.dart';
+import 'package:memora/data/services/attachment_store.dart';
+import 'package:memora/data/services/image_understanding_service.dart';
 import 'package:memora/data/services/http_client.dart';
 import 'package:memora/data/services/metadata_service.dart';
 import 'package:memora/data/services/processing_pipeline.dart';
@@ -458,6 +464,101 @@ void main() {
       loader.dispose();
     });
   });
+
+  group('Image understanding stage', () {
+    test(
+      'full-text image memory persists result and reuses it on retry',
+      () async {
+        final temp = await Directory.systemTemp.createTemp(
+          'memora-pipeline-image-',
+        );
+        final image = File('${temp.path}/image.jpg');
+        await image.writeAsBytes([1, 2, 3, 4]);
+        final attachment = _imageAttachment(image.path);
+        final article = Article(
+          id: 'image-full-text',
+          url: 'local-images://image-full-text',
+          title: 'Image',
+          source: SourcePlatform.local,
+          attachments: [attachment],
+          isFullText: true,
+          processingStatus: ProcessingStatus.pending,
+        );
+        final notifier = await seedAndGetNotifier(article);
+        final gateway = _FakeImageUnderstandingGateway();
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => null,
+          getFolders: () => const <Folder>[],
+          imageUnderstanding: gateway,
+          attachmentStore: _FakeAttachmentStore(image),
+        );
+
+        try {
+          final first = await pipeline.processImages(article);
+          expect(first, isNotNull);
+          expect(first!.processingStatus, ProcessingStatus.completed);
+          expect(first.memory?.kind, MemoryKind.fullText);
+          expect(first.memory?.body, contains('完整图片内容'));
+          expect(first.memory?.generation?.method, 'image_understanding');
+          expect(first.imageUnderstanding?.requestId, 'request-1');
+          expect(gateway.calls, 1);
+
+          final second = await pipeline.processImages(first);
+          expect(second?.processingStatus, ProcessingStatus.completed);
+          expect(gateway.calls, 1);
+        } finally {
+          pipeline.dispose();
+          await temp.delete(recursive: true);
+        }
+      },
+    );
+
+    test(
+      'AI-memory failure keeps understanding result for later retry',
+      () async {
+        final temp = await Directory.systemTemp.createTemp(
+          'memora-pipeline-image-',
+        );
+        final image = File('${temp.path}/image.jpg');
+        await image.writeAsBytes([1, 2, 3, 4]);
+        final attachment = _imageAttachment(image.path);
+        final article = Article(
+          id: 'image-ai-memory',
+          url: 'local-images://image-ai-memory',
+          title: 'Image',
+          source: SourcePlatform.local,
+          attachments: [attachment],
+          processingStatus: ProcessingStatus.pending,
+        );
+        final notifier = await seedAndGetNotifier(article);
+        final gateway = _FakeImageUnderstandingGateway();
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => null,
+          getFolders: () => const <Folder>[],
+          imageUnderstanding: gateway,
+          attachmentStore: _FakeAttachmentStore(image),
+        );
+
+        try {
+          final first = await pipeline.processImages(article);
+          expect(first?.processingStatus, ProcessingStatus.failed);
+          expect(first?.processingError, startsWith('summary:'));
+          expect(first?.imageUnderstanding?.requestId, 'request-1');
+          expect(gateway.calls, 1);
+
+          final retried = await pipeline.retry(first!);
+          expect(retried?.processingStatus, ProcessingStatus.failed);
+          expect(retried?.imageUnderstanding?.requestId, 'request-1');
+          expect(gateway.calls, 1);
+        } finally {
+          pipeline.dispose();
+          await temp.delete(recursive: true);
+        }
+      },
+    );
+  });
 }
 
 /// Tiny in-memory [ArticleRepository] for service-level tests — no Hive.
@@ -557,5 +658,65 @@ class _CountingPageLoader implements PageLoader {
   @override
   void dispose() {
     disposed = true;
+  }
+}
+
+ArticleAttachment _imageAttachment(String path) {
+  return ArticleAttachment(
+    id: 'attachment-1',
+    order: 0,
+    localPath: path,
+    mimeType: 'image/jpeg',
+    originalFileName: 'image.jpg',
+    byteLength: 4,
+    sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  );
+}
+
+class _FakeAttachmentStore extends AttachmentStore {
+  final File file;
+
+  _FakeAttachmentStore(this.file);
+
+  @override
+  Future<File?> resolve(String? relativePath) async => file;
+}
+
+class _FakeImageUnderstandingGateway implements ImageUnderstandingGateway {
+  int calls = 0;
+
+  @override
+  Future<ImageUnderstandingDocument> understand({
+    required String articleId,
+    required List<ImageUnderstandingUpload> images,
+    required String locale,
+  }) async {
+    calls++;
+    final attachment = images.single.attachment;
+    return ImageUnderstandingDocument(
+      requestId: 'request-1',
+      provider: 'sensenova',
+      model: 'sensenova-6.7-flash-lite',
+      promptVersion: imageUnderstandingPromptVersion,
+      generatedAt: DateTime.utc(2026, 8, 1),
+      sourceImages: [
+        ImageUnderstandingSourceImage(
+          attachmentId: attachment.id,
+          order: attachment.order,
+          sha256: attachment.sha256,
+        ),
+      ],
+      suggestedTitle: '',
+      documentType: 'screenshot',
+      pages: [
+        ImageUnderstandingPage(
+          attachmentId: attachment.id,
+          order: attachment.order,
+          transcriptionMarkdown: '完整图片内容',
+          visualDescription: 'Screenshot',
+        ),
+      ],
+      combinedMarkdown: '# 图片转写\n\n完整图片内容',
+    );
   }
 }

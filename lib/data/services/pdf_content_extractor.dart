@@ -3,24 +3,15 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:pdfrx/pdfrx.dart';
 
-import 'ocr_service.dart';
-
 /// Extract plain text from a PDF via PDFium (pdfrx).
 ///
-/// Strategy:
-/// 1. Prefer digital text layer
-/// 2. If too short, render pages and OCR with [OcrService] (scan PDFs)
+/// Only the embedded digital text layer is read. Scanned PDFs intentionally
+/// return no usable text until remote image recognition is configured.
 class PdfContentExtractor {
   static const minUsableChars = 100;
-  static const maxOcrPages = 30;
-  static const ocrMaxSide = 1280;
   static const thumbMaxSide = 256;
 
-  final OcrService? _ocr;
-
-  PdfContentExtractor({OcrService? ocr}) : _ocr = ocr;
-
-  /// Open [path] and extract text (text layer first, OCR fallback).
+  /// Open [path] and extract its embedded text layer.
   Future<String> extractText(
     String path, {
     void Function(String stage, double? progress)? onProgress,
@@ -31,25 +22,8 @@ class PdfContentExtractor {
     try {
       onProgress?.call('text_layer', 0.1);
       final layered = await _extractTextLayer(doc);
-      if (isUsable(layered)) {
-        onProgress?.call('ready', 1);
-        return layered;
-      }
-
-      final ocr = _ocr;
-      if (ocr == null) {
-        onProgress?.call('ready', 1);
-        return layered;
-      }
-
-      onProgress?.call('ocr', 0.15);
-      final scanned = await _extractViaOcr(
-        doc,
-        ocr,
-        onProgress: onProgress,
-      );
       onProgress?.call('ready', 1);
-      return isUsable(scanned) ? scanned : layered;
+      return layered;
     } finally {
       await doc.dispose();
     }
@@ -87,36 +61,6 @@ class PdfContentExtractor {
     return _clean(buffer.toString());
   }
 
-  Future<String> _extractViaOcr(
-    PdfDocument doc,
-    OcrService ocr, {
-    void Function(String stage, double? progress)? onProgress,
-  }) async {
-    final pageCount = doc.pages.length;
-    final limit = pageCount > maxOcrPages ? maxOcrPages : pageCount;
-    final buffer = StringBuffer();
-
-    for (var i = 0; i < limit; i++) {
-      final page = doc.pages[i];
-      onProgress?.call(
-        'ocr',
-        0.15 + 0.8 * ((i + 1) / limit),
-      );
-      final rendered = await _renderPage(page, maxSide: ocrMaxSide);
-      if (rendered == null) continue;
-      try {
-        final image = _bgraToImage(rendered);
-        final text = await ocr.recognizeImage(image);
-        if (text.trim().isEmpty) continue;
-        if (buffer.isNotEmpty) buffer.writeln();
-        buffer.writeln(text.trim());
-      } finally {
-        rendered.dispose();
-      }
-    }
-    return _clean(buffer.toString());
-  }
-
   Future<PdfImage?> _renderPage(PdfPage page, {required int maxSide}) async {
     final w = page.width;
     final h = page.height;
@@ -124,10 +68,7 @@ class PdfContentExtractor {
     final scale = maxSide / (w > h ? w : h);
     final fullWidth = (w * scale).clamp(32.0, 4096.0);
     final fullHeight = (h * scale).clamp(32.0, 4096.0);
-    return page.render(
-      fullWidth: fullWidth,
-      fullHeight: fullHeight,
-    );
+    return page.render(fullWidth: fullWidth, fullHeight: fullHeight);
   }
 
   img.Image _bgraToImage(PdfImage pdfImage) {

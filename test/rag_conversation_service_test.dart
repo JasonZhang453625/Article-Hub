@@ -187,6 +187,49 @@ void main() {
       expect(completionCalls, 0);
     },
   );
+
+  test(
+    'rejects a prompt that cannot fit the configured context window',
+    () async {
+      var completionCalls = 0;
+      final article = agentArticle();
+      final service = RagConversationService(
+        retrieve: (query, articles) async => RetrievalResult(
+          articles: [article],
+          method: RetrievalMethod.keyword,
+          duration: const Duration(milliseconds: 3),
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async {
+              completionCalls++;
+              return 'should not run';
+            },
+        saveLog: (_) async {},
+        promptService: _FakePromptService(),
+      );
+
+      final result = await service.ask(
+        RagConversationRequest(
+          question: 'A question that cannot fit',
+          articles: [article],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+          contextWindowTokens: 100,
+        ),
+      );
+
+      expect(result.outcome, RagConversationOutcome.error);
+      expect(result.error, contains('context window'));
+      expect(completionCalls, 0);
+    },
+  );
 }
 
 class _FakePromptService extends PromptService {

@@ -57,7 +57,9 @@ class SummaryScreen extends ConsumerWidget {
                     ),
                     FilledButton(
                       onPressed: () => Navigator.of(ctx).pop(true),
-                      style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
                       child: Text(s.delete),
                     ),
                   ],
@@ -101,155 +103,118 @@ class SummaryContent extends ConsumerWidget {
     final a = latest ?? article;
 
     return SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Source badge
-            Row(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: a.source.accentColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    a.source.icon,
-                    size: 16,
-                    color: a.source.accentColor,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${a.source.displayName}  ·  ${formatRelative(a.updatedAt)}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: isDark ? Colors.white54 : const Color(0xFF6C8594),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (a.isFavorite) ...[
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.star_rounded,
-                    color: Color(0xFFF5B301),
-                    size: 16,
-                  ),
-                ],
-              ],
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title
+          Text(
+            a.title,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              height: 1.3,
             ),
+          ),
 
-            const SizedBox(height: 16),
+          const SizedBox(height: 24),
 
-            // Title
-            Text(
-              a.title,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                height: 1.3,
-              ),
-            ),
+          // Summary section
+          _SummarySection(article: a, theme: theme, isDark: isDark),
 
-            const SizedBox(height: 24),
+          const SizedBox(height: 16),
 
-            // Summary section
-            _SummarySection(article: a, theme: theme, isDark: isDark),
-
-            const SizedBox(height: 16),
-
-            // Tags
-            if (a.tags.isNotEmpty) ...[
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: a.tags
-                    .map(
-                      (tag) => Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? Colors.white.withValues(alpha: 0.08)
-                              : const Color(0xFFF2F6F9),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          tag,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+          // Tags
+          if (a.tags.isNotEmpty) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: a.tags
+                  .map(
+                    (tag) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : const Color(0xFFF2F6F9),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        tag,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 16),
-            ],
+                    ),
+                  )
+                  .toList(),
+            ),
+            const SizedBox(height: 16),
+          ],
 
-            // Notes
-            if (a.notes.isNotEmpty) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.05)
-                      : const Color(0xFFF8FAFB),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  a.notes,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: isDark ? Colors.white70 : const Color(0xFF4A6B7C),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            // URL display
+          // Notes
+          if (a.notes.isNotEmpty) ...[
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: isDark
-                    ? Colors.white.withValues(alpha: 0.04)
-                    : const Color(0xFFF2F6F9),
-                borderRadius: BorderRadius.circular(12),
+                    ? Colors.white.withValues(alpha: 0.05)
+                    : const Color(0xFFF8FAFB),
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Text(
-                a.url,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: isDark ? Colors.white38 : const Color(0xFF98ADB8),
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-
-            const SizedBox(height: 32),
-
-            // Read Original button
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () {
-                  context.push(AppRoutes.readerWithId(a.id), extra: a);
-                },
-                icon: const Icon(Icons.chrome_reader_mode_rounded),
-                label: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(s.readOriginal),
+                a.notes,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: isDark ? Colors.white70 : const Color(0xFF4A6B7C),
                 ),
               ),
             ),
-
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
           ],
-        ),
+
+          // URL display
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.04)
+                  : const Color(0xFFF2F6F9),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              a.url,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: isDark ? Colors.white38 : const Color(0xFF98ADB8),
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+
+          const SizedBox(height: 32),
+
+          // Read Original button
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () {
+                context.push(AppRoutes.readerWithId(a.id), extra: a);
+              },
+              icon: const Icon(Icons.chrome_reader_mode_rounded),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(s.readOriginal),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
 }
@@ -306,7 +271,8 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
     final summary = widget.article.displayMemoryMarkdown;
     final aiConfigured = ref.watch(aiConfiguredProvider);
     final s = ref.watch(stringsProvider);
-    final pipelineGenerating = widget.article.processingStage == ProcessingStage.summary;
+    final pipelineGenerating =
+        widget.article.processingStage == ProcessingStage.summary;
     final regenerating = _isRegenerating() || pipelineGenerating;
 
     if (summary.isEmpty) {
@@ -398,7 +364,9 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
               const SizedBox(width: 8),
               Text(
                 widget.article.isFullText
-                    ? s.memoryLabelOriginal
+                    ? (widget.article.imageUnderstanding != null
+                          ? s.imageTranscriptionFullText
+                          : s.memoryLabelOriginal)
                     : s.memoryLabelAi,
                 style: theme.textTheme.labelLarge?.copyWith(
                   color: theme.colorScheme.primary,
@@ -456,6 +424,30 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
               listBullet: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
             ),
           ),
+          if (!widget.article.isFullText &&
+              widget.article.imageUnderstanding != null) ...[
+            const SizedBox(height: 12),
+            const Divider(),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 8),
+              title: Text(
+                s.imageTranscriptionFullText,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: MarkdownBody(
+                    data: widget.article.imageUnderstanding!.combinedMarkdown,
+                    selectable: true,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

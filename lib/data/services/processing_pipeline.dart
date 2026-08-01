@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io';
 import '../models/memory_document.dart';
 import '../models/passage.dart';
 import '../models/settings.dart';
@@ -7,9 +8,11 @@ import '../models/folder.dart';
 import '../../shared/providers/article_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import 'ai_service.dart';
+import 'attachment_store.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
 import 'index_service.dart';
+import 'image_understanding_service.dart';
 import 'local_file_importer.dart';
 import 'metadata_service.dart';
 
@@ -45,6 +48,8 @@ class ProcessingPipeline {
   final IndexService? _index;
   final Future<Folder?> Function(String name)? _createFolder;
   final PromptService _prompts;
+  final ImageUnderstandingGateway? _imageUnderstanding;
+  final AttachmentStore _attachments;
 
   /// Mutable — refreshed from getters at the start of each [process] call.
   AppSettings? _settings;
@@ -68,6 +73,8 @@ class ProcessingPipeline {
     IndexService? index,
     Future<Folder?> Function(String name)? createFolder,
     PromptService? promptService,
+    ImageUnderstandingGateway? imageUnderstanding,
+    AttachmentStore? attachmentStore,
   }) : _articles = articles,
        _getSettings = getSettings,
        _getFolders = getFolders,
@@ -76,7 +83,9 @@ class ProcessingPipeline {
        _embedding = embedding,
        _index = index,
        _createFolder = createFolder,
-       _prompts = promptService ?? PromptService();
+       _prompts = promptService ?? PromptService(),
+       _imageUnderstanding = imageUnderstanding,
+       _attachments = attachmentStore ?? AttachmentStore();
 
   /// Process a single article through all stages. Returns the final article.
   Future<Article?> process(Article article) async {
@@ -220,6 +229,9 @@ class ProcessingPipeline {
   /// extracted text intentionally are not. URL jobs therefore re-fetch their
   /// source; local attachments are re-extracted from the app-owned file.
   Future<Article?> resume(Article article) async {
+    if (article.isLocalImage) {
+      return processImages(article);
+    }
     if (article.isLocalAttachment && article.localFilePath != null) {
       return _resumeLocalAttachment(article);
     }
@@ -228,7 +240,7 @@ class ProcessingPipeline {
 
   /// Retry a failed article: bump retry count and re-run.
   ///
-  /// Local image/PDF articles re-extract content then re-enter [processFile].
+  /// Local PDF articles re-extract content then re-enter [processFile].
   /// URL articles re-run the full pipeline from scratch.
   Future<Article?> retry(Article article) async {
     final base = article.copyWith(
@@ -241,24 +253,26 @@ class ProcessingPipeline {
 
   Future<Article?> _resumeLocalAttachment(Article article) async {
     if (article.isLocalAttachment && article.localFilePath != null) {
+      if (!article.isLocalPdf) {
+        final failed = _fail(
+          article,
+          'content',
+          'Local image recognition is not configured',
+        );
+        await _articles.update(failed);
+        return failed;
+      }
       try {
         final importer = LocalFileImporter();
-        try {
-          final text = await importer.reExtract(article);
-          if (text.trim().isEmpty) {
-            final kind = article.isLocalPdf ? 'PDF' : 'image';
-            return _fail(
-              article,
-              'content',
-              article.isLocalPdf
-                  ? 'No extractable text in PDF (may be a scanned document)'
-                  : 'No text found in $kind',
-            );
-          }
-          return processFile(article, text, fullText: article.isFullText);
-        } finally {
-          await importer.dispose();
+        final text = await importer.reExtract(article);
+        if (text.trim().isEmpty) {
+          return _fail(
+            article,
+            'content',
+            'No extractable text in PDF (may be a scanned document)',
+          );
         }
+        return processFile(article, text, fullText: article.isFullText);
       } catch (e) {
         final failed = _fail(article, 'content', e);
         await _articles.update(failed);
@@ -268,15 +282,126 @@ class ProcessingPipeline {
     return article.isFullText ? processFullText(article) : process(article);
   }
 
+  /// Understands a durable ordered image set, persists the canonical result,
+  /// then feeds its Markdown projection into the existing text pipeline.
+  Future<Article?> processImages(Article article) async {
+    _settings = _getSettings();
+    _folders = List<Folder>.from(_getFolders());
+
+    var current = article.copyWith(
+      processingStatus: ProcessingStatus.processing,
+      processingStage: ProcessingStage.imageUnderstanding,
+      processingError: Article.clearValue,
+    );
+    await _articles.update(current);
+
+    final images =
+        current.attachments.where((attachment) => attachment.isImage).toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
+    if (images.isEmpty) {
+      final failed = _fail(
+        current,
+        'image_understanding',
+        'This legacy image has no upload fingerprint. Add it again to process it.',
+      );
+      await _articles.update(failed);
+      return failed;
+    }
+
+    var understanding = current.imageUnderstanding;
+    final canReuse =
+        understanding?.matchesAttachments(
+          images,
+          expectedPromptVersion: imageUnderstandingPromptVersion,
+        ) ??
+        false;
+    if (!canReuse) {
+      final gateway = _imageUnderstanding;
+      if (gateway == null) {
+        final failed = _fail(
+          current,
+          'image_understanding',
+          'Image understanding service is not configured',
+        );
+        await _articles.update(failed);
+        return failed;
+      }
+      try {
+        final uploads = <ImageUnderstandingUpload>[];
+        for (final attachment in images) {
+          final file = await _attachments.resolve(attachment.localPath);
+          if (file == null) {
+            throw StateError(
+              'Local image is unavailable: ${attachment.originalFileName}',
+            );
+          }
+          uploads.add(
+            ImageUnderstandingUpload(
+              attachment: attachment,
+              bytes: await File(file.path).readAsBytes(),
+            ),
+          );
+        }
+        understanding = await gateway.understand(
+          articleId: current.id,
+          images: uploads,
+          locale: _imageUnderstandingLocale(),
+        );
+        final suggestedTitle = understanding.suggestedTitle.trim();
+        current = current.copyWith(
+          title: current.title.trim().isEmpty && suggestedTitle.isNotEmpty
+              ? suggestedTitle
+              : current.title,
+          imageUnderstanding: understanding,
+        );
+        // This write is the retry boundary. Later stages must reuse it.
+        await _articles.update(current);
+      } catch (error) {
+        final failed = _fail(current, 'image_understanding', error);
+        await _articles.update(failed);
+        return failed;
+      }
+    }
+
+    final markdown = understanding?.combinedMarkdown.trim() ?? '';
+    if (markdown.isEmpty) {
+      final failed = _fail(
+        current,
+        'image_understanding',
+        'Image understanding returned no content',
+      );
+      await _articles.update(failed);
+      return failed;
+    }
+
+    return processFile(
+      current,
+      markdown,
+      fullText: current.isFullText,
+      fullTextFormat: 'markdown',
+      fullTextGeneration: current.isFullText
+          ? MemoryGeneration(
+              method: 'image_understanding',
+              provider: understanding!.provider,
+              model: understanding.model,
+              promptVersion: understanding.promptVersion,
+              generatedAt: understanding.generatedAt,
+            )
+          : null,
+    );
+  }
+
   /// Process a file-based article: skip metadata/content stages and inject
   /// [content] directly into the pipeline.
   ///
-  /// When [fullText] is true, store OCR/text body as the knowledge text
+  /// When [fullText] is true, store the extracted body as the knowledge text
   /// without AI summarization (still runs tags/folder if AI is configured).
   Future<Article?> processFile(
     Article article,
     String content, {
     bool fullText = false,
+    String? fullTextFormat,
+    MemoryGeneration? fullTextGeneration,
   }) async {
     _settings = _getSettings();
     _folders = List<Folder>.from(_getFolders());
@@ -290,13 +415,15 @@ class ProcessingPipeline {
         summary: Article.clearValue,
         memory: MemoryDocument.fullText(
           body: content,
-          format: article.localMimeType == 'text/markdown'
-              ? 'markdown'
-              : 'plain',
-          generation: MemoryGeneration(
-            method: 'full_text',
-            generatedAt: DateTime.now(),
-          ),
+          format:
+              fullTextFormat ??
+              (article.localMimeType == 'text/markdown' ? 'markdown' : 'plain'),
+          generation:
+              fullTextGeneration ??
+              MemoryGeneration(
+                method: 'full_text',
+                generatedAt: DateTime.now(),
+              ),
         ),
         isFullText: true,
       );
@@ -733,6 +860,10 @@ class ProcessingPipeline {
   String _providerLabel(String baseUrl) {
     final host = Uri.tryParse(baseUrl)?.host.trim();
     return host == null || host.isEmpty ? 'openai-compatible' : host;
+  }
+
+  String _imageUnderstandingLocale() {
+    return _settings?.languageIndex == 2 ? 'en-US' : 'zh-CN';
   }
 
   void dispose() {

@@ -46,7 +46,7 @@ void main() {
 
     final json = article.toJson();
 
-    expect(json['schemaVersion'], 1);
+    expect(json['schemaVersion'], 2);
     expect(json['source'], isA<Map>());
     expect((json['source'] as Map)['platform'], 'web');
     expect((json['memory'] as Map)['kind'], 'ai_memory');

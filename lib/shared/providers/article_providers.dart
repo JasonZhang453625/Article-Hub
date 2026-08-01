@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
+import '../../data/models/chat_message_record.dart';
+import '../../data/models/chat_thread.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/memory_document.dart';
 import '../../data/models/settings.dart';
@@ -36,6 +38,12 @@ final hiveInitProvider = FutureProvider<void>((ref) async {
   }
   if (!Hive.isAdapterRegistered(IndexRecordAdapter().typeId)) {
     Hive.registerAdapter(IndexRecordAdapter());
+  }
+  if (!Hive.isAdapterRegistered(ChatThread.typeId)) {
+    Hive.registerAdapter(ChatThreadAdapter());
+  }
+  if (!Hive.isAdapterRegistered(ChatMessageRecord.typeId)) {
+    Hive.registerAdapter(ChatMessageRecordAdapter());
   }
 });
 

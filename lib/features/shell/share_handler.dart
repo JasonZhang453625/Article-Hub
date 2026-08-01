@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../shared/providers/pipeline_provider.dart';
+import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -18,6 +19,7 @@ import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/snackbar_helpers.dart';
 import '../../data/services/attachment_store.dart';
 import '../../data/services/local_file_importer.dart';
+import '../../data/services/local_image_importer.dart';
 import 'share_save_sheet.dart';
 
 /// Handles share intents (URLs, backup files) received from other apps.
@@ -93,18 +95,38 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
       }
     }
 
-    // Prefer local image/PDF files for import.
+    // Prefer local PDF files for import.
     for (final file in media) {
       final path = file.path;
       final mime = file.mimeType;
-      final looksImage =
-          (mime != null && mime.startsWith('image/')) || isImagePath(path);
       final looksPdf =
           (mime != null && mime == 'application/pdf') || isPdfPath(path);
-      if (!looksImage && !looksPdf) continue;
+      if (!looksPdf) continue;
       // Skip if path is actually a URL string.
       if (path.startsWith('http://') || path.startsWith('https://')) continue;
-      await _saveSharedLocalFile(path, isPdf: looksPdf);
+      await _saveSharedPdf(path);
+      return;
+    }
+
+    final sharedImages = <LocalImageCandidate>[];
+    for (final file in media) {
+      final path = file.path;
+      if (path.startsWith('http://') || path.startsWith('https://')) continue;
+      final mime = (file.mimeType ?? mimeFromPath(path))?.toLowerCase();
+      if (mime == null ||
+          !supportedImageUnderstandingMimeTypes.contains(mime)) {
+        continue;
+      }
+      sharedImages.add(
+        LocalImageCandidate(
+          path: path,
+          fileName: path.replaceAll('\\', '/').split('/').last,
+          mimeType: mime,
+        ),
+      );
+    }
+    if (sharedImages.isNotEmpty) {
+      await _saveSharedImages(sharedImages);
       return;
     }
 
@@ -112,31 +134,52 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     if (url != null) _promptSave(url);
   }
 
-  Future<void> _saveSharedLocalFile(String path, {required bool isPdf}) async {
+  Future<void> _saveSharedImages(List<LocalImageCandidate> images) async {
+    if (!mounted || _sheetOpen) return;
+    final s = ref.read(stringsProvider);
+    final selected = images.take(maxImagesPerMemory).toList();
+    if (images.length > maxImagesPerMemory) {
+      showAppSnackBar(context, message: s.imageSelectionLimit);
+    }
+    _sheetOpen = true;
+    try {
+      final result = await ShareSaveSheet.showImages(context, selected.length);
+      if (result == null || !mounted) return;
+      final prepared = await LocalImageImporter().prepare(
+        images: selected,
+        notes: result.notes,
+        fullText: result.mode == ShareSaveMode.fullText,
+        processImages: ref.read(currentSessionProvider) != null,
+      );
+      await ref.read(articlesProvider.notifier).add(prepared);
+      if (mounted) showAppSnackBar(context, message: s.savedProcessing);
+    } catch (error) {
+      if (mounted) {
+        showAppSnackBar(context, message: '${s.fileReadError}: $error');
+      }
+    } finally {
+      _sheetOpen = false;
+    }
+  }
+
+  Future<void> _saveSharedPdf(String path) async {
     if (!mounted) return;
     final s = ref.read(stringsProvider);
     if (_sheetOpen) return;
     _sheetOpen = true;
     try {
-      showAppSnackBar(context, message: isPdf ? s.pdfExtracting : s.ocrRunning);
+      showAppSnackBar(context, message: s.pdfExtracting);
       final importer = LocalFileImporter();
-      try {
-        final prepared = await importer.prepare(sourcePath: path);
-        if (prepared.content.trim().isEmpty) {
-          if (mounted) {
-            showAppSnackBar(
-              context,
-              message: isPdf ? s.pdfNoTextFound : s.ocrNoTextFound,
-            );
-          }
-          return;
+      final prepared = await importer.prepare(sourcePath: path);
+      if (prepared.content.trim().isEmpty) {
+        if (mounted) {
+          showAppSnackBar(context, message: s.pdfNoTextFound);
         }
-        await ref.read(articlesProvider.notifier).add(prepared.article);
-        if (!mounted) return;
-        showAppSnackBar(context, message: s.savedProcessing);
-      } finally {
-        await importer.dispose();
+        return;
       }
+      await ref.read(articlesProvider.notifier).add(prepared.article);
+      if (!mounted) return;
+      showAppSnackBar(context, message: s.savedProcessing);
     } catch (e) {
       if (mounted) {
         showAppSnackBar(context, message: '${s.fileReadError}: $e');

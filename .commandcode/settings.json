@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(C:UsersAdministrator.agentsskillsautoglm-browser-agentdependencymcporter.exe:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

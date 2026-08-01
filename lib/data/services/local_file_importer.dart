@@ -3,47 +3,37 @@ import 'package:uuid/uuid.dart';
 import '../models/passage.dart';
 import '../models/source_platform.dart';
 import 'attachment_store.dart';
-import 'ocr_service.dart';
 import 'pdf_content_extractor.dart';
 import 'processing_pipeline.dart';
 
-/// Result of preparing a local file import (image or PDF).
+/// Result of preparing a local PDF import.
 class LocalFileImportResult {
   final Article article;
   final String content;
 
-  const LocalFileImportResult({
-    required this.article,
-    required this.content,
-  });
+  const LocalFileImportResult({required this.article, required this.content});
 }
 
 /// Shared import path for manual pick + system share of local files.
 class LocalFileImporter {
   final AttachmentStore _attachments;
-  final OcrService _ocr;
   final PdfContentExtractor _pdf;
 
   factory LocalFileImporter({
     AttachmentStore? attachments,
-    OcrService? ocr,
     PdfContentExtractor? pdf,
   }) {
-    final ocrService = ocr ?? OcrService();
     return LocalFileImporter._(
       attachments: attachments ?? AttachmentStore(),
-      ocr: ocrService,
-      pdf: pdf ?? PdfContentExtractor(ocr: ocrService),
+      pdf: pdf ?? PdfContentExtractor(),
     );
   }
 
   LocalFileImporter._({
     required AttachmentStore attachments,
-    required OcrService ocr,
     required PdfContentExtractor pdf,
-  })  : _attachments = attachments,
-        _ocr = ocr,
-        _pdf = pdf;
+  }) : _attachments = attachments,
+       _pdf = pdf;
 
   /// Copy file into app storage, extract text, return a pending [Article].
   Future<LocalFileImportResult> prepare({
@@ -65,11 +55,7 @@ class LocalFileImporter {
     }
 
     final mime = mimeFromPath(sourcePath) ?? mimeFromPath(relative);
-    final content = await extractContent(
-      abs,
-      mime,
-      onProgress: onProgress,
-    );
+    final content = await extractContent(abs, mime, onProgress: onProgress);
     final baseTitle = (title != null && title.trim().isNotEmpty)
         ? title.trim()
         : _titleFromPath(sourcePath);
@@ -100,7 +86,7 @@ class LocalFileImporter {
       folderId: folderId,
       localFilePath: relative,
       localMimeType: mime,
-      // Local relative path; UI resolves via AttachmentStore for both image/PDF.
+      // Local relative path; UI resolves it via AttachmentStore.
       coverImageUrl: coverRelative,
       processingStatus: ProcessingStatus.pending,
     );
@@ -118,11 +104,7 @@ class LocalFileImporter {
     if (abs == null) {
       throw StateError('Local file missing for article ${article.id}');
     }
-    return extractContent(
-      abs,
-      article.localMimeType,
-      onProgress: onProgress,
-    );
+    return extractContent(abs, article.localMimeType, onProgress: onProgress);
   }
 
   Future<String> extractContent(
@@ -132,12 +114,6 @@ class LocalFileImporter {
   }) async {
     if (isPdfMime(mime) || isPdfPath(absPath)) {
       return _pdf.extractText(absPath, onProgress: onProgress);
-    }
-    if (isImageMime(mime) || isImagePath(absPath)) {
-      onProgress?.call('ocr', 0.2);
-      final text = await _ocr.recognizeImagePath(absPath);
-      onProgress?.call('ready', 1);
-      return text;
     }
     throw StateError('Unsupported local file type: $mime / $absPath');
   }
@@ -151,18 +127,8 @@ class LocalFileImporter {
     return pipeline.processFile(article, content, fullText: fullText);
   }
 
-  Future<void> dispose() => _ocr.dispose();
-
   String _titleFromPath(String path) {
     final name = path.replaceAll('\\', '/').split('/').last;
     return name.replaceAll(RegExp(r'\.[^.]+$'), '');
   }
 }
-
-/// Backward-compatible alias used by older call sites.
-@Deprecated('Use LocalFileImporter')
-typedef LocalImageImporter = LocalFileImporter;
-
-/// Backward-compatible alias for import result.
-@Deprecated('Use LocalFileImportResult')
-typedef LocalImageImportResult = LocalFileImportResult;

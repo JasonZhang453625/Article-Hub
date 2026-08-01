@@ -8,6 +8,19 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../config/backend_config.dart';
 
+final RegExp _uuidPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  caseSensitive: false,
+);
+
+String _normalizeAccessToken(String value) {
+  var token = value.trim();
+  token = token.replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), '');
+  token = token.trim();
+  if (token.isEmpty) throw const FormatException('Empty access token.');
+  return token;
+}
+
 class AuthService {
   static const String _boxName = 'auth_session';
   static const String _sessionKey = 'session';
@@ -25,11 +38,25 @@ class AuthService {
 
   bool get isAvailable => BackendConfig.isConfigured;
 
+  static bool isSessionRejected(AuthApiException error) {
+    return error.statusCode == 400 ||
+        error.statusCode == 401 ||
+        error.statusCode == 403 ||
+        error.message == 'Invalid server session response.';
+  }
+
   Future<AuthSession?> loadSession() async {
     final box = await _sessionBox();
     final raw = box.get(_sessionKey);
     if (raw is! Map) return null;
-    return AuthSession.fromJson(Map<String, dynamic>.from(raw));
+    try {
+      return AuthSession.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      // A session written by an older build must not poison every future
+      // startup. The user's articles remain in their other Hive boxes.
+      await box.delete(_sessionKey);
+      return null;
+    }
   }
 
   Future<void> sendOtp(String email) async {
@@ -72,6 +99,7 @@ class AuthService {
     _throwIfFailed(response);
 
     final session = AuthSession.fromJson(_decodeObject(response));
+    _ensureUsableSession(session);
     await _saveSession(session);
     return session;
   }
@@ -92,20 +120,33 @@ class AuthService {
       refreshToken: json['refreshToken'] as String,
       refreshTokenExpiresAt: json['refreshTokenExpiresAt'] as String?,
     );
+    _ensureUsableSession(refreshed);
     await _saveSession(refreshed);
     return refreshed;
   }
 
   Future<AuthSession?> getMe(AuthSession session) async {
-    final response = await _authorizedGet('/me', session);
+    var current = session;
+    // Avoid sending an obviously stale token from an older client build. A
+    // valid refresh token can still recover the session without a full login.
+    if (!current.hasValidAccessToken) {
+      current = await refresh(current);
+    }
+
+    final response = await _authorizedGet('/me', current);
     if (response.statusCode == 401) {
-      final refreshed = await refresh(session);
+      final refreshed = await refresh(current);
       final retry = await _authorizedGet('/me', refreshed);
       _throwIfFailed(retry);
       return _mergeMe(refreshed, _decodeObject(retry));
     }
     _throwIfFailed(response);
-    return _mergeMe(session, _decodeObject(response));
+    return _mergeMe(current, _decodeObject(response));
+  }
+
+  Future<void> clearLocalSession() async {
+    final box = await _sessionBox();
+    await box.delete(_sessionKey);
   }
 
   Future<void> signOut(AuthSession? session) async {
@@ -125,8 +166,7 @@ class AuthService {
         // Local sign-out should still succeed when the network is unavailable.
       }
     }
-    final box = await _sessionBox();
-    await box.delete(_sessionKey);
+    await clearLocalSession();
   }
 
   Future<void> _saveSession(AuthSession session) async {
@@ -180,6 +220,12 @@ class AuthService {
     throw AuthApiException(message, statusCode: response.statusCode);
   }
 
+  void _ensureUsableSession(AuthSession session) {
+    if (!session.hasValidAccessToken || session.refreshToken.isEmpty) {
+      throw const AuthApiException('Invalid server session response.');
+    }
+  }
+
   Future<_DeviceInfo> _deviceInfo() async {
     final package = await PackageInfo.fromPlatform();
     return _DeviceInfo(
@@ -229,9 +275,17 @@ class AuthSession {
   });
 
   factory AuthSession.fromJson(Map<String, dynamic> json) {
+    final rawAccessToken = json['accessToken'];
+    final rawRefreshToken = json['refreshToken'];
+    if (rawAccessToken is! String ||
+        rawRefreshToken is! String ||
+        rawRefreshToken.trim().isEmpty) {
+      throw const FormatException('Invalid auth session tokens.');
+    }
+
     return AuthSession(
-      accessToken: json['accessToken'] as String,
-      refreshToken: json['refreshToken'] as String,
+      accessToken: _normalizeAccessToken(rawAccessToken),
+      refreshToken: rawRefreshToken.trim(),
       refreshTokenExpiresAt: json['refreshTokenExpiresAt'] as String?,
       user: AuthUser.fromJson(Map<String, dynamic>.from(json['user'] as Map)),
       device: AuthDevice.fromJson(
@@ -258,13 +312,40 @@ class AuthSession {
     AuthDevice? device,
   }) {
     return AuthSession(
-      accessToken: accessToken ?? this.accessToken,
-      refreshToken: refreshToken ?? this.refreshToken,
+      accessToken: accessToken == null
+          ? this.accessToken
+          : _normalizeAccessToken(accessToken),
+      refreshToken: refreshToken == null
+          ? this.refreshToken
+          : refreshToken.trim(),
       refreshTokenExpiresAt:
           refreshTokenExpiresAt ?? this.refreshTokenExpiresAt,
       user: user ?? this.user,
       device: device ?? this.device,
     );
+  }
+
+  /// Checks only the JWT shape and the UUID claims required by the backend.
+  /// Signature verification remains the server's responsibility.
+  bool get hasValidAccessToken {
+    final parts = accessToken.split('.');
+    if (parts.length != 3) return false;
+
+    try {
+      final decoded = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+      );
+      if (decoded is! Map) return false;
+      final claims = Map<String, dynamic>.from(decoded);
+      final sessionId = claims['sessionId'];
+      final deviceId = claims['deviceId'];
+      return sessionId is String &&
+          deviceId is String &&
+          _uuidPattern.hasMatch(sessionId) &&
+          _uuidPattern.hasMatch(deviceId);
+    } catch (_) {
+      return false;
+    }
   }
 }
 

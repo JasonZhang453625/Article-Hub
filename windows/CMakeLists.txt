@@ -55,9 +55,6 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
-# Keep the desktop runtime aligned with flutter_onnxruntime's mobile runtime.
-# The plugin's Windows CMake fallback still defaults to 1.22.0.
-set(ONNXRUNTIME_VERSION "1.23.0" CACHE STRING "ONNX Runtime version" FORCE)
 include(flutter/generated_plugins.cmake)
 
 

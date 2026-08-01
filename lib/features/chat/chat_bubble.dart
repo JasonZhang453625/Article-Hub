@@ -105,6 +105,7 @@ class ChatBubble extends ConsumerWidget {
             message.text,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onPrimary,
+              fontSize: 16,
             ),
           ),
         ),
@@ -127,21 +128,27 @@ class ChatBubble extends ConsumerWidget {
                 styleSheet: MarkdownStyleSheet(
                   p: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurface,
+                    fontSize: 17,
+                    height: 1.5,
                   ),
                   strong: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurface,
                     fontWeight: FontWeight.w700,
+                    fontSize: 17,
+                    height: 1.5,
                   ),
                   em: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurface,
                     fontStyle: FontStyle.italic,
+                    fontSize: 17,
+                    height: 1.5,
                   ),
                   code: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurface,
                     backgroundColor:
                         theme.colorScheme.surfaceContainerHighest,
                     fontFamily: 'monospace',
-                    fontSize: 13,
+                    fontSize: 14,
                   ),
                   codeblockDecoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest,
@@ -152,6 +159,8 @@ class ChatBubble extends ConsumerWidget {
                   ),
                   blockquote: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    fontSize: 17,
+                    height: 1.5,
                   ),
                   blockquoteDecoration: BoxDecoration(
                     border: Border(
@@ -161,21 +170,28 @@ class ChatBubble extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  listBullet: theme.textTheme.bodyMedium?.copyWith(
+                  listBullet: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.onSurface,
+                    fontSize: 17,
                   ),
                   h1: theme.textTheme.titleLarge?.copyWith(
                     color: theme.colorScheme.onSurface,
                   ),
                   h2: theme.textTheme.titleMedium?.copyWith(
                     color: theme.colorScheme.onSurface,
+                    fontSize: 19,
+                    height: 1.4,
                   ),
                   h3: theme.textTheme.titleSmall?.copyWith(
                     color: theme.colorScheme.onSurface,
+                    fontSize: 17,
+                    height: 1.4,
                   ),
-                  a: theme.textTheme.bodyMedium?.copyWith(
+                  a: theme.textTheme.bodyLarge?.copyWith(
                     color: theme.colorScheme.primary,
                     decoration: TextDecoration.underline,
+                    fontSize: 17,
+                    height: 1.5,
                   ),
                 ),
               ),

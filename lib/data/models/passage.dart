@@ -1,4 +1,6 @@
 import 'package:hive/hive.dart';
+import 'article_attachment.dart';
+import 'image_understanding_document.dart';
 import 'memory_document.dart';
 import 'source_platform.dart';
 
@@ -11,6 +13,7 @@ enum ProcessingStage {
   tags,
   folderSuggestion,
   indexing,
+  imageUnderstanding,
 }
 
 class Article extends HiveObject {
@@ -36,6 +39,12 @@ class Article extends HiveObject {
   /// Canonical structured memory. Stored as a JSON-compatible map in Hive.
   MemoryDocument? memory;
 
+  /// Ordered app-owned image attachments. Stored as JSON-compatible maps.
+  List<ArticleAttachment> attachments;
+
+  /// Persisted visual understanding result, reusable across pipeline retries.
+  ImageUnderstandingDocument? imageUnderstanding;
+
   /// User feedback on the AI summary: `null` = not yet rated, `1` = upvote
   /// (helpful), `-1` = downvote (not helpful). Reset to null when the summary
   /// is regenerated, since the content changed and old feedback no longer
@@ -56,15 +65,34 @@ class Article extends HiveObject {
   /// (full-text save), false when it is an AI-generated summary.
   bool isFullText;
 
-  bool get isLocalImage =>
-      localMimeType != null &&
-      localMimeType!.toLowerCase().startsWith('image/');
+  List<ArticleAttachment> get imageAttachments {
+    final images =
+        attachments.where((attachment) => attachment.isImage).toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
+    if (images.isNotEmpty) return images;
+    final path = localFilePath;
+    final mimeType = localMimeType;
+    if (path != null &&
+        mimeType != null &&
+        mimeType.toLowerCase().startsWith('image/')) {
+      return [
+        ArticleAttachment.legacyImage(
+          articleId: id,
+          localPath: path,
+          mimeType: mimeType,
+        ),
+      ];
+    }
+    return const [];
+  }
+
+  bool get isLocalImage => imageAttachments.isNotEmpty;
 
   bool get isLocalPdf =>
       localMimeType != null &&
       localMimeType!.toLowerCase() == 'application/pdf';
 
-  bool get isLocalAttachment => localFilePath != null;
+  bool get isLocalAttachment => localFilePath != null || attachments.isNotEmpty;
 
   bool get hasMemory => retrievalText.trim().isNotEmpty;
 
@@ -94,6 +122,8 @@ class Article extends HiveObject {
     this.coverImageUrl,
     this.summary,
     this.memory,
+    this.attachments = const [],
+    this.imageUnderstanding,
     this.summaryFeedback,
     this.folderId,
     this.processingStatus = ProcessingStatus.completed,
@@ -133,6 +163,8 @@ class Article extends HiveObject {
     Object? coverImageUrl = _unset,
     Object? summary = _unset,
     Object? memory = _unset,
+    List<ArticleAttachment>? attachments,
+    Object? imageUnderstanding = _unset,
     Object? summaryFeedback = _unset,
     Object? folderId = _unset,
     ProcessingStatus? processingStatus,
@@ -166,6 +198,12 @@ class Article extends HiveObject {
       memory: identical(memory, _unset)
           ? this.memory
           : (identical(memory, clearValue) ? null : memory as MemoryDocument?),
+      attachments: attachments ?? this.attachments,
+      imageUnderstanding: identical(imageUnderstanding, _unset)
+          ? this.imageUnderstanding
+          : (identical(imageUnderstanding, clearValue)
+                ? null
+                : imageUnderstanding as ImageUnderstandingDocument?),
       summaryFeedback: identical(summaryFeedback, _unset)
           ? this.summaryFeedback
           : (identical(summaryFeedback, clearValue)
@@ -225,7 +263,7 @@ class Article extends HiveObject {
                   : MemoryDocument.legacyMarkdown(body: summary!))
             : null);
     return {
-      'schemaVersion': 1,
+      'schemaVersion': 2,
       'id': id,
       'title': title,
       'tags': tags,
@@ -236,8 +274,12 @@ class Article extends HiveObject {
         'coverImageUri': coverImageUrl,
         'mimeType': localMimeType,
         'localPath': localFilePath,
+        'attachments': attachments
+            .map((attachment) => attachment.toJson())
+            .toList(),
       },
       'memory': exportedMemory?.toContentJson(),
+      'imageUnderstanding': imageUnderstanding?.toJson(),
       'userState': {
         'notes': notes,
         'favorite': isFavorite,
@@ -267,6 +309,11 @@ class Article extends HiveObject {
     final processing = _mapOf(json['processing']);
     final generation = _mapOf(json['generation']);
     final memoryJson = _mapOf(json['memory']);
+    final rawAttachments = sourceJson?['attachments'] ?? json['attachments'];
+    final attachments = _attachmentsFromStored(rawAttachments);
+    final imageUnderstanding = _imageUnderstandingFromStored(
+      json['imageUnderstanding'],
+    );
     final url = json['url'] is String ? json['url'] : sourceJson?['uri'];
     if (id is! String || url is! String) {
       throw const FormatException('Article is missing required fields');
@@ -311,6 +358,8 @@ class Article extends HiveObject {
                 : null),
       summary: legacySummary,
       memory: memory,
+      attachments: attachments,
+      imageUnderstanding: imageUnderstanding,
       summaryFeedback: userState?['feedback'] is int
           ? userState!['feedback'] as int
           : (json['summaryFeedback'] is int
@@ -399,7 +448,7 @@ class ArticleAdapter extends TypeAdapter<Article> {
           ? ProcessingStatus.values[fields[13] as int]
           : ProcessingStatus.completed,
       processingStage: fields[14] is int
-          ? ProcessingStage.values[fields[14] as int]
+          ? processingStageFromStoredValue(fields[14])
           : null,
       processingError: fields[15] as String?,
       retryCount: fields[16] is int ? fields[16] as int : 0,
@@ -411,13 +460,15 @@ class ArticleAdapter extends TypeAdapter<Article> {
       memory: fields[22] is Map
           ? MemoryDocument.fromJson(fields[22] as Map)
           : null,
+      attachments: _attachmentsFromStored(fields[23]),
+      imageUnderstanding: _imageUnderstandingFromStored(fields[24]),
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(23)
+      ..writeByte(25)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -447,7 +498,11 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(13)
       ..write(obj.processingStatus.index)
       ..writeByte(14)
-      ..write(obj.processingStage?.index)
+      ..write(
+        obj.processingStage == null
+            ? null
+            : processingStageToStoredValue(obj.processingStage!),
+      )
       ..writeByte(15)
       ..write(obj.processingError)
       ..writeByte(16)
@@ -463,7 +518,11 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(21)
       ..write(obj.localMimeType)
       ..writeByte(22)
-      ..write(obj.memory?.toJson());
+      ..write(obj.memory?.toJson())
+      ..writeByte(23)
+      ..write(obj.attachments.map((attachment) => attachment.toJson()).toList())
+      ..writeByte(24)
+      ..write(obj.imageUnderstanding?.toJson());
   }
 }
 
@@ -500,15 +559,78 @@ ProcessingStatus _processingStatusFromJson(dynamic value) {
 }
 
 ProcessingStage? _processingStageFromJson(dynamic value) {
-  if (value is int && value >= 0 && value < ProcessingStage.values.length) {
-    return ProcessingStage.values[value];
-  }
+  if (value is int) return processingStageFromStoredValue(value);
   if (value is String) {
     for (final stage in ProcessingStage.values) {
       if (stage.name == value) return stage;
     }
   }
   return null;
+}
+
+int processingStageToStoredValue(ProcessingStage stage) {
+  switch (stage) {
+    case ProcessingStage.metadata:
+      return 0;
+    case ProcessingStage.content:
+      return 1;
+    case ProcessingStage.summary:
+      return 2;
+    case ProcessingStage.tags:
+      return 3;
+    case ProcessingStage.folderSuggestion:
+      return 4;
+    case ProcessingStage.indexing:
+      return 5;
+    case ProcessingStage.imageUnderstanding:
+      return 6;
+  }
+}
+
+ProcessingStage? processingStageFromStoredValue(dynamic value) {
+  switch (value) {
+    case 0:
+      return ProcessingStage.metadata;
+    case 1:
+      return ProcessingStage.content;
+    case 2:
+      return ProcessingStage.summary;
+    case 3:
+      return ProcessingStage.tags;
+    case 4:
+      return ProcessingStage.folderSuggestion;
+    case 5:
+      return ProcessingStage.indexing;
+    case 6:
+      return ProcessingStage.imageUnderstanding;
+    default:
+      return null;
+  }
+}
+
+List<ArticleAttachment> _attachmentsFromStored(dynamic value) {
+  final attachments = <ArticleAttachment>[];
+  for (final item in value is List ? value : const []) {
+    if (item is! Map) continue;
+    try {
+      attachments.add(ArticleAttachment.fromJson(item));
+    } on FormatException {
+      // A malformed optional attachment must not make the whole article
+      // unreadable. Upload validation will still reject incomplete entries.
+    }
+  }
+  attachments.sort((a, b) => a.order.compareTo(b.order));
+  return attachments;
+}
+
+ImageUnderstandingDocument? _imageUnderstandingFromStored(dynamic value) {
+  if (value is! Map) return null;
+  try {
+    return ImageUnderstandingDocument.fromJson(value);
+  } on FormatException {
+    // Preserve the article and let the pipeline regenerate an invalid result.
+    return null;
+  }
 }
 
 class SourcePlatformAdapter extends TypeAdapter<SourcePlatform> {

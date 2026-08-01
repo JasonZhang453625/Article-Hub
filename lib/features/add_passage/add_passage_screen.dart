@@ -9,8 +9,10 @@ import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/metadata_service.dart';
 import '../../data/services/local_file_importer.dart';
+import '../../data/services/local_image_importer.dart';
 import '../../data/services/attachment_store.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/file_content_utils.dart';
@@ -46,6 +48,8 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   String _lastFetchedUrl = '';
   String? _selectedFolderId;
   ShareSaveMode _saveMode = ShareSaveMode.aiMemory;
+  List<PlatformFile> _selectedImages = [];
+  bool _imagePrivacyAccepted = false;
 
   @override
   void initState() {
@@ -102,11 +106,35 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_selectedImages.isEmpty && !_formKey.currentState!.validate()) return;
     if (_saving) return;
     setState(() => _saving = true);
 
     try {
+      if (_selectedImages.isNotEmpty) {
+        final candidates = _selectedImages
+            .map(
+              (file) => LocalImageCandidate(
+                path: file.path!,
+                fileName: file.name,
+                mimeType: mimeFromPath(file.name)!,
+              ),
+            )
+            .toList();
+        final preparedImageArticle = await LocalImageImporter().prepare(
+          images: candidates,
+          title: _titleController.text,
+          notes: _notesController.text.trim(),
+          tags: _tags,
+          folderId: _selectedFolderId,
+          fullText: _saveMode == ShareSaveMode.fullText,
+          processImages: ref.read(currentSessionProvider) != null,
+        );
+        await ref.read(articlesProvider.notifier).add(preparedImageArticle);
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
       final cleanedUrl = cleanUrl(_urlController.text.trim());
       final title = _titleController.text.trim().isEmpty
           ? cleanedUrl
@@ -142,6 +170,78 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     }
   }
 
+  Future<void> _pickImages() async {
+    final s = ref.read(stringsProvider);
+    if (kIsWeb) {
+      showAppSnackBar(
+        context,
+        message: '${s.selectImages}: ${s.pdfNotSupportedOnWeb}',
+      );
+      return;
+    }
+    if (!_imagePrivacyAccepted) {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(s.selectImages),
+          content: Text(s.imagePrivacyNotice),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(s.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(s.add),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !mounted) return;
+      _imagePrivacyAccepted = true;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+      allowMultiple: true,
+    );
+    if (result == null || !mounted) return;
+    final existingPaths = _selectedImages.map((file) => file.path).toSet();
+    final additions = result.files
+        .where(
+          (file) => file.path != null && !existingPaths.contains(file.path),
+        )
+        .toList();
+    final available = maxImagesPerMemory - _selectedImages.length;
+    if (available <= 0) {
+      showAppSnackBar(context, message: s.imageSelectionLimit);
+      return;
+    }
+    if (additions.length > available) {
+      showAppSnackBar(context, message: s.imageSelectionLimit);
+    }
+    setState(() {
+      _selectedImages = [..._selectedImages, ...additions.take(available)];
+    });
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _selectedImages = [..._selectedImages]..removeAt(index);
+    });
+  }
+
+  void _reorderImages(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final reordered = [..._selectedImages];
+      final item = reordered.removeAt(oldIndex);
+      reordered.insert(newIndex, item);
+      _selectedImages = reordered;
+    });
+  }
+
   Future<void> _openBulkImport() async {
     final urls = await showModalBottomSheet<List<String>>(
       context: context,
@@ -172,17 +272,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const [
-          'txt',
-          'md',
-          'pdf',
-          'png',
-          'jpg',
-          'jpeg',
-          'webp',
-          'bmp',
-          'gif',
-        ],
+        allowedExtensions: const ['txt', 'md', 'pdf'],
       );
       if (result == null || result.files.isEmpty) return;
       final file = result.files.single;
@@ -190,58 +280,38 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
 
       final path = file.path!;
       final lower = file.name.toLowerCase();
-      final isImage =
-          lower.endsWith('.png') ||
-          lower.endsWith('.jpg') ||
-          lower.endsWith('.jpeg') ||
-          lower.endsWith('.webp') ||
-          lower.endsWith('.bmp') ||
-          lower.endsWith('.gif');
       final isPdf = lower.endsWith('.pdf');
 
       final notifier = ref.read(articlesProvider.notifier);
       final fullText = _saveMode == ShareSaveMode.fullText;
 
-      if (isImage || isPdf) {
+      if (isPdf) {
         if (kIsWeb) {
           if (mounted) {
-            showAppSnackBar(
-              context,
-              message: isPdf ? s.pdfNotSupportedOnWeb : s.ocrNotSupportedOnWeb,
-            );
+            showAppSnackBar(context, message: s.pdfNotSupportedOnWeb);
           }
           return;
         }
         if (mounted) {
-          showAppSnackBar(
-            context,
-            message: isPdf ? s.pdfExtracting : s.ocrRunning,
-          );
+          showAppSnackBar(context, message: s.pdfExtracting);
         }
         final importer = LocalFileImporter();
-        try {
-          final prepared = await importer.prepare(
-            sourcePath: path,
-            notes: _notesController.text.trim(),
-            folderId: _selectedFolderId,
-          );
-          if (prepared.content.trim().isEmpty) {
-            if (mounted) {
-              showAppSnackBar(
-                context,
-                message: isPdf ? s.pdfNoTextFound : s.ocrNoTextFound,
-              );
-            }
-            return;
-          }
-          await notifier.add(prepared.article.copyWith(isFullText: fullText));
+        final prepared = await importer.prepare(
+          sourcePath: path,
+          notes: _notesController.text.trim(),
+          folderId: _selectedFolderId,
+        );
+        if (prepared.content.trim().isEmpty) {
           if (mounted) {
-            Navigator.of(context).pop();
+            showAppSnackBar(context, message: s.pdfNoTextFound);
           }
-          // The application queue resumes the saved attachment from disk.
-        } finally {
-          await importer.dispose();
+          return;
         }
+        await notifier.add(prepared.article.copyWith(isFullText: fullText));
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        // The application queue resumes the saved attachment from disk.
         return;
       }
 
@@ -300,6 +370,11 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
         title: Text(s.addArticle),
         actions: [
           IconButton(
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            tooltip: s.selectImages,
+            onPressed: _saving ? null : _pickImages,
+          ),
+          IconButton(
             icon: const Icon(Icons.attach_file_rounded),
             tooltip: s.importFile,
             onPressed: _importFile,
@@ -319,15 +394,23 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              UrlInputField(
-                controller: _urlController,
-                onChanged: _onUrlChanged,
-                detectedPlatform: _detectedPlatform,
-                onPasteError: () {
-                  if (!mounted) return;
-                  showAppSnackBar(context, message: s.clipboardReadError);
-                },
-              ),
+              if (_selectedImages.isEmpty)
+                UrlInputField(
+                  controller: _urlController,
+                  onChanged: _onUrlChanged,
+                  detectedPlatform: _detectedPlatform,
+                  onPasteError: () {
+                    if (!mounted) return;
+                    showAppSnackBar(context, message: s.clipboardReadError);
+                  },
+                )
+              else
+                _SelectedImagesPanel(
+                  images: _selectedImages,
+                  onAdd: _pickImages,
+                  onRemove: _removeImage,
+                  onReorder: _reorderImages,
+                ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _titleController,
@@ -399,6 +482,151 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SelectedImagesPanel extends ConsumerWidget {
+  final List<PlatformFile> images;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
+  final void Function(int oldIndex, int newIndex) onReorder;
+
+  const _SelectedImagesPanel({
+    required this.images,
+    required this.onAdd,
+    required this.onRemove,
+    required this.onReorder,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.photo_library_outlined, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${s.selectImages}  ${images.length}/$maxImagesPerMemory',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: images.length >= maxImagesPerMemory ? null : onAdd,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: Text(s.add),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 112,
+            child: ReorderableListView.builder(
+              scrollDirection: Axis.horizontal,
+              buildDefaultDragHandles: false,
+              itemCount: images.length,
+              onReorder: onReorder,
+              proxyDecorator: (child, _, animation) => FadeTransition(
+                opacity: animation.drive(Tween(begin: 0.85, end: 1.0)),
+                child: Material(
+                  elevation: 6,
+                  borderRadius: BorderRadius.circular(14),
+                  child: child,
+                ),
+              ),
+              itemBuilder: (context, index) {
+                final image = images[index];
+                return Padding(
+                  key: ValueKey('${image.path}-${image.name}'),
+                  padding: const EdgeInsets.only(right: 10),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: Image.file(
+                            File(image.path!),
+                            width: 92,
+                            height: 104,
+                            fit: BoxFit.cover,
+                            cacheWidth: 276,
+                            errorBuilder: (_, _, _) => Container(
+                              width: 92,
+                              height: 104,
+                              color: theme.colorScheme.surfaceContainerHighest,
+                              child: const Icon(Icons.broken_image_outlined),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: -7,
+                        right: -7,
+                        child: IconButton.filled(
+                          onPressed: () => onRemove(index),
+                          icon: const Icon(Icons.close_rounded, size: 16),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(28, 28),
+                            maximumSize: const Size(28, 28),
+                            padding: EdgeInsets.zero,
+                            backgroundColor: theme.colorScheme.error,
+                            foregroundColor: theme.colorScheme.onError,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 6,
+                        bottom: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            s.imagePrivacyNotice,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }

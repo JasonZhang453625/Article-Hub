@@ -213,4 +213,46 @@ void main() {
       expect(ai.lastError, contains('structured memory'));
     },
   );
+
+  test('chat keeps system first and the latest user message last', () async {
+    late List<dynamic> messages;
+    final client = MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      messages = body['messages'] as List<dynamic>;
+      return http.Response(
+        jsonEncode({
+          'choices': [
+            {
+              'message': {'content': 'Current answer'},
+              'finish_reason': 'stop',
+            },
+          ],
+        }),
+        200,
+      );
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'test-model',
+    );
+
+    final result = await http.runWithClient(
+      () => ai.chat(
+        systemPrompt: 'System rules',
+        userMessage: 'Current question',
+        history: const [
+          {'role': 'user', 'content': 'Earlier question'},
+          {'role': 'assistant', 'content': 'Earlier answer'},
+        ],
+      ),
+      () => client,
+    );
+
+    expect(result, 'Current answer');
+    expect((messages.first as Map)['role'], 'system');
+    expect((messages.first as Map)['content'], 'System rules');
+    expect((messages.last as Map)['role'], 'user');
+    expect((messages.last as Map)['content'], 'Current question');
+  });
 }

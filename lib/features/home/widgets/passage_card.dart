@@ -153,7 +153,7 @@ class ArticleCard extends StatelessWidget {
   Widget _coverThumb(Article article) {
     // Local image body itself.
     if (article.isLocalImage) {
-      return _LocalThumb(path: article.localFilePath);
+      return _LocalThumb(path: article.imageAttachments.first.localPath);
     }
     // PDF cover saved as local relative path in coverImageUrl.
     final cover = article.coverImageUrl;
@@ -181,7 +181,6 @@ class ArticleCard extends StatelessWidget {
       child: const Icon(Icons.picture_as_pdf_rounded, size: 22),
     );
   }
-
 }
 
 class _LocalThumb extends StatefulWidget {

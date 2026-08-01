@@ -1,6 +1,9 @@
 import 'package:uuid/uuid.dart';
 
+export 'chat_context_window.dart' show ChatContextWindow, RagConversationTurn;
+
 import '../models/passage.dart';
+import 'chat_context_window.dart';
 import 'prompt_service.dart';
 import 'rag_citation.dart';
 import 'rag_context_builder.dart';
@@ -21,15 +24,6 @@ typedef RagCompletion =
 
 typedef RagSaveLog = Future<void> Function(RetrievalLog log);
 
-class RagConversationTurn {
-  final String role;
-  final String content;
-
-  const RagConversationTurn({required this.role, required this.content});
-
-  Map<String, String> toMessage() => {'role': role, 'content': content};
-}
-
 class RagConversationRequest {
   final String question;
   final List<RagConversationTurn> history;
@@ -38,6 +32,7 @@ class RagConversationRequest {
   final bool detailedAnswer;
   final String languageHint;
   final int contextTokenBudget;
+  final int contextWindowTokens;
 
   const RagConversationRequest({
     required this.question,
@@ -47,6 +42,7 @@ class RagConversationRequest {
     required this.detailedAnswer,
     required this.languageHint,
     this.contextTokenBudget = 2200,
+    this.contextWindowTokens = ChatContextWindow.defaultContextWindowTokens,
   });
 }
 
@@ -77,12 +73,15 @@ class RagConversationResult {
 class HistoryAwareQueryRewriter {
   final RagCompletion _complete;
   final PromptService _prompts;
+  final ChatContextWindow _contextWindow;
 
   const HistoryAwareQueryRewriter({
     required RagCompletion complete,
     required PromptService promptService,
+    ChatContextWindow contextWindow = const ChatContextWindow(),
   }) : _complete = complete,
-       _prompts = promptService;
+       _prompts = promptService,
+       _contextWindow = contextWindow;
 
   Future<String> rewrite({
     required String question,
@@ -93,9 +92,11 @@ class HistoryAwareQueryRewriter {
 
     try {
       final systemPrompt = await _prompts.load('chat/query_rewrite.txt');
-      final recent = history.length > 6
-          ? history.sublist(history.length - 6)
-          : history;
+      final recent = _contextWindow.selectRecentCompleteTurns(
+        history,
+        tokenBudget: 1200,
+      );
+      if (recent.isEmpty) return original;
       final transcript = recent
           .where((turn) => turn.content.trim().isNotEmpty)
           .map((turn) => '${turn.role}: ${turn.content.trim()}')
@@ -122,6 +123,7 @@ class RagConversationService {
   final RagSaveLog _saveLog;
   final PromptService _prompts;
   final RagContextBuilder _contextBuilder;
+  final ChatContextWindow _contextWindow;
   final HistoryAwareQueryRewriter _queryRewriter;
 
   RagConversationService({
@@ -130,17 +132,20 @@ class RagConversationService {
     required RagSaveLog saveLog,
     required PromptService promptService,
     RagContextBuilder contextBuilder = const RagContextBuilder(),
+    ChatContextWindow contextWindow = const ChatContextWindow(),
     HistoryAwareQueryRewriter? queryRewriter,
   }) : _retrieve = retrieve,
        _complete = complete,
        _saveLog = saveLog,
        _prompts = promptService,
        _contextBuilder = contextBuilder,
+       _contextWindow = contextWindow,
        _queryRewriter =
            queryRewriter ??
            HistoryAwareQueryRewriter(
              complete: complete,
              promptService: promptService,
+             contextWindow: contextWindow,
            );
 
   Future<RagConversationResult> ask(RagConversationRequest request) async {
@@ -185,12 +190,6 @@ class RagConversationService {
       );
     }
 
-    final context = _contextBuilder.build(
-      query: rewrittenQuery,
-      candidates: retrieval.articles,
-      tokenBudget: request.contextTokenBudget,
-    );
-
     try {
       final knowledgeRulePath = request.knowledgeOnly
           ? 'chat/knowledge_only.txt'
@@ -209,18 +208,59 @@ class RagConversationService {
             ? ''
             : '\n${request.languageHint}',
       });
+      final maxTokens = request.detailedAnswer ? 2500 : 1000;
+      final baseUserMessage = await _prompts.load('chat/user.txt', {
+        'context': '',
+        'question': question,
+      });
+      final fixedTokens = _contextWindow.estimateFixedPromptTokens(
+        systemPrompt: systemPrompt,
+        userMessage: baseUserMessage,
+        maxOutputTokens: maxTokens,
+      );
+      final availableContextTokens = request.contextWindowTokens - fixedTokens;
+      if (availableContextTokens <= 0) {
+        await _writeLog(
+          logId: logId,
+          question: question,
+          rewrittenQuery: rewrittenQuery,
+          retrieval: retrieval,
+          candidateIds: candidateIds,
+          citedIds: const [],
+        );
+        return RagConversationResult(
+          outcome: RagConversationOutcome.error,
+          error: 'message exceeds the configured context window',
+          rewrittenQuery: rewrittenQuery,
+          method: retrieval.method.name,
+          logId: logId,
+        );
+      }
+      final effectiveContextBudget =
+          request.contextTokenBudget < availableContextTokens
+          ? request.contextTokenBudget
+          : availableContextTokens;
+      final context = _contextBuilder.build(
+        query: rewrittenQuery,
+        candidates: retrieval.articles,
+        tokenBudget: effectiveContextBudget,
+      );
       final userMessage = await _prompts.load('chat/user.txt', {
         'context': context.text,
         'question': question,
       });
-      final history = request.history.length > 10
-          ? request.history.sublist(request.history.length - 10)
-          : request.history;
+      final history = _contextWindow.selectForPrompt(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: request.history,
+        maxOutputTokens: maxTokens,
+        contextWindowTokens: request.contextWindowTokens,
+      );
       final response = await _complete(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
         history: history.map((turn) => turn.toMessage()).toList(),
-        maxTokens: request.detailedAnswer ? 2500 : 1000,
+        maxTokens: maxTokens,
         temperature: 0.3,
       );
 

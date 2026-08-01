@@ -26,8 +26,9 @@ class ShareSaveResult {
 /// Lets the user pick [ShareSaveMode] and jot down thoughts (→ [Article.notes]).
 class ShareSaveSheet extends ConsumerStatefulWidget {
   final String url;
+  final int imageCount;
 
-  const ShareSaveSheet({super.key, required this.url});
+  const ShareSaveSheet({super.key, required this.url, this.imageCount = 0});
 
   static Future<ShareSaveResult?> show(BuildContext context, String url) {
     return showModalBottomSheet<ShareSaveResult>(
@@ -35,6 +36,21 @@ class ShareSaveSheet extends ConsumerStatefulWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => ShareSaveSheet(url: url),
+    );
+  }
+
+  static Future<ShareSaveResult?> showImages(
+    BuildContext context,
+    int imageCount,
+  ) {
+    return showModalBottomSheet<ShareSaveResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ShareSaveSheet(
+        url: 'local-images://selection',
+        imageCount: imageCount,
+      ),
     );
   }
 
@@ -59,12 +75,9 @@ class _ShareSaveSheetState extends ConsumerState<ShareSaveSheet> {
   }
 
   void _submit() {
-    Navigator.of(context).pop(
-      ShareSaveResult(
-        mode: _mode,
-        notes: _thoughtsController.text.trim(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).pop(ShareSaveResult(mode: _mode, notes: _thoughtsController.text.trim()));
   }
 
   @override
@@ -73,7 +86,9 @@ class _ShareSaveSheetState extends ConsumerState<ShareSaveSheet> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final domain = extractDomain(widget.url);
+    final domain = widget.imageCount > 0
+        ? '${s.selectImages}  ${widget.imageCount}/9'
+        : extractDomain(widget.url);
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -134,11 +149,17 @@ class _ShareSaveSheetState extends ConsumerState<ShareSaveSheet> {
                 ),
               ],
             ),
+            if (widget.imageCount > 0) ...[
+              const SizedBox(height: 12),
+              Text(
+                s.imagePrivacyNotice,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
-            Text(
-              s.shareThoughtsLabel,
-              style: theme.textTheme.titleMedium,
-            ),
+            Text(s.shareThoughtsLabel, style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             TextField(
               controller: _thoughtsController,
@@ -225,7 +246,11 @@ class _ModeCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, size: 22, color: selected ? primary : theme.colorScheme.onSurface),
+              Icon(
+                icon,
+                size: 22,
+                color: selected ? primary : theme.colorScheme.onSurface,
+              ),
               const SizedBox(height: 10),
               Text(
                 title,

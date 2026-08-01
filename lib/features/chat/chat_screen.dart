@@ -14,7 +14,7 @@ import '../../shared/providers/settings_providers.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
-import 'chat_history_sheet.dart';
+import 'chat_history_drawer.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
 
@@ -25,16 +25,37 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen>
+    with WidgetsBindingObserver {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   bool _loading = false;
+  bool _keyboardWasOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // When the keyboard collapses (e.g. system back button) the input field
+    // would otherwise keep focus forever — dismiss it explicitly.
+    if (!mounted) return;
+    final viewInsets = View.of(context).viewInsets.bottom;
+    if (viewInsets == 0 && _keyboardWasOpen) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+    _keyboardWasOpen = viewInsets > 0;
   }
 
   void _scrollToBottom() {
@@ -52,6 +73,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _send([String? overrideQuery]) async {
     final query = overrideQuery ?? _controller.text.trim();
     if (query.isEmpty || _loading) return;
+
+    // Dismiss the keyboard as soon as a message is sent.
+    FocusScope.of(context).unfocus();
 
     final chatState = ref.read(chatSessionsProvider).valueOrNull;
     if (chatState == null) return;
@@ -241,10 +265,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .toList();
   }
 
-  ChatMessageRecord? _findMessage(
-    List<ChatMessageRecord> messages,
-    String id,
-  ) {
+  ChatMessageRecord? _findMessage(List<ChatMessageRecord> messages, String id) {
     for (final message in messages) {
       if (message.id == id) return message;
     }
@@ -298,33 +319,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ref.read(retrievalLogServiceProvider).recordCitationClick(logId, articleId);
   }
 
-  void _showChatHistory() {
-    final chatState = ref.read(chatSessionsProvider).valueOrNull;
-    if (chatState == null) return;
-    final sessions = ref.read(chatSessionsProvider.notifier);
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => ChatHistorySheet(
-        threads: chatState.threads,
-        activeThreadId: chatState.activeThreadId,
-        s: ref.read(stringsProvider),
-        onNewThread: () async {
-          await sessions.startNewThread();
-          _controller.clear();
-        },
-        onSelectThread: (threadId) async {
-          await sessions.selectThread(threadId);
-          _scrollToBottom();
-        },
-        onDeleteThread: sessions.deleteThread,
-      ),
-    );
-  }
-
   Future<void> _startNewThread() async {
     await ref.read(chatSessionsProvider.notifier).startNewThread();
     _controller.clear();
+  }
+
+  Future<void> _selectThread(String threadId) async {
+    await ref.read(chatSessionsProvider.notifier).selectThread(threadId);
+    _scrollToBottom();
   }
 
   @override
@@ -342,21 +344,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             .toList(growable: false) ??
         const <ChatMessage>[];
     final chatUnavailable = chatAsync.hasError || chatAsync.isLoading;
+    final activeThreadTitle = _activeThreadTitle(chatState, s.tabChat);
+    final drawerEnabled = !_loading && chatState != null;
 
     return Scaffold(
+      // The outer shell Scaffold resizes for the keyboard (default), which
+      // pins the NavigationBar to the screen bottom so it stays hidden
+      // behind the keyboard instead of floating up with it. ChatScreen
+      // disables its own resize to avoid double-compressing the layout.
+      resizeToAvoidBottomInset: false,
+      drawerEnableOpenDragGesture: drawerEnabled,
+      drawer: chatState == null
+          ? null
+          : ChatHistoryDrawer(
+              threads: chatState.threads,
+              activeThreadId: chatState.activeThreadId,
+              s: s,
+              enabled: !_loading,
+              onNewThread: _startNewThread,
+              onSelectThread: _selectThread,
+              onDeleteThread: ref
+                  .read(chatSessionsProvider.notifier)
+                  .deleteThread,
+            ),
       appBar: AppBar(
-        title: Text(s.tabChat),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history_rounded),
+        leading: Builder(
+          builder: (drawerContext) => IconButton(
+            key: const ValueKey('chat-sidebar-button'),
+            icon: const Icon(Icons.menu_rounded),
             tooltip: s.chatHistory,
-            onPressed: _loading || chatState == null ? null : _showChatHistory,
+            onPressed: drawerEnabled
+                ? () {
+                    FocusScope.of(context).unfocus();
+                    Scaffold.of(drawerContext).openDrawer();
+                  }
+                : null,
           ),
-          IconButton(
-            icon: const Icon(Icons.add_comment_outlined),
-            tooltip: s.chatNew,
-            onPressed: _loading || chatState == null ? null : _startNewThread,
-          ),
+        ),
+        title: Text(activeThreadTitle, overflow: TextOverflow.ellipsis),
+        actions: [
           IconButton(
             icon: const Icon(Icons.tune_rounded),
             tooltip: s.chatSettings,
@@ -366,50 +392,57 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
       body: Column(
         children: [
-              Expanded(
-                child: chatAsync.isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : chatAsync.hasError
-                    ? Center(child: Text(s.failedToLoad))
-                    : messages.isEmpty
-                    ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
+          Expanded(
+            child: chatAsync.isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : chatAsync.hasError
+                ? Center(child: Text(s.failedToLoad))
+                : messages.isEmpty
+                ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      return ChatBubble(
+                        message: messages[index],
+                        articles: articles,
+                        onFeedback: (feedback) => _onFeedback(
+                          messages[index].id,
+                          messages[index].logId,
+                          feedback,
                         ),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          return ChatBubble(
-                            message: messages[index],
-                            articles: articles,
-                            onFeedback: (feedback) => _onFeedback(
-                              messages[index].id,
-                              messages[index].logId,
-                              feedback,
-                            ),
-                            onCitationClick: (articleId) => _onCitationClick(
-                              messages[index].logId,
-                              articleId,
-                            ),
-                            onSuggestionTap: _send,
-                            onRetry: _retry,
-                            onBrowseKnowledge: () {
-                              context.go(AppRoutes.knowledge);
-                            },
-                          );
+                        onCitationClick: (articleId) =>
+                            _onCitationClick(messages[index].logId, articleId),
+                        onSuggestionTap: _send,
+                        onRetry: _retry,
+                        onBrowseKnowledge: () {
+                          context.go(AppRoutes.knowledge);
                         },
-                      ),
-              ),
-              ChatInputBar(
-                controller: _controller,
-                loading: _loading || chatUnavailable,
-                s: s,
-                onSend: () => _send(),
-              ),
-            ],
+                      );
+                    },
+                  ),
+          ),
+          ChatInputBar(
+            controller: _controller,
+            loading: _loading || chatUnavailable,
+            s: s,
+            onSend: () => _send(),
+          ),
+        ],
       ),
     );
+  }
+
+  String _activeThreadTitle(ChatSessionState? state, String fallback) {
+    final activeThreadId = state?.activeThreadId;
+    if (activeThreadId == null) return fallback;
+    for (final thread in state!.threads) {
+      if (thread.id == activeThreadId) return thread.title;
+    }
+    return fallback;
   }
 }

@@ -25,6 +25,9 @@ class LocaleStrings {
   final String addArticle;
   final String addMultipleUrls;
   final String importFile;
+  final String selectImages;
+  final String imagePrivacyNotice;
+  final String imageSelectionLimit;
   final String fileReadError;
   final String pdfExtracting;
   final String pdfNoTextFound;
@@ -81,6 +84,7 @@ class LocaleStrings {
   final String generatingTags;
   final String suggestingFolder;
   final String indexing;
+  final String understandingImages;
   final String retry;
   final String deleteArticleQ;
   final String removeFromInbox;
@@ -268,6 +272,8 @@ class LocaleStrings {
   final String shareSaveAction;
   final String memoryLabelAi;
   final String memoryLabelOriginal;
+  final String imageTranscriptionFullText;
+  final String imageSourceUnavailable;
   final String regenerateAiMemoriesTitle;
   final String regenerateAiMemoriesDesc;
   final String regenerateAiMemoriesConfirm;
@@ -313,6 +319,9 @@ class LocaleStrings {
     required this.addArticle,
     required this.addMultipleUrls,
     required this.importFile,
+    required this.selectImages,
+    required this.imagePrivacyNotice,
+    required this.imageSelectionLimit,
     required this.fileReadError,
     required this.pdfExtracting,
     required this.pdfNoTextFound,
@@ -369,6 +378,7 @@ class LocaleStrings {
     required this.generatingTags,
     required this.suggestingFolder,
     required this.indexing,
+    required this.understandingImages,
     required this.retry,
     required this.deleteArticleQ,
     required this.removeFromInbox,
@@ -556,6 +566,8 @@ class LocaleStrings {
     required this.shareSaveAction,
     required this.memoryLabelAi,
     required this.memoryLabelOriginal,
+    required this.imageTranscriptionFullText,
+    required this.imageSourceUnavailable,
     required this.regenerateAiMemoriesTitle,
     required this.regenerateAiMemoriesDesc,
     required this.regenerateAiMemoriesConfirm,
@@ -618,6 +630,10 @@ class LocaleStrings {
     addArticle: 'Add Memory',
     addMultipleUrls: 'Add multiple URLs',
     importFile: 'Import File',
+    selectImages: 'Select images',
+    imagePrivacyNotice:
+        'When signed in, this device sends the selected images directly to SenseNova for understanding. When signed out, they are saved only as local attachments and are not analyzed. Continue?',
+    imageSelectionLimit: 'You can select up to 9 images.',
     fileReadError: 'Failed to read file',
     pdfExtracting: 'Extracting PDF text...',
     pdfNoTextFound: 'No extractable text in PDF (may be a scanned document)',
@@ -678,6 +694,7 @@ class LocaleStrings {
     generatingTags: 'Generating tags',
     suggestingFolder: 'Suggesting folder',
     indexing: 'Indexing',
+    understandingImages: 'Understanding images',
     retry: 'Retry',
     deleteArticleQ: 'Delete memory?',
     removeFromInbox: 'Remove from progress?',
@@ -691,8 +708,7 @@ class LocaleStrings {
     emptyAiResponse:
         'The AI service returned an empty response. Please try again.',
     aiError: 'Error communicating with AI service',
-    answerInterrupted:
-        'The previous answer was interrupted while generating.',
+    answerInterrupted: 'The previous answer was interrupted while generating.',
     askKnowledgeBase: 'Explore your Memora',
     tryExamples:
         'Try: "What are the key ideas about AI?" or "Summarize my saved memories on Flutter"',
@@ -887,6 +903,8 @@ class LocaleStrings {
     shareSaveAction: 'Save',
     memoryLabelAi: 'AI memory',
     memoryLabelOriginal: 'Original memory',
+    imageTranscriptionFullText: 'Image transcription',
+    imageSourceUnavailable: 'The original image is unavailable on this device.',
     regenerateAiMemoriesTitle: 'Regenerate AI Memories',
     regenerateAiMemoriesDesc:
         'Re-run AI summary for all AI-memory items (skips full-text / original memories).',
@@ -935,6 +953,10 @@ class LocaleStrings {
     addArticle: '添加记忆',
     addMultipleUrls: '添加多个链接',
     importFile: '导入文件',
+    selectImages: '选择图片',
+    imagePrivacyNotice:
+        '登录后，所选图片将由本机直接发送给 SenseNova 进行理解；未登录时仅保存为本地附件，不会进行识别。是否继续？',
+    imageSelectionLimit: '最多选择 9 张图片。',
     fileReadError: '无法读取文件',
     pdfExtracting: '正在提取 PDF 文本…',
     pdfNoTextFound: 'PDF 无可提取文本（可能是扫描件）',
@@ -991,6 +1013,7 @@ class LocaleStrings {
     generatingTags: '生成标签',
     suggestingFolder: '推荐文件夹',
     indexing: '索引中',
+    understandingImages: '正在理解图片',
     retry: '重试',
     deleteArticleQ: '删除记忆？',
     removeFromInbox: '从进程移除？',
@@ -1178,6 +1201,8 @@ class LocaleStrings {
     shareSaveAction: '保存',
     memoryLabelAi: 'AI 记忆',
     memoryLabelOriginal: '原始记忆',
+    imageTranscriptionFullText: '图片转写全文',
+    imageSourceUnavailable: '原始图片未在此设备上同步。',
     regenerateAiMemoriesTitle: '重新生成 AI 记忆',
     regenerateAiMemoriesDesc: '为所有 AI 记忆条目重新生成摘要（跳过全文/原始记忆）。',
     regenerateAiMemoriesConfirm: '为这些条目重新生成 AI 记忆？将为每条调用 AI。',

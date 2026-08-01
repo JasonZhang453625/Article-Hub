@@ -13,7 +13,7 @@ description: "Save and organize articles from modern content platforms."
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.1.1
+version: 2.1.2
 
 environment:
   sdk: ^3.11.1
@@ -51,7 +51,6 @@ dependencies:
   connectivity_plus: ^6.1.4
   google_fonts: ^8.1.0
   image: ^4.9.1
-  flutter_onnxruntime: ^1.8.2
   path: ^1.9.1
   pdfrx: ^2.4.7
 
@@ -80,8 +79,6 @@ flutter:
     - assets/prompts/summary/
     - assets/prompts/tags/
     - assets/prompts/chat/
-    - assets/ocr/
-    - assets/ocr/models/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

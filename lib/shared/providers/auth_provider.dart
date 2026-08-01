@@ -24,15 +24,7 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
         return;
       }
       state = AsyncValue.data(session);
-      _auth
-          .getMe(session)
-          .then((fresh) {
-            if (fresh != null && mounted) state = AsyncValue.data(fresh);
-          })
-          .catchError((_) {
-            // Keep the persisted session for offline use; API calls can refresh
-            // later when the network is available.
-          });
+      _validateLoadedSession(session);
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -60,9 +52,50 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   Future<AuthSession?> refresh() async {
     final session = state.valueOrNull;
     if (session == null) return null;
-    final refreshed = await _auth.refresh(session);
-    state = AsyncValue.data(refreshed);
-    return refreshed;
+    try {
+      final refreshed = await _auth.refresh(session);
+      if (mounted && _isCurrentSession(session)) {
+        state = AsyncValue.data(refreshed);
+      }
+      return refreshed;
+    } on AuthApiException catch (error) {
+      if (AuthService.isSessionRejected(error)) {
+        await _clearInvalidSession(session);
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _validateLoadedSession(AuthSession session) async {
+    try {
+      final fresh = await _auth.getMe(session);
+      if (fresh != null && mounted && _isCurrentSession(session)) {
+        state = AsyncValue.data(fresh);
+      }
+    } on AuthApiException catch (error) {
+      if (AuthService.isSessionRejected(error)) {
+        await _clearInvalidSession(session);
+      }
+      // Network errors and unrelated server errors keep the session for
+      // offline use; a later API call can retry when connectivity returns.
+    } catch (_) {
+      // Keep the persisted session for offline use.
+    }
+  }
+
+  bool _isCurrentSession(AuthSession expected) {
+    final current = state.valueOrNull;
+    return current?.accessToken == expected.accessToken &&
+        current?.refreshToken == expected.refreshToken;
+  }
+
+  Future<void> _clearInvalidSession(AuthSession expected) async {
+    if (!mounted || !_isCurrentSession(expected)) return;
+    await _auth.clearLocalSession();
+    if (mounted && _isCurrentSession(expected)) {
+      state = const AsyncValue.data(null);
+    }
   }
 }
 
