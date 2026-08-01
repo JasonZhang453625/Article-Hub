@@ -1,7 +1,8 @@
 allprojects {
     repositories {
-        google()
-        mavenCentral()
+        // China mirrors only — official repos hang on this network.
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
     }
 }
 

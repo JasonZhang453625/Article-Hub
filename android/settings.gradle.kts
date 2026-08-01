@@ -11,9 +11,10 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
+        // China mirrors only — official repos hang on this network.
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
     }
 }
 
