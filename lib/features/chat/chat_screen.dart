@@ -207,6 +207,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               articleIds: result.citedIds,
               method: result.method,
               logId: result.logId,
+              status: ChatMessageStatus.completed,
             ),
           );
           break;
@@ -219,6 +220,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               method: result.method,
               logId: result.logId,
               query: pending.query,
+              status: ChatMessageStatus.completed,
             ),
           );
           break;

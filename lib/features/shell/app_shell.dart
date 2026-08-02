@@ -207,6 +207,7 @@ class _MobileShell extends StatelessWidget {
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentIndex,
         onDestinationSelected: onDestinationSelected,
+        maintainBottomViewPadding: true,
         destinations: destinations.map((d) {
           return NavigationDestination(
             icon: d.badgeCount > 0
