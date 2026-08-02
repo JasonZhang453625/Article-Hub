@@ -6,7 +6,7 @@
         </trust-anchors>
     </base-config>
     <domain-config cleartextTrafficPermitted="false">
-        <domain includeSubdomains="true">memora.org.cn</domain>
+        <domain includeSubdomains="true">memora.wang</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

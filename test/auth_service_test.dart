@@ -4,10 +4,19 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memora/config/backend_config.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/shared/providers/auth_provider.dart';
 
 void main() {
+  test('uses the API subdomain by default and builds auth URLs', () {
+    expect(BackendConfig.baseUrl, 'https://api.memora.wang');
+    expect(
+      BackendConfig.uri('/auth/request-otp').toString(),
+      'https://api.memora.wang/auth/request-otp',
+    );
+  });
+
   test('normalizes a stored Bearer prefix and validates UUID claims', () {
     final token = _jwt(
       sessionId: '11111111-1111-1111-1111-111111111111',

@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 class BackendConfig {
   static const String baseUrl = String.fromEnvironment(
     'MEMORA_API_BASE_URL',
-    defaultValue: 'https://memora.org.cn',
+    defaultValue: 'https://api.memora.wang',
   );
 
   static bool get isConfigured => baseUrl.trim().isNotEmpty;
