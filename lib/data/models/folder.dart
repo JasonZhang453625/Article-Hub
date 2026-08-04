@@ -44,6 +44,7 @@ class Folder extends HiveObject {
 
   Map<String, dynamic> toJson() {
     return {
+      'schemaVersion': 1,
       'id': id,
       'name': name,
       'parentId': parentId,

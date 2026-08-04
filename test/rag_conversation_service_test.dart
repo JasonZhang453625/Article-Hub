@@ -230,13 +230,70 @@ void main() {
       expect(completionCalls, 0);
     },
   );
+
+  test(
+    'hybrid mode keeps its general-knowledge contract when retrieval is empty',
+    () async {
+      final promptService = _FakePromptService();
+      String? capturedSystemPrompt;
+      int? capturedMaxTokens;
+      final service = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration(milliseconds: 3),
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async {
+              capturedSystemPrompt = systemPrompt;
+              capturedMaxTokens = maxTokens;
+              return 'A useful general answer.';
+            },
+        saveLog: (_) async {},
+        promptService: promptService,
+      );
+
+      final result = await service.ask(
+        RagConversationRequest(
+          question: 'What is a vector database?',
+          articles: const [],
+          knowledgeOnly: false,
+          detailedAnswer: true,
+          languageHint: 'Answer in English.',
+        ),
+      );
+
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(promptService.loadedPaths, contains('chat/knowledge_hybrid.txt'));
+      expect(
+        promptService.loadedPaths,
+        isNot(contains('chat/knowledge_general.txt')),
+      );
+      expect(capturedSystemPrompt, contains('chat/knowledge_hybrid.txt'));
+      expect(capturedMaxTokens, 2500);
+    },
+  );
 }
 
 class _FakePromptService extends PromptService {
+  final List<String> loadedPaths = [];
+
   @override
   Future<String> load(String path, [Map<String, String>? vars]) async {
+    loadedPaths.add(path);
     if (path == 'chat/query_rewrite.txt') return 'Rewrite the query.';
-    if (path == 'chat/system.txt') return 'System prompt';
+    if (path == 'chat/system.txt') {
+      return 'System prompt\n'
+          '${vars?['knowledgeRule'] ?? ''}\n'
+          '${vars?['lengthRule'] ?? ''}\n'
+          '${vars?['langHint'] ?? ''}';
+    }
     if (path == 'chat/user.txt') {
       return 'Context:\n${vars?['context'] ?? ''}\n'
           'Question: ${vars?['question'] ?? ''}';

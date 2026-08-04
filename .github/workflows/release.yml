@@ -5,15 +5,43 @@ on:
     tags:
       - 'v*'
 
+concurrency:
+  group: android-production-release
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    environment: production-download
     permissions:
       contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)
+          APP_VERSION_NAME="${APP_VERSION%%+*}"
+
+          if [[ ! "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use vMAJOR.MINOR.PATCH, got: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          if [[ "$TAG_VERSION" != "$APP_VERSION_NAME" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match pubspec.yaml version $APP_VERSION" >&2
+            exit 1
+          fi
+
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -32,46 +60,163 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
           KEY_PROPERTIES_B64: ${{ secrets.KEY_PROPERTIES_B64 }}
+        shell: bash
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
-          echo "$KEY_PROPERTIES_B64" | base64 -d > android/key.properties
+          set -euo pipefail
+          test -n "$KEYSTORE_B64"
+          test -n "$KEY_PROPERTIES_B64"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
+          printf '%s' "$KEY_PROPERTIES_B64" | base64 -d > android/key.properties
 
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Generate release description
-        id: changelog
+      - name: Prepare release artifacts
+        id: artifact
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
         run: |
-          PREV_TAG=$(git tag --sort=-creatordate | sed -n 2p)
-          if [ -z "$PREV_TAG" ]; then
-            echo "## Artifacts" > /tmp/release_body.md
-            echo "" >> /tmp/release_body.md
-            echo "- Memora v${GITHUB_REF_NAME#v} APK" >> /tmp/release_body.md
+          set -euo pipefail
+          mkdir -p .release
+          cp build/app/outputs/flutter-apk/app-release.apk .release/app-release.apk
+
+          SHA256=$(sha256sum .release/app-release.apk | awk '{print $1}')
+          SIZE=$(stat -c '%s' .release/app-release.apk)
+          PUBLISHED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          printf '%s  app-release.apk\n' "$SHA256" > .release/app-release.apk.sha256
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg publishedAt "$PUBLISHED_AT" \
+            --arg sha256 "$SHA256" \
+            --arg serverUrl "https://api.memora.wang/downloads/android/releases/$TAG/Memora-$TAG.apk" \
+            --arg githubUrl "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/app-release.apk" \
+            --argjson size "$SIZE" \
+            '{version: $version, publishedAt: $publishedAt, size: $size, sha256: $sha256, serverUrl: $serverUrl, githubUrl: $githubUrl}' \
+            > .release/latest.json
+
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release description
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREV_TAG=$(git tag --sort=-version:refname | grep -Fxv "$GITHUB_REF_NAME" | head -n 1 || true)
+          if [[ -z "$PREV_TAG" ]]; then
+            printf '## Artifacts\n\n- Memora v%s APK\n' "$VERSION" > .release/release-body.md
           else
-            echo "## Changes since $PREV_TAG" > /tmp/release_body.md
-            echo "" >> /tmp/release_body.md
-            git log --oneline "${PREV_TAG}..HEAD" | while read -r line; do
-              echo "- $(echo "$line" | sed 's/^[a-f0-9]* //')" >> /tmp/release_body.md
-            done
+            printf '## Changes since %s\n\n' "$PREV_TAG" > .release/release-body.md
+            git log --format='- %s' "${PREV_TAG}..HEAD" >> .release/release-body.md
           fi
 
-      - name: Get version
-        id: version
-        run: |
-          VER=$(grep "^version:" pubspec.yaml | sed 's/version: *//')
-          echo "version=$VER" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Memora v${{ steps.version.outputs.version }}
-          body_path: /tmp/release_body.md
-          files: build/app/outputs/flutter-apk/app-release.apk
-          prerelease: false
-          make_latest: true
+      - name: Create or update draft GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "Memora v$VERSION" --notes-file .release/release-body.md
+          fi
+          gh release upload "$TAG" \
+            .release/app-release.apk \
+            .release/app-release.apk.sha256 \
+            .release/latest.json \
+            --clobber
+
+      - name: Configure server SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.APK_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.APK_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.APK_DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.APK_DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.APK_DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in DEPLOY_HOST DEPLOY_PORT DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [[ -z "${!value}" ]]; then
+              echo "Missing production-download secret: $value" >&2
+              exit 1
+            fi
+          done
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/memora_deploy"
+          chmod 600 "$HOME/.ssh/memora_deploy"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage and verify server release
+        env:
+          DEPLOY_HOST: ${{ secrets.APK_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.APK_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.APK_DEPLOY_USER }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.artifact.outputs.sha256 }}
+          SIZE: ${{ steps.artifact.outputs.size }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/memora_deploy" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST")
+          SCP=(scp -i "$HOME/.ssh/memora_deploy" -P "$DEPLOY_PORT")
+          "${SSH[@]}" "memora-publish-apk prepare '$VERSION'"
+          "${SCP[@]}" .release/app-release.apk .release/latest.json \
+            "$DEPLOY_USER@$DEPLOY_HOST:.memora-apk-incoming/$VERSION/"
+          "${SSH[@]}" "memora-publish-apk verify '$VERSION' '$SHA256' '$SIZE'"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false --latest
+
+      - name: Activate server release
+        env:
+          DEPLOY_HOST: ${{ secrets.APK_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.APK_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.APK_DEPLOY_USER }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.artifact.outputs.sha256 }}
+          SIZE: ${{ steps.artifact.outputs.size }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/memora_deploy" -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "memora-publish-apk activate '$VERSION' '$SHA256' '$SIZE'"
+
+      - name: Verify public download endpoints
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          SHA256: ${{ steps.artifact.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 \
+            "https://api.memora.wang/downloads/android/latest.json" \
+            | jq -e --arg sha256 "$SHA256" '.sha256 == $sha256' >/dev/null
+          curl --fail --silent --show-error --location --range 0-0 \
+            "https://api.memora.wang/downloads/android/releases/$TAG/Memora-$TAG.apk" \
+            -o /dev/null
+          curl --fail --silent --show-error --location --range 0-0 \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/app-release.apk" \
+            -o /dev/null

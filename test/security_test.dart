@@ -5,11 +5,14 @@ import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/services/backup_data.dart';
 
 /// Phase 2.4 security tests:
-/// - API Key (chat and embedding) must not appear in exported backup or sync
-///   JSON. They stay local to the device.
+/// - Generic settings JSON must omit API keys.
+/// - Explicit full backups include API keys so they can restore the complete
+///   configuration and therefore must be handled as secrets.
+/// - Account sync includes API keys in its dedicated JSON serialization path.
+///   The transport and server logs must therefore be treated as sensitive.
 /// - Vector data (from IndexRecord) must never enter the backup.
 void main() {
-  group('Security: API keys excluded from backup', () {
+  group('Security: API key serialization boundaries', () {
     test('aiApiKey is omitted from AppSettings.toJson()', () {
       final settings = AppSettings(
         aiBaseUrl: 'https://api.openai.com',
@@ -32,7 +35,7 @@ void main() {
       expect(json.toString().contains('sk-embedding-secret-99'), isFalse);
     });
 
-    test('full backup export excludes API keys', () {
+    test('explicit full backup includes API keys for complete restore', () {
       final backup = BackupData.create(
         articles: [
           Article(
@@ -57,24 +60,23 @@ void main() {
       final jsonString = backup.toJsonString();
       expect(
         jsonString.contains('"aiApiKey"'),
-        isFalse,
-        reason: 'AI API key key-name must not be present in backup export',
+        isTrue,
+        reason: 'A full backup must preserve the AI API key field',
       );
       expect(
         jsonString.contains('"embeddingApiKey"'),
-        isFalse,
-        reason:
-            'Embedding API key key-name must not be present in backup export',
+        isTrue,
+        reason: 'A full backup must preserve the embedding API key field',
       );
       expect(
         jsonString.contains('sk-LIVE-KEY-abc123'),
-        isFalse,
-        reason: 'AI API key value must not be present in backup export',
+        isTrue,
+        reason: 'A full backup must restore the AI API key value',
       );
       expect(
         jsonString.contains('sk-EMBED-KEY-xyz789'),
-        isFalse,
-        reason: 'Embedding API key value must not be present in backup export',
+        isTrue,
+        reason: 'A full backup must restore the embedding API key value',
       );
     });
 
@@ -88,16 +90,17 @@ void main() {
         "articles": [{"id": "a1", "url": "https://x.com", "title": "T", "source": 2}],
         "filterGroups": [],
         "settings": {
-          "aiApiKey": "sk-should-be-ignored",
-          "embeddingApiKey": "sk-also-ignored",
+          "aiApiKey": "sk-imported-ai",
+          "embeddingApiKey": "sk-imported-embedding",
           "fontSize": 16
         }
       }
       ''';
       final backup = BackupData.fromJsonString(jsonStr);
       expect(backup.settings, isNotNull);
-      // The key is read defensively but never exported again.
       expect(backup.settings!.fontSize, 16.0);
+      expect(backup.settings!.aiApiKey, 'sk-imported-ai');
+      expect(backup.settings!.embeddingApiKey, 'sk-imported-embedding');
     });
   });
 

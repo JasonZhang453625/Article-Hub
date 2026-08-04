@@ -15,7 +15,7 @@ enum ArticleAttachmentKind {
 /// App-owned metadata for a local article attachment.
 ///
 /// Attachment bytes remain in [localPath]. Only this JSON-compatible metadata
-/// is persisted in Hive, backup, and encrypted sync payloads.
+/// is persisted in Hive, backup, and sync payloads.
 class ArticleAttachment {
   final int schemaVersion;
   final String id;

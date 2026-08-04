@@ -27,13 +27,15 @@ class AppSettings {
 
   /// AI configuration for auto-summarization (BYOK).
   ///
-  /// The API key is stored locally on the device (never transmitted â€” the app
-  /// calls the user's own AI provider directly). We deliberately do NOT
+  /// The API key is stored locally on the device and sent directly to the
+  /// user's chosen AI provider. Account sync also carries it as JSON over
+  /// HTTPS. We deliberately do NOT
   /// additionally encrypt it: the threat model is "attacker has the unlocked
   /// device or root access", against which app-level encryption provides no
   /// real protection (the decryption path lives in the same app). The one
-  /// protection that does matter is applied in [toJson]: the key is excluded
-  /// from exported JSON backups so it can't leak via a shared file.
+  /// protection that does matter is controlling which serialization path is
+  /// used: [toJson] excludes the key, while the user-requested full backup and
+  /// complete account sync use [toBackupJson] and [toSyncJson].
   /// See `docs/PRD.md` (AI key storage decision) for the full rationale.
   String aiBaseUrl;
   String aiApiKey;
@@ -41,9 +43,9 @@ class AppSettings {
 
   /// Embedding configuration for semantic search / RAG (BYOK).
   ///
-  /// Follows the same threat model as [aiApiKey]: the key is stored locally,
-  /// never transmitted (the app calls the user's own provider), and excluded
-  /// from [toJson] exports so it can't leak via a shared backup file.
+  /// Follows the same threat model as [aiApiKey]. Generic [toJson] output omits
+  /// the key; complete backups and account sync include it via
+  /// [toBackupJson] and [toSyncJson].
   String embeddingBaseUrl;
   String embeddingApiKey;
   String embeddingModel;
@@ -267,7 +269,7 @@ class AppSettings {
     );
   }
 
-  /// Serializes to JSON for backup/export and encrypted sync payloads.
+  /// Serializes settings without provider secrets.
   ///
   /// Provider API keys intentionally stay local to this device and are not
   /// included here.
@@ -294,6 +296,23 @@ class AppSettings {
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
+  }
+
+  /// Serializes every setting needed to restore a complete local backup,
+  /// including both provider API keys and their base URL/model selections.
+  Map<String, dynamic> toBackupJson() {
+    return {
+      ...toJson(),
+      'aiApiKey': aiApiKey,
+      'embeddingApiKey': embeddingApiKey,
+    };
+  }
+
+  /// Serializes the complete cross-device configuration. This map contains
+  /// provider secrets and is sent to the account sync API as JSON over HTTPS.
+  /// It must never be written to application or server logs.
+  Map<String, dynamic> toSyncJson() {
+    return {'schemaVersion': 1, ...toBackupJson()};
   }
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {

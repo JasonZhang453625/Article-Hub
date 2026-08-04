@@ -34,8 +34,8 @@ class BackupData {
     required this.filterGroups,
     required this.folders,
     required this.settings,
-  })  : schemaVersion = kBackupSchemaVersion,
-        exportedAt = DateTime.now();
+  }) : schemaVersion = kBackupSchemaVersion,
+       exportedAt = DateTime.now();
 
   Map<String, dynamic> toJson() {
     return {
@@ -45,7 +45,7 @@ class BackupData {
       'articles': articles.map((a) => a.toJson()).toList(),
       'filterGroups': filterGroups.map((g) => g.toJson()).toList(),
       'folders': folders.map((f) => f.toJson()).toList(),
-      'settings': settings?.toJson(),
+      'settings': settings?.toBackupJson(),
     };
   }
 
@@ -138,8 +138,9 @@ class BackupData {
     final exportedAtValue = decoded['exportedAt'];
 
     return BackupData(
-      schemaVersion:
-          versionValue is num ? versionValue.toInt() : kBackupSchemaVersion,
+      schemaVersion: versionValue is num
+          ? versionValue.toInt()
+          : kBackupSchemaVersion,
       exportedAt: exportedAtValue is String
           ? (DateTime.tryParse(exportedAtValue) ?? DateTime.now())
           : DateTime.now(),

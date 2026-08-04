@@ -6,8 +6,8 @@ import '../models/passage.dart';
 import '../models/settings.dart';
 import '../repositories/passage_repository.dart';
 import 'index_service.dart';
-import 'sync_crypto_service.dart';
 import 'sync_outbox_service.dart';
+import 'sync_protocol.dart';
 
 class SyncApplyResult {
   final int applied;
@@ -30,14 +30,14 @@ class SyncApplyService {
   static const String _settingsKey = 'settings';
   static const String _vectorIndexBoxName = 'vector_index';
 
-  final SyncCryptoService crypto;
   final SyncOutboxService outbox;
 
-  const SyncApplyService({required this.crypto, required this.outbox});
+  const SyncApplyService({required this.outbox});
 
   Future<SyncApplyResult> applyEvents(
     Iterable<dynamic> rawEvents, {
     String? localDeviceId,
+    String? accountId,
   }) async {
     await _ensureHive();
 
@@ -77,6 +77,7 @@ class SyncApplyService {
       }
 
       final hasLocalPending = await outbox.hasPendingChange(
+        accountId: accountId ?? '',
         collection: collection,
         itemId: itemId,
       );
@@ -88,7 +89,16 @@ class SyncApplyService {
       if (op == SyncOperation.delete.name) {
         await _applyDelete(collection, itemId);
       } else {
-        final payload = await _decodePayload(event);
+        final payload = await _decodePayload(
+          event,
+          accountId: accountId,
+          collection: collection,
+          itemId: itemId,
+        );
+        if (payload == null) {
+          skippedUnsupported++;
+          continue;
+        }
         await _applyUpsert(collection, itemId, payload);
       }
       applied++;
@@ -135,30 +145,22 @@ class SyncApplyService {
         collection == SyncCollections.appSettings;
   }
 
-  Future<Map<String, dynamic>> _decodePayload(Map<String, dynamic> event) {
+  Future<Map<String, dynamic>?> _decodePayload(
+    Map<String, dynamic> event, {
+    required String? accountId,
+    required String collection,
+    required String itemId,
+  }) async {
     final payload = event['payload'];
-    if (payload is Map) {
-      return Future.value(Map<String, dynamic>.from(payload));
-    }
+    if (payload is! Map) return null;
 
-    final ciphertext = _stringValue(event, ['ciphertext']);
-    final nonce = _stringValue(event, ['nonce']);
-    final aad = _stringValue(event, ['aad']);
-    final contentHash = _stringValue(event, ['contentHash', 'content_hash']);
-    if (ciphertext == null ||
-        nonce == null ||
-        aad == null ||
-        contentHash == null) {
-      throw const SyncApplyException('Encrypted sync payload is incomplete.');
-    }
-
-    return crypto.decryptJson(
-      EncryptedSyncPayload(
-        ciphertext: ciphertext,
-        nonce: nonce,
-        aad: aad,
-        contentHash: contentHash,
-      ),
+    final decoded = Map<String, dynamic>.from(payload);
+    if (accountId == null) return decoded;
+    return SyncProtocol.unwrapPayload(
+      decoded,
+      accountId: accountId,
+      collection: collection,
+      itemId: itemId,
     );
   }
 
@@ -197,8 +199,12 @@ class SyncApplyService {
         final box = await Hive.openBox<AppSettings>(_settingsBoxName);
         final current = box.get(_settingsKey);
         final merged = incoming.copyWith(
-          aiApiKey: current?.aiApiKey ?? '',
-          embeddingApiKey: current?.embeddingApiKey ?? '',
+          aiApiKey: payload.containsKey('aiApiKey')
+              ? incoming.aiApiKey
+              : current?.aiApiKey ?? '',
+          embeddingApiKey: payload.containsKey('embeddingApiKey')
+              ? incoming.embeddingApiKey
+              : current?.embeddingApiKey ?? '',
         );
         await box.put(_settingsKey, merged);
         return;

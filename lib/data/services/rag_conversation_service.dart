@@ -191,10 +191,12 @@ class RagConversationService {
     }
 
     try {
+      // There are two user-facing source modes.  Hybrid mode keeps the same
+      // contract even when retrieval returns no articles: the model may still
+      // answer from general knowledge instead of silently switching to a
+      // third, weaker prompt with different behavior.
       final knowledgeRulePath = request.knowledgeOnly
           ? 'chat/knowledge_only.txt'
-          : retrieval.articles.isEmpty
-          ? 'chat/knowledge_general.txt'
           : 'chat/knowledge_hybrid.txt';
       final lengthRulePath = request.detailedAnswer
           ? 'chat/length_detailed.txt'

@@ -36,6 +36,7 @@ class FilterGroup {
 
   Map<String, dynamic> toJson() {
     return {
+      'schemaVersion': 1,
       'id': id,
       'name': name,
       'tagPatterns': tagPatterns,
@@ -54,10 +55,10 @@ class FilterGroup {
       name: name,
       tagPatterns:
           (json['tagPatterns'] as List?)?.whereType<String>().toList() ??
-              const [],
+          const [],
       sourcePlatforms:
           (json['sourcePlatforms'] as List?)?.whereType<String>().toList() ??
-              const [],
+          const [],
     );
   }
 }

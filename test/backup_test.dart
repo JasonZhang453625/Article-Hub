@@ -79,9 +79,7 @@ void main() {
       expect(restored.memorySortNewestFirst, isTrue);
     });
 
-    test('AppSettings.toJson excludes API keys from export payloads', () {
-      // API keys stay local to the device and must not enter backup or sync
-      // payloads.
+    test('AppSettings.toJson excludes API keys from generic payloads', () {
       final settings = AppSettings(
         fontSize: 16,
         aiBaseUrl: 'https://api.openai.com/v1',
@@ -92,7 +90,7 @@ void main() {
       expect(
         json.containsKey('aiApiKey'),
         isFalse,
-        reason: 'API key must not appear in AppSettings JSON export path',
+        reason: 'API key must not appear in the generic settings JSON path',
       );
       expect(json.toString().contains('sk-test-key'), isFalse);
       expect(json['aiBaseUrl'], 'https://api.openai.com/v1');
@@ -135,6 +133,38 @@ void main() {
       expect(restored.articles.first.source, SourcePlatform.web);
       expect(restored.filterGroups, hasLength(1));
       expect(restored.settings?.fontSize, 16);
+    });
+
+    test('full backup restores API and model configuration', () {
+      final backup = BackupData.create(
+        articles: const [],
+        filterGroups: const [],
+        folders: const [],
+        settings: AppSettings(
+          aiBaseUrl: 'https://chat.example.com/v1',
+          aiApiKey: 'sk-chat-secret',
+          aiModel: 'chat-model-v2',
+          embeddingBaseUrl: 'https://embedding.example.com/v1',
+          embeddingApiKey: 'sk-embedding-secret',
+          embeddingModel: 'embedding-model-v3',
+        ),
+      );
+
+      final json = backup.toJson();
+      final settingsJson = json['settings'] as Map<String, dynamic>;
+      expect(settingsJson['aiApiKey'], 'sk-chat-secret');
+      expect(settingsJson['embeddingApiKey'], 'sk-embedding-secret');
+
+      final restored = BackupData.fromJsonString(
+        backup.toJsonString(),
+      ).settings;
+      expect(restored, isNotNull);
+      expect(restored!.aiBaseUrl, 'https://chat.example.com/v1');
+      expect(restored.aiApiKey, 'sk-chat-secret');
+      expect(restored.aiModel, 'chat-model-v2');
+      expect(restored.embeddingBaseUrl, 'https://embedding.example.com/v1');
+      expect(restored.embeddingApiKey, 'sk-embedding-secret');
+      expect(restored.embeddingModel, 'embedding-model-v3');
     });
 
     test('skips malformed article entries but keeps valid ones', () {

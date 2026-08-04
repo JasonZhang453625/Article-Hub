@@ -176,7 +176,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         )
         .toList();
 
-    if (completedArticles.isEmpty) {
+    if (completedArticles.isEmpty && settings.chatKnowledgeSourceIndex == 0) {
       await finish(
         pending.copyWith(
           content: s.knowledgeBaseEmpty,
@@ -293,12 +293,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         s: ref.read(stringsProvider),
         answerLength: settings.chatAnswerLengthIndex,
         knowledgeSource: settings.chatKnowledgeSourceIndex,
-        onChanged: (answerLength, knowledgeSource) {
-          ref.read(settingsProvider.notifier).setChatAnswerLength(answerLength);
-          ref
-              .read(settingsProvider.notifier)
-              .setChatKnowledgeSource(knowledgeSource);
-        },
+        onChanged: (answerLength, knowledgeSource) => ref
+            .read(settingsProvider.notifier)
+            .setChatPreferences(
+              answerLength: answerLength,
+              knowledgeSource: knowledgeSource,
+            ),
       ),
     );
   }

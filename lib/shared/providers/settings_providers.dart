@@ -47,7 +47,7 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
             collection: SyncCollections.appSettings,
             itemId: _key,
             operation: SyncOperation.upsert,
-            payload: settings.toJson(),
+            payload: settings.toSyncJson(),
           ),
         );
     state = AsyncValue.data(settings);
@@ -79,8 +79,8 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   }
 
   /// Persists the AI configuration (base URL, API key, model) to the local
-  /// Hive store. The key is stored locally on-device (never transmitted); it
-  /// is excluded from JSON backup export via [AppSettings.toJson].
+  /// Hive store. Account sync sends the key as JSON over HTTPS; generic JSON
+  /// serialization still omits it.
   Future<void> setAiConfig({
     String? baseUrl,
     String? apiKey,
@@ -110,6 +110,21 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   Future<void> setChatKnowledgeSource(int index) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(chatKnowledgeSourceIndex: index));
+  }
+
+  /// Persists the chat preferences together so one setting cannot overwrite
+  /// the other when the settings sheet applies both values at once.
+  Future<void> setChatPreferences({
+    required int answerLength,
+    required int knowledgeSource,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(
+      current.copyWith(
+        chatAnswerLengthIndex: answerLength,
+        chatKnowledgeSourceIndex: knowledgeSource,
+      ),
+    );
   }
 
   Future<void> setHideInboxTab(bool hidden) async {
@@ -231,9 +246,9 @@ final clipboardDetectionEnabledProvider = Provider<bool>((ref) {
 });
 
 /// True only when base URL, model, AND API key are all present. The key is
-/// stored locally on the device (see [AppSettings.aiApiKey]) and excluded from
-/// backups; it is never transmitted to any server other than the user's own
-/// AI provider during a summary request.
+/// stored locally on the device (see [AppSettings.aiApiKey]). Account sync can
+/// copy it as JSON over HTTPS; AI requests send it to the provider selected by
+/// the user.
 final aiConfiguredProvider = Provider<bool>((ref) {
   return ref
       .watch(settingsProvider)

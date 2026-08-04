@@ -11,6 +11,9 @@ import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/data/repositories/chat_repository.dart';
+import 'package:memora/data/services/prompt_service.dart';
+import 'package:memora/data/services/rag_conversation_service.dart';
+import 'package:memora/data/services/retrieval_service.dart';
 import 'package:memora/features/chat/chat_screen.dart';
 import 'package:memora/shared/providers/chat_providers.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
@@ -28,6 +31,8 @@ void main() {
     required List<Article> articles,
     List<ChatThread> threads = const [],
     List<ChatMessageRecord> messages = const [],
+    AppSettings? settings,
+    RagConversationService? conversation,
   }) async {
     final chatRepository = _InMemoryChatRepository(threads, messages);
     await tester.pumpWidget(
@@ -36,7 +41,13 @@ void main() {
           // Never completes: keeps settings loading without touching Hive.
           hiveInitProvider.overrideWith((ref) => Completer<void>().future),
           languageIndexProvider.overrideWith((ref) => 2),
-          settingsProvider.overrideWith((ref) => _TestSettingsNotifier(ref)),
+          settingsProvider.overrideWith(
+            (ref) => _TestSettingsNotifier(ref, settings),
+          ),
+          if (conversation != null)
+            ragConversationServiceProvider.overrideWith(
+              (ref) => conversation,
+            ),
           // In-memory repository: no file I/O, safe inside fake-async.
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
@@ -101,6 +112,45 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
 
     expect(find.textContaining('configure your AI provider'), findsOneWidget);
+  });
+
+  testWidgets('knowledge base plus general can answer with an empty knowledge base', (
+    tester,
+  ) async {
+    final conversation = RagConversationService(
+      retrieve: (query, articles) async => const RetrievalResult(
+        articles: [],
+        method: RetrievalMethod.none,
+        duration: Duration.zero,
+      ),
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async => 'General answer',
+      saveLog: (_) async {},
+      promptService: _TestChatPromptService(),
+    );
+    await pumpChat(
+      tester,
+      articles: [],
+      settings: AppSettings(
+        aiBaseUrl: 'https://example.com/v1',
+        aiApiKey: 'test-key',
+        chatAnswerLengthIndex: 1,
+        chatKnowledgeSourceIndex: 1,
+      ),
+      conversation: conversation,
+    );
+
+    await tester.enterText(find.byType(TextField), 'What is an API?');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('General answer'), findsOneWidget);
   });
 
   testWidgets('input bar and send button render', (tester) async {
@@ -254,8 +304,20 @@ void main() {
 }
 
 class _TestSettingsNotifier extends SettingsNotifier {
-  _TestSettingsNotifier(super.ref) {
-    state = AsyncValue.data(AppSettings());
+  _TestSettingsNotifier(super.ref, [AppSettings? settings]) {
+    state = AsyncValue.data(settings ?? AppSettings());
+  }
+}
+
+class _TestChatPromptService extends PromptService {
+  @override
+  Future<String> load(String path, [Map<String, String>? vars]) async {
+    if (path == 'chat/system.txt') return 'System prompt';
+    if (path == 'chat/user.txt') {
+      return 'Context: ${vars?['context'] ?? ''}\n'
+          'Question: ${vars?['question'] ?? ''}';
+    }
+    return path;
   }
 }
 

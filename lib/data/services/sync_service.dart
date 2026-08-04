@@ -5,8 +5,8 @@ import 'package:http/http.dart' as http;
 import '../../config/backend_config.dart';
 import 'auth_service.dart';
 import 'sync_apply_service.dart';
-import 'sync_crypto_service.dart';
 import 'sync_outbox_service.dart';
+import 'sync_protocol.dart';
 import 'sync_state_service.dart';
 
 class SyncResult {
@@ -23,47 +23,86 @@ class SyncResult {
     this.skippedConflicts = 0,
     required this.cursor,
   });
+
+  SyncResult combine(SyncResult other) {
+    return SyncResult(
+      pushed: pushed + other.pushed,
+      pulled: pulled + other.pulled,
+      applied: applied + other.applied,
+      skippedConflicts: skippedConflicts + other.skippedConflicts,
+      cursor: other.cursor,
+    );
+  }
 }
 
 class SyncService {
   final SyncOutboxService outbox;
   final SyncStateService state;
-  final SyncCryptoService crypto;
   final SyncApplyService applier;
+  final http.Client _client;
 
-  const SyncService({
+  Future<SyncResult>? _activeSync;
+
+  SyncService({
     required this.outbox,
     required this.state,
-    required this.crypto,
     required this.applier,
-  });
+    http.Client? client,
+  }) : _client = client ?? http.Client();
 
+  /// Runs one serialized sync job and drains every currently pending page.
+  /// Individual HTTP requests stay bounded, but callers never need to click
+  /// repeatedly to process the next 50 records.
   Future<SyncResult> sync(AuthSession session) async {
-    final pushed = await pushPending(session);
-    final pullResult = await pull(session);
+    final active = _activeSync;
+    if (active != null) return active;
+
+    final operation = _syncAll(session);
+    _activeSync = operation;
+    try {
+      return await operation;
+    } finally {
+      if (identical(_activeSync, operation)) _activeSync = null;
+    }
+  }
+
+  Future<SyncResult> _syncAll(AuthSession session) async {
+    final pushed = await pushAllPending(session);
+    final pulled = await pullAll(session);
     return SyncResult(
       pushed: pushed,
-      pulled: pullResult.pulled,
-      applied: pullResult.applied,
-      skippedConflicts: pullResult.skippedConflicts,
-      cursor: pullResult.cursor,
+      pulled: pulled.pulled,
+      applied: pulled.applied,
+      skippedConflicts: pulled.skippedConflicts,
+      cursor: pulled.cursor,
     );
   }
 
+  Future<int> pushAllPending(AuthSession session, {int pageSize = 50}) async {
+    var total = 0;
+    while (true) {
+      final pushed = await pushPending(session, limit: pageSize);
+      total += pushed;
+      if (pushed < pageSize) return total;
+    }
+  }
+
   Future<int> pushPending(AuthSession session, {int limit = 50}) async {
-    final records = await outbox.pending(limit: limit);
+    final accountId = session.user.id;
+    final records = await outbox.pending(accountId: accountId, limit: limit);
     if (records.isEmpty) return 0;
 
     try {
       final events = <Map<String, dynamic>>[];
       for (final record in records) {
-        final encrypted = record.operation == SyncOperation.delete
+        final rawPayload = record.payload ?? const <String, dynamic>{};
+        final payload = record.operation == SyncOperation.delete
             ? null
-            : await crypto.encryptJson(
-                record.payload ?? const <String, dynamic>{},
+            : SyncProtocol.wrapPayload(
+                accountId: accountId,
                 collection: record.collection,
                 itemId: record.itemId,
-                revision: record.revision,
+                data: rawPayload,
               );
         events.add({
           'clientEventId': record.id,
@@ -71,35 +110,36 @@ class SyncService {
           'itemId': record.itemId,
           'op': record.operation.name,
           'revision': record.revision,
-          'schemaVersion': 1,
-          'ciphertext': encrypted?.ciphertext,
-          'nonce': encrypted?.nonce,
-          'aad': encrypted?.aad,
-          'contentHash': encrypted?.contentHash,
+          'protocolVersion': SyncProtocol.protocolVersion,
+          'schemaVersion': SyncProtocol.protocolVersion,
+          'entitySchemaVersion': SyncProtocol.entitySchemaVersion(
+            record.payload,
+          ),
+          'payloadFormat': SyncProtocol.payloadFormat,
+          'payload': payload,
           'clientUpdatedAt': record.clientUpdatedAt,
         });
       }
 
-      final response = await http
+      final response = await _client
           .post(
             BackendConfig.uri('/sync/push'),
-            headers: {
-              'Authorization': 'Bearer ${session.accessToken}',
-              'Content-Type': 'application/json',
-            },
+            headers: _headers(session, json: true),
             body: jsonEncode({
+              'protocolVersion': SyncProtocol.protocolVersion,
               'deviceId': session.device.id,
-              'baseCursor': await state.cursor(),
+              'baseCursor': await state.cursor(accountId),
               'events': events,
             }),
           )
           .timeout(const Duration(seconds: 30));
       _throwIfFailed(response);
 
+      _decodeObject(response);
       await outbox.removeAll(records.map((record) => record.id));
-      final decoded = _decodeObject(response);
-      final cursor = _extractCursor(decoded);
-      if (cursor != null) await state.setCursor(cursor);
+
+      // A push acknowledgement must never advance the local read cursor. Only
+      // pull/bootstrap can do that after all preceding remote events are read.
       return records.length;
     } catch (error) {
       await outbox.markFailed(records, error);
@@ -107,9 +147,24 @@ class SyncService {
     }
   }
 
+  Future<SyncResult> pullAll(AuthSession session, {int pageSize = 500}) async {
+    final accountId = session.user.id;
+    var result = SyncResult(
+      pushed: 0,
+      pulled: 0,
+      cursor: await state.cursor(accountId),
+    );
+    while (true) {
+      final page = await pull(session, limit: pageSize);
+      result = result.combine(page);
+      if (page.pulled < pageSize) return result;
+    }
+  }
+
   Future<SyncResult> pull(AuthSession session, {int limit = 500}) async {
-    final cursor = await state.cursor();
-    final response = await http
+    final accountId = session.user.id;
+    final cursor = await state.cursor(accountId);
+    final response = await _client
         .get(
           BackendConfig.uri('/sync/pull').replace(
             queryParameters: {
@@ -117,7 +172,7 @@ class SyncService {
               'limit': limit.toString(),
             },
           ),
-          headers: {'Authorization': 'Bearer ${session.accessToken}'},
+          headers: _headers(session),
         )
         .timeout(const Duration(seconds: 30));
     _throwIfFailed(response);
@@ -125,11 +180,17 @@ class SyncService {
     final decoded = _decodeObject(response);
     final nextCursor = _extractCursor(decoded) ?? cursor;
     final events = _extractEvents(decoded);
+    if (nextCursor < cursor || (events.isNotEmpty && nextCursor == cursor)) {
+      throw const SyncApiException(
+        'Sync server returned events without advancing the cursor.',
+      );
+    }
     final applyResult = await applier.applyEvents(
       events,
       localDeviceId: session.device.id,
+      accountId: accountId,
     );
-    await state.setCursor(nextCursor);
+    await state.setCursor(accountId, nextCursor);
 
     return SyncResult(
       pushed: 0,
@@ -141,26 +202,25 @@ class SyncService {
   }
 
   Future<Map<String, dynamic>> bootstrap(AuthSession session) async {
-    final response = await http
-        .get(
-          BackendConfig.uri('/sync/bootstrap'),
-          headers: {'Authorization': 'Bearer ${session.accessToken}'},
-        )
+    final response = await _client
+        .get(BackendConfig.uri('/sync/bootstrap'), headers: _headers(session))
         .timeout(const Duration(seconds: 30));
     _throwIfFailed(response);
     return _decodeObject(response);
   }
 
   Future<SyncResult> bootstrapAndApply(AuthSession session) async {
+    final accountId = session.user.id;
     final decoded = await bootstrap(session);
-    final cursor = await state.cursor();
+    final cursor = await state.cursor(accountId);
     final nextCursor = _extractCursor(decoded) ?? cursor;
     final events = _extractEvents(decoded);
     final applyResult = await applier.applyEvents(
       events,
       localDeviceId: session.device.id,
+      accountId: accountId,
     );
-    await state.setCursor(nextCursor);
+    await state.setCursor(accountId, nextCursor);
     return SyncResult(
       pushed: 0,
       pulled: events.length,
@@ -168,6 +228,14 @@ class SyncService {
       skippedConflicts: applyResult.skippedConflicts,
       cursor: nextCursor,
     );
+  }
+
+  Map<String, String> _headers(AuthSession session, {bool json = false}) {
+    return {
+      'Authorization': 'Bearer ${session.accessToken}',
+      'X-Memora-Sync-Protocol': SyncProtocol.protocolVersion.toString(),
+      if (json) 'Content-Type': 'application/json',
+    };
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {
@@ -196,8 +264,12 @@ class SyncService {
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is Map) {
-        message = (decoded['message'] ?? decoded['error'] ?? message)
-            .toString();
+        final error = decoded['error'];
+        message =
+            (decoded['message'] ??
+                    (error is Map ? error['message'] : error) ??
+                    message)
+                .toString();
       }
     } catch (_) {
       if (response.body.isNotEmpty) message = response.body;

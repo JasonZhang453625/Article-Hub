@@ -5,7 +5,7 @@ class ChatSettingsSheet extends StatefulWidget {
   final LocaleStrings s;
   final int answerLength;
   final int knowledgeSource;
-  final void Function(int answerLength, int knowledgeSource) onChanged;
+  final Future<void> Function(int answerLength, int knowledgeSource) onChanged;
 
   const ChatSettingsSheet({
     super.key,
@@ -22,6 +22,7 @@ class ChatSettingsSheet extends StatefulWidget {
 class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
   late int _answerLength;
   late int _knowledgeSource;
+  bool _applying = false;
 
   @override
   void initState() {
@@ -92,14 +93,28 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: () {
-                widget.onChanged(_answerLength, _knowledgeSource);
-                Navigator.pop(context);
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(s.chatApply),
-              ),
+              onPressed: _applying
+                  ? null
+                  : () async {
+                      setState(() => _applying = true);
+                      try {
+                        await widget.onChanged(_answerLength, _knowledgeSource);
+                        if (!context.mounted) return;
+                        Navigator.pop(context);
+                      } finally {
+                        if (mounted) setState(() => _applying = false);
+                      }
+                    },
+              child: _applying
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(s.chatApply),
+                    ),
             ),
           ),
         ],
