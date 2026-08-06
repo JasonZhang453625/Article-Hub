@@ -162,6 +162,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     );
   }
 
+  Future<void> setTavilyApiKey(String apiKey) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(tavilyApiKey: apiKey));
+  }
+
   Future<void> updateSourcePlatformOrder(List<String> order) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(sourcePlatformOrder: order));

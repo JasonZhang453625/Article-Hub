@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:uuid/uuid.dart';
 
 export 'chat_context_window.dart' show ChatContextWindow, RagConversationTurn;
@@ -9,6 +11,7 @@ import 'rag_citation.dart';
 import 'rag_context_builder.dart';
 import 'retrieval_log_service.dart';
 import 'retrieval_service.dart';
+import 'web_search_service.dart';
 
 typedef RagRetrieve =
     Future<RetrievalResult> Function(String query, List<Article> articles);
@@ -24,6 +27,9 @@ typedef RagCompletion =
 
 typedef RagSaveLog = Future<void> Function(RetrievalLog log);
 
+typedef RagWebSearch =
+    Future<List<WebSearchResult>> Function(String query, {int topK});
+
 class RagConversationRequest {
   final String question;
   final List<RagConversationTurn> history;
@@ -31,6 +37,11 @@ class RagConversationRequest {
   final bool knowledgeOnly;
   final bool detailedAnswer;
   final String languageHint;
+
+  /// When true (and a web search backend is configured), the conversation
+  /// may fall back to live web search when local retrieval finds nothing
+  /// relevant. Local results always win — the web is only a fallback.
+  final bool webSearch;
   final int contextTokenBudget;
   final int contextWindowTokens;
 
@@ -41,6 +52,7 @@ class RagConversationRequest {
     required this.knowledgeOnly,
     required this.detailedAnswer,
     required this.languageHint,
+    this.webSearch = false,
     this.contextTokenBudget = 2200,
     this.contextWindowTokens = ChatContextWindow.defaultContextWindowTokens,
   });
@@ -58,6 +70,10 @@ class RagConversationResult {
   final String method;
   final String logId;
 
+  /// Web URLs the model actually cited (via `[wN]`) this turn, in candidate
+  /// order. Empty unless the web fallback was used.
+  final List<String> webUrls;
+
   const RagConversationResult({
     required this.outcome,
     this.answer,
@@ -67,6 +83,7 @@ class RagConversationResult {
     this.weakArticleIds = const [],
     required this.method,
     required this.logId,
+    this.webUrls = const [],
   });
 }
 
@@ -125,6 +142,8 @@ class RagConversationService {
   final RagContextBuilder _contextBuilder;
   final ChatContextWindow _contextWindow;
   final HistoryAwareQueryRewriter _queryRewriter;
+  final RagWebSearch? _webSearch;
+  final int _webTopK;
 
   RagConversationService({
     required RagRetrieve retrieve,
@@ -134,12 +153,16 @@ class RagConversationService {
     RagContextBuilder contextBuilder = const RagContextBuilder(),
     ChatContextWindow contextWindow = const ChatContextWindow(),
     HistoryAwareQueryRewriter? queryRewriter,
+    RagWebSearch? webSearch,
+    int webTopK = 5,
   }) : _retrieve = retrieve,
        _complete = complete,
        _saveLog = saveLog,
        _prompts = promptService,
        _contextBuilder = contextBuilder,
        _contextWindow = contextWindow,
+       _webSearch = webSearch,
+       _webTopK = webTopK,
        _queryRewriter =
            queryRewriter ??
            HistoryAwareQueryRewriter(
@@ -156,6 +179,8 @@ class RagConversationService {
       history: request.history,
     );
 
+    // 1. Local retrieval — and, when web search is enabled, a live web
+    //    search runs in parallel so the fallback adds no extra latency.
     RetrievalResult retrieval;
     try {
       retrieval = await _retrieve(rewrittenQuery, request.articles);
@@ -169,17 +194,36 @@ class RagConversationService {
       );
     }
 
+    final webStopwatch = Stopwatch();
+    List<WebSearchResult> webResults = const [];
+    if (request.webSearch && _webSearch != null) {
+      webStopwatch.start();
+      try {
+        webResults = await _webSearch(rewrittenQuery, topK: _webTopK);
+      } catch (error) {
+        developer.log('web search failed: $error', name: 'memora.rag');
+      }
+      webStopwatch.stop();
+    }
+
     final candidateIds = retrieval.candidateIds.isNotEmpty
         ? retrieval.candidateIds
         : retrieval.articles.map((article) => article.id).toList();
-    if (retrieval.articles.isEmpty && request.knowledgeOnly) {
+
+    // 2. Local results win — the web is only a fallback when local
+    //    retrieval found nothing relevant.
+    final useLocalContext = retrieval.articles.isNotEmpty;
+    final useWebContext = !useLocalContext && webResults.isNotEmpty;
+
+    if (!useLocalContext && !useWebContext && request.knowledgeOnly) {
       await _writeLog(
         logId: logId,
         question: question,
         rewrittenQuery: rewrittenQuery,
-        retrieval: retrieval,
+        method: RetrievalMethod.none.name,
         candidateIds: candidateIds,
         citedIds: const [],
+        durationMs: retrieval.duration.inMilliseconds,
       );
       return RagConversationResult(
         outcome: RagConversationOutcome.noResult,
@@ -191,13 +235,17 @@ class RagConversationService {
     }
 
     try {
-      // There are two user-facing source modes.  Hybrid mode keeps the same
-      // contract even when retrieval returns no articles: the model may still
-      // answer from general knowledge instead of silently switching to a
-      // third, weaker prompt with different behavior.
-      final knowledgeRulePath = request.knowledgeOnly
+      // Web fallback uses a dedicated mode: snippets are the evidence and
+      // citations are [wN] URL references. Otherwise the existing
+      // local/hybrid contract applies unchanged.
+      final knowledgeRulePath = useWebContext
+          ? 'chat/knowledge_web.txt'
+          : request.knowledgeOnly
           ? 'chat/knowledge_only.txt'
           : 'chat/knowledge_hybrid.txt';
+      final userPromptPath = useWebContext
+          ? 'chat/user_web.txt'
+          : 'chat/user.txt';
       final lengthRulePath = request.detailedAnswer
           ? 'chat/length_detailed.txt'
           : 'chat/length_concise.txt';
@@ -211,7 +259,7 @@ class RagConversationService {
             : '\n${request.languageHint}',
       });
       final maxTokens = request.detailedAnswer ? 2500 : 1000;
-      final baseUserMessage = await _prompts.load('chat/user.txt', {
+      final baseUserMessage = await _prompts.load(userPromptPath, {
         'context': '',
         'question': question,
       });
@@ -226,9 +274,10 @@ class RagConversationService {
           logId: logId,
           question: question,
           rewrittenQuery: rewrittenQuery,
-          retrieval: retrieval,
+          method: retrieval.method.name,
           candidateIds: candidateIds,
           citedIds: const [],
+          durationMs: retrieval.duration.inMilliseconds,
         );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
@@ -242,13 +291,30 @@ class RagConversationService {
           request.contextTokenBudget < availableContextTokens
           ? request.contextTokenBudget
           : availableContextTokens;
-      final context = _contextBuilder.build(
-        query: rewrittenQuery,
-        candidates: retrieval.articles,
-        tokenBudget: effectiveContextBudget,
-      );
-      final userMessage = await _prompts.load('chat/user.txt', {
-        'context': context.text,
+
+      final String contextText;
+      final Map<String, String> citationMap;
+      final List<String> webUrls;
+      if (useWebContext) {
+        final built = _buildWebContext(
+          webResults,
+          tokenBudget: effectiveContextBudget,
+        );
+        contextText = built.text;
+        citationMap = const {};
+        webUrls = built.urls;
+      } else {
+        final context = _contextBuilder.build(
+          query: rewrittenQuery,
+          candidates: retrieval.articles,
+          tokenBudget: effectiveContextBudget,
+        );
+        contextText = context.text;
+        citationMap = context.citationMap;
+        webUrls = const [];
+      }
+      final userMessage = await _prompts.load(userPromptPath, {
+        'context': contextText,
         'question': question,
       });
       final history = _contextWindow.selectForPrompt(
@@ -271,66 +337,128 @@ class RagConversationService {
           logId: logId,
           question: question,
           rewrittenQuery: rewrittenQuery,
-          retrieval: retrieval,
+          method: useWebContext ? 'web' : retrieval.method.name,
           candidateIds: candidateIds,
           citedIds: const [],
+          webCandidateUrls: useWebContext ? webUrls : const [],
+          webCitedUrls: const [],
+          durationMs: webStopwatch.elapsed.inMilliseconds,
         );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
           error: 'empty response',
           rewrittenQuery: rewrittenQuery,
-          method: retrieval.method.name,
+          method: useWebContext ? 'web' : retrieval.method.name,
           logId: logId,
         );
       }
 
-      final citedIds = extractValidCitations(
-        response: response,
-        citationMap: context.citationMap,
-        validIds: request.articles.map((article) => article.id).toSet(),
-      );
+      final citedIds = useWebContext
+          ? const <String>[]
+          : extractValidCitations(
+              response: response,
+              citationMap: citationMap,
+              validIds: request.articles.map((article) => article.id).toSet(),
+            );
+      final citedWebUrls = useWebContext
+          ? extractValidWebCitations(response: response, urls: webUrls)
+          : const <String>[];
       await _writeLog(
         logId: logId,
         question: question,
         rewrittenQuery: rewrittenQuery,
-        retrieval: retrieval,
+        method: useWebContext ? 'web' : retrieval.method.name,
         candidateIds: candidateIds,
         citedIds: citedIds,
+        webCandidateUrls: useWebContext ? webUrls : const [],
+        webCitedUrls: citedWebUrls,
+        durationMs: webStopwatch.elapsed.inMilliseconds,
       );
       return RagConversationResult(
         outcome: RagConversationOutcome.answer,
         answer: response,
         rewrittenQuery: rewrittenQuery,
         citedIds: List.unmodifiable(citedIds),
-        method: retrieval.method.name,
+        method: useWebContext ? 'web' : retrieval.method.name,
         logId: logId,
+        webUrls: List.unmodifiable(citedWebUrls),
       );
     } catch (error) {
       await _writeLog(
         logId: logId,
         question: question,
         rewrittenQuery: rewrittenQuery,
-        retrieval: retrieval,
+        method: useWebContext ? 'web' : retrieval.method.name,
         candidateIds: candidateIds,
         citedIds: const [],
+        webCandidateUrls: useWebContext
+            ? webResults.map((result) => result.url).toList()
+            : const [],
+        webCitedUrls: const [],
+        durationMs: webStopwatch.elapsed.inMilliseconds,
       );
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
         error: error.toString(),
         rewrittenQuery: rewrittenQuery,
-        method: retrieval.method.name,
+        method: useWebContext ? 'web' : retrieval.method.name,
         logId: logId,
       );
     }
+  }
+
+  /// Packs web search hits into a bounded context block with [wN] citation
+  /// labels, returning the rendered text and the offered URLs in order.
+  ({String text, List<String> urls}) _buildWebContext(
+    List<WebSearchResult> results, {
+    required int tokenBudget,
+  }) {
+    if (tokenBudget <= 0 || results.isEmpty) {
+      return (text: '', urls: const <String>[]);
+    }
+    final buffer = StringBuffer();
+    final urls = <String>[];
+    var used = 0;
+    for (var i = 0; i < results.length; i++) {
+      final result = results[i];
+      final header = '[w${i + 1}] ${result.title}\nURL: ${result.url}\n';
+      final headerTokens = RagContextBuilder.estimateTokens(header);
+      final remaining = tokenBudget - used - headerTokens;
+      if (remaining <= 0) break;
+      final snippet = _truncateToTokens(result.content.trim(), remaining);
+      final block = '$header$snippet\n';
+      final blockTokens = RagContextBuilder.estimateTokens(block);
+      if (used + blockTokens > tokenBudget) break;
+      buffer.writeln(block.trimRight());
+      buffer.writeln();
+      urls.add(result.url);
+      used += blockTokens;
+    }
+    return (text: buffer.toString().trim(), urls: urls);
+  }
+
+  static String _truncateToTokens(String text, int budget) {
+    if (budget <= 0 || text.isEmpty) return '';
+    var candidate = text;
+    while (RagContextBuilder.estimateTokens(candidate) > budget &&
+        candidate.isNotEmpty) {
+      candidate = candidate
+          .substring(0, (candidate.length * 0.75).floor())
+          .trim();
+    }
+    return candidate;
   }
 
   Future<void> _writeLog({
     required String logId,
     required String question,
     required String rewrittenQuery,
-    required RetrievalResult retrieval,
-    required List<String> candidateIds,
-    required List<String> citedIds,
+    required String method,
+    List<String> candidateIds = const [],
+    List<String> citedIds = const [],
+    List<String> webCandidateUrls = const [],
+    List<String> webCitedUrls = const [],
+    int durationMs = 0,
   }) async {
     try {
       await _saveLog(
@@ -338,10 +466,12 @@ class RagConversationService {
           id: logId,
           query: question,
           rewrittenQuery: rewrittenQuery == question ? null : rewrittenQuery,
-          method: retrieval.method.name,
+          method: method,
           candidateIds: candidateIds,
           citedIds: citedIds,
-          durationMs: retrieval.duration.inMilliseconds,
+          durationMs: durationMs,
+          webCandidateUrls: webCandidateUrls,
+          webCitedUrls: webCitedUrls,
         ),
       );
     } catch (_) {

@@ -38,3 +38,36 @@ List<String> extractValidCitations({
   }
   return cited;
 }
+
+/// Maps 1-based web citation labels (`w1`, `w2`, ...) to the URLs offered to
+/// the model in this turn. Index 0 → `[w1]`.
+Map<String, String> buildWebCitationMap(List<String> urls) {
+  final map = <String, String>{};
+  for (int i = 0; i < urls.length; i++) {
+    map['w${i + 1}'] = urls[i];
+  }
+  return map;
+}
+
+/// Extracts the web URLs the model cited via `[wN]` markers in [response].
+///
+/// Only labels that resolve to one of the [urls] offered this turn are kept,
+/// so a fabricated or off-topic URL can never appear as a citation. Returns
+/// the cited URLs in candidate order, de-duplicated.
+List<String> extractValidWebCitations({
+  required String response,
+  required List<String> urls,
+}) {
+  if (urls.isEmpty) return const [];
+  final map = buildWebCitationMap(urls);
+  final cited = <String>[];
+  for (final entry in map.entries) {
+    if (RegExp(r'\[' + RegExp.escape(entry.key) + r'\]').hasMatch(response)) {
+      final url = entry.value;
+      if (!cited.contains(url)) {
+        cited.add(url);
+      }
+    }
+  }
+  return cited;
+}

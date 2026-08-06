@@ -50,6 +50,12 @@ class AppSettings {
   String embeddingApiKey;
   String embeddingModel;
 
+  /// Tavily API key for the RAG chat web-search fallback (BYOK).
+  ///
+  /// Same threat model as [aiApiKey]: omitted from generic [toJson], included
+  /// in [toBackupJson] / [toSyncJson].
+  String tavilyApiKey;
+
   /// Language: 0 = follow system, 1 = Chinese, 2 = English
   int languageIndex;
 
@@ -91,6 +97,7 @@ class AppSettings {
     this.embeddingBaseUrl = '',
     this.embeddingApiKey = '',
     this.embeddingModel = '',
+    this.tavilyApiKey = '',
     this.languageIndex = 0,
     this.summaryVerbosityIndex = 0,
     this.chatAnswerLengthIndex = 0,
@@ -224,6 +231,7 @@ class AppSettings {
     String? embeddingBaseUrl,
     String? embeddingApiKey,
     String? embeddingModel,
+    String? tavilyApiKey,
     int? languageIndex,
     int? summaryVerbosityIndex,
     int? chatAnswerLengthIndex,
@@ -249,6 +257,7 @@ class AppSettings {
       embeddingBaseUrl: embeddingBaseUrl ?? this.embeddingBaseUrl,
       embeddingApiKey: embeddingApiKey ?? this.embeddingApiKey,
       embeddingModel: embeddingModel ?? this.embeddingModel,
+      tavilyApiKey: tavilyApiKey ?? this.tavilyApiKey,
       languageIndex: languageIndex ?? this.languageIndex,
       summaryVerbosityIndex:
           summaryVerbosityIndex ?? this.summaryVerbosityIndex,
@@ -305,6 +314,7 @@ class AppSettings {
       ...toJson(),
       'aiApiKey': aiApiKey,
       'embeddingApiKey': embeddingApiKey,
+      'tavilyApiKey': tavilyApiKey,
     };
   }
 
@@ -336,6 +346,9 @@ class AppSettings {
           : '',
       embeddingModel: json['embeddingModel'] is String
           ? json['embeddingModel'] as String
+          : '',
+      tavilyApiKey: json['tavilyApiKey'] is String
+          ? json['tavilyApiKey'] as String
           : '',
       languageIndex: (json['languageIndex'] as num?)?.toInt() ?? 0,
       summaryVerbosityIndex:
@@ -398,13 +411,14 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       embeddingBaseUrl: (fields[10] as String?) ?? '',
       embeddingApiKey: (fields[11] as String?) ?? '',
       embeddingModel: (fields[12] as String?) ?? '',
+      tavilyApiKey: (fields[22] as String?) ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(22)
+      ..writeByte(23)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -448,6 +462,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(20)
       ..write(obj.totalTokensUsed)
       ..writeByte(21)
-      ..write(obj.memorySortNewestFirst);
+      ..write(obj.memorySortNewestFirst)
+      ..writeByte(22)
+      ..write(obj.tavilyApiKey);
   }
 }

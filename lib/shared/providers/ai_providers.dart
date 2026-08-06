@@ -6,6 +6,7 @@ import '../../data/services/prompt_service.dart';
 import '../../data/services/rag_conversation_service.dart';
 import '../../data/services/retrieval_service.dart';
 import '../../data/services/retrieval_log_service.dart';
+import '../../data/services/web_search_service.dart';
 import 'article_providers.dart';
 import 'settings_providers.dart';
 
@@ -48,6 +49,16 @@ final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
   return RetrievalLogService();
 });
 
+final webSearchServiceProvider = Provider<WebSearchService?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null || settings.tavilyApiKey.trim().isEmpty) return null;
+  return WebSearchService(apiKey: settings.tavilyApiKey);
+});
+
+final webSearchConfiguredProvider = Provider<bool>((ref) {
+  return ref.watch(webSearchServiceProvider) != null;
+});
+
 final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   final retrieval = ref.watch(retrievalServiceProvider);
@@ -67,6 +78,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
     ref.read(settingsProvider.notifier).addTokenUsage(tokens);
   };
   final logService = ref.watch(retrievalLogServiceProvider);
+  final webSearch = ref.watch(webSearchServiceProvider);
 
   return RagConversationService(
     retrieve: retrieval.retrieve,
@@ -88,5 +100,8 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
         },
     saveLog: logService.save,
     promptService: PromptService(),
+    webSearch: webSearch == null
+        ? null
+        : (query, {topK = 5}) => webSearch.search(query, topK: topK),
   );
 });

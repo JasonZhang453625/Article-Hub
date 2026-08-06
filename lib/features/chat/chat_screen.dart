@@ -32,6 +32,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _loading = false;
   bool _keyboardWasOpen = false;
 
+  /// Monotonic token identifying the current answer run. Bumped on every
+  /// send/retry and on resume-recovery so a stale in-flight run (whose HTTP
+  /// request the OS killed while the app was backgrounded) can never write
+  /// its result or reset the loading flag for a newer run.
+  int _answerRunId = 0;
+
+  /// True when the app went to the background while an answer was loading.
+  /// Used by [didChangeAppLifecycleState] to detect a dead in-flight request
+  /// on resume.
+  bool _backgroundedWhileLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +67,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       FocusManager.instance.primaryFocus?.unfocus();
     }
     _keyboardWasOpen = viewInsets > 0;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      // Remember that the answer was still generating when the app left the
+      // foreground. Mobile OSes suspend/kill in-flight network requests, so
+      // the pending completion can never finish on its own.
+      _backgroundedWhileLoading = _loading;
+    } else if (state == AppLifecycleState.resumed &&
+        _backgroundedWhileLoading) {
+      _backgroundedWhileLoading = false;
+      _recoverIfStuckOnResume();
+    }
+  }
+
+  /// On resume, an answer that was still generating when the app was
+  /// backgrounded is guaranteed dead (the OS suspended the process and
+  /// killed the socket). Free the UI: mark the stuck placeholder as
+  /// interrupted (one-tap retry) and reset the loading flag so the user can
+  /// act instead of staring at an infinite typing indicator.
+  void _recoverIfStuckOnResume() {
+    final chatState = ref.read(chatSessionsProvider).valueOrNull;
+    if (chatState == null) return;
+    final stuck = chatState.messages
+        .where((m) => m.status == ChatMessageStatus.sending)
+        .toList(growable: false);
+    if (stuck.isEmpty) {
+      // Nothing stuck in storage; just make sure a dangling local flag can't
+      // block the input bar.
+      if (_loading && mounted) setState(() => _loading = false);
+      return;
+    }
+    // Invalidate the dead in-flight run: its late result / late failure must
+    // be discarded instead of clobbering the recovered state.
+    _answerRunId++;
+    if (mounted) setState(() => _loading = false);
+    for (final record in stuck) {
+      unawaited(
+        ref
+            .read(chatSessionsProvider.notifier)
+            .updateMessage(
+              record.copyWith(status: ChatMessageStatus.interrupted),
+            ),
+      );
+    }
+    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -85,6 +144,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     setState(() {
       _loading = true;
     });
+    final runId = ++_answerRunId;
     final sessions = ref.read(chatSessionsProvider.notifier);
     late final PersistedUserMessage persistedUser;
     try {
@@ -98,12 +158,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       return;
     }
-    final pending = await sessions.addPendingMessage(
-      threadId: persistedUser.threadId,
-      query: query,
-    );
+    ChatMessageRecord pending;
+    try {
+      pending = await sessions.addPendingMessage(
+        threadId: persistedUser.threadId,
+        query: query,
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return;
+    }
     _scrollToBottom();
-    await _runAnswer(pending: pending, history: history);
+    await _runAnswer(pending: pending, history: history, runId: runId);
   }
 
   /// Re-runs a previously interrupted answer on its original message,
@@ -120,20 +191,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     setState(() {
       _loading = true;
     });
-    await ref
-        .read(chatSessionsProvider.notifier)
-        .updateMessage(record.copyWith(status: ChatMessageStatus.sending));
+    final runId = ++_answerRunId;
+    final retried = record.copyWith(status: ChatMessageStatus.sending);
+    await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
     _scrollToBottom();
-    await _runAnswer(
-      pending: record.copyWith(status: ChatMessageStatus.sending),
-      history: history,
-    );
+    await _runAnswer(pending: retried, history: history, runId: runId);
   }
 
   /// Runs the RAG pipeline and writes the outcome back onto [pending].
+  ///
+  /// [runId] identifies this specific answer run. If the widget started a
+  /// newer run (retry) or recovered an interrupted answer in the meantime,
+  /// this run's result and loading-flag reset are discarded.
   Future<void> _runAnswer({
     required ChatMessageRecord pending,
     required List<RagConversationTurn> history,
+    required int runId,
   }) async {
     final sessions = ref.read(chatSessionsProvider.notifier);
     final settings = ref.read(settingsProvider).valueOrNull;
@@ -151,7 +224,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           errorCode: 'ai_not_configured',
         ),
       );
-      _finishLoading();
+      _finishLoading(runId);
       return;
     }
 
@@ -164,7 +237,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           errorCode: 'ai_unavailable',
         ),
       );
-      _finishLoading();
+      _finishLoading(runId);
       return;
     }
 
@@ -176,7 +249,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         )
         .toList();
 
-    if (completedArticles.isEmpty && settings.chatKnowledgeSourceIndex == 0) {
+    // With an empty knowledge base, web search (explicitly enabled) is still
+    // a valid source — only block when the user expects local-only answers.
+    if (completedArticles.isEmpty &&
+        settings.chatKnowledgeSourceIndex == 0 &&
+        !ref.read(chatWebSearchEnabledProvider)) {
       await finish(
         pending.copyWith(
           content: s.knowledgeBaseEmpty,
@@ -184,7 +261,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           query: pending.query,
         ),
       );
-      _finishLoading();
+      _finishLoading(runId);
       return;
     }
 
@@ -197,14 +274,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           knowledgeOnly: settings.chatKnowledgeSourceIndex == 0,
           detailedAnswer: settings.chatAnswerLengthIndex == 1,
           languageHint: aiLanguagePrompt(settings.languageIndex),
+          webSearch: ref.read(chatWebSearchEnabledProvider),
         ),
       );
+      if (runId != _answerRunId) {
+        // This run was superseded (interrupted on resume / retried) while
+        // the request was in flight — discard its outcome.
+        return;
+      }
       switch (result.outcome) {
         case RagConversationOutcome.answer:
           await finish(
             pending.copyWith(
               content: result.answer ?? '',
               articleIds: result.citedIds,
+              webUrls: result.webUrls,
               method: result.method,
               logId: result.logId,
               status: ChatMessageStatus.completed,
@@ -237,6 +321,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           break;
       }
     } catch (error) {
+      if (runId != _answerRunId) return;
       await finish(
         pending.copyWith(
           content: '${s.aiError}: $error',
@@ -245,7 +330,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       );
     }
-    _finishLoading();
+    _finishLoading(runId);
   }
 
   List<RagConversationTurn> _completedHistory(
@@ -274,7 +359,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return null;
   }
 
-  void _finishLoading() {
+  void _finishLoading(int runId) {
+    // Only the current run may release the loading flag; a stale run must not
+    // unlock the input while a retry is already in progress.
+    if (runId != _answerRunId) return;
     if (mounted) {
       setState(() => _loading = false);
       _scrollToBottom();
@@ -433,6 +521,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             loading: _loading || chatUnavailable,
             s: s,
             onSend: () => _send(),
+            webSearchEnabled: ref.watch(chatWebSearchEnabledProvider),
+            webSearchAvailable: ref.watch(webSearchConfiguredProvider),
+            onToggleWebSearch: () => ref
+                .read(chatWebSearchEnabledProvider.notifier)
+                .state = !ref.read(chatWebSearchEnabledProvider),
           ),
         ],
       ),

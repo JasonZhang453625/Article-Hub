@@ -8,12 +8,23 @@ class ChatInputBar extends StatelessWidget {
   final LocaleStrings s;
   final VoidCallback onSend;
 
+  /// Whether the session-level web-search fallback is enabled.
+  final bool webSearchEnabled;
+
+  /// Whether a web search backend is configured (Tavily key set).
+  final bool webSearchAvailable;
+
+  final VoidCallback? onToggleWebSearch;
+
   const ChatInputBar({
     super.key,
     required this.controller,
     required this.loading,
     required this.s,
     required this.onSend,
+    this.webSearchEnabled = false,
+    this.webSearchAvailable = false,
+    this.onToggleWebSearch,
   });
 
   @override
@@ -60,7 +71,40 @@ class ChatInputBar extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: webSearchAvailable
+                    ? (webSearchEnabled
+                          ? s.webSearchOn
+                          : s.webSearchOff)
+                    : s.webSearchNotConfigured,
+                child: IconButton(
+                  onPressed: loading
+                      ? null
+                      : (webSearchAvailable ? onToggleWebSearch : null),
+                  icon: Icon(
+                    Icons.public_rounded,
+                    size: 22,
+                    color: webSearchAvailable
+                        ? (webSearchEnabled
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant)
+                        : Theme.of(context).disabledColor,
+                  ),
+                  // Visible state without long-press: a filled dot under the
+                  // globe when the web fallback is armed.
+                  style: webSearchAvailable && webSearchEnabled
+                      ? IconButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.12),
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 4),
               IconButton.filled(
                 onPressed: loading ? null : onSend,
                 icon: loading

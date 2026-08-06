@@ -13,6 +13,7 @@ class ChatMessage {
   final bool isNoResult;
   final String? query;
   final ChatMessageStatus status;
+  final List<String> webUrls;
   int? feedback;
 
   ChatMessage({
@@ -26,6 +27,7 @@ class ChatMessage {
     this.isNoResult = false,
     this.query,
     this.status = ChatMessageStatus.completed,
+    this.webUrls = const [],
   });
 
   bool get isPending => status == ChatMessageStatus.sending;
@@ -46,6 +48,7 @@ class ChatMessage {
       isNoResult: record.isNoResult,
       query: record.query,
       status: record.status,
+      webUrls: record.webUrls,
     )..feedback = record.feedback;
   }
 }

@@ -6,13 +6,19 @@ class RetrievalLog {
   final String id;
   final String query;
   final String? rewrittenQuery;
-  final String method; // vector, keyword, none
+  final String method; // vector, keyword, none, web
   final List<String> candidateIds;
   final List<String> citedIds;
   final int durationMs;
   final DateTime timestamp;
   final int? feedback; // null = not rated, 1 = useful, -1 = not useful
   final List<String> clickedCitationIds;
+
+  /// Web URLs offered to the model in a web-fallback turn.
+  final List<String> webCandidateUrls;
+
+  /// Web URLs the model actually cited (via `[wN]`).
+  final List<String> webCitedUrls;
 
   RetrievalLog({
     required this.id,
@@ -25,6 +31,8 @@ class RetrievalLog {
     DateTime? timestamp,
     this.feedback,
     this.clickedCitationIds = const [],
+    this.webCandidateUrls = const [],
+    this.webCitedUrls = const [],
   }) : timestamp = timestamp ?? DateTime.now();
 
   Map<String, dynamic> toMap() => {
@@ -38,6 +46,8 @@ class RetrievalLog {
     'timestamp': timestamp.toIso8601String(),
     'feedback': feedback,
     'clickedCitationIds': clickedCitationIds,
+    'webCandidateUrls': webCandidateUrls,
+    'webCitedUrls': webCitedUrls,
   };
 
   factory RetrievalLog.fromMap(Map<dynamic, dynamic> map) {
@@ -53,6 +63,9 @@ class RetrievalLog {
       feedback: map['feedback'] as int?,
       clickedCitationIds:
           (map['clickedCitationIds'] as List?)?.cast<String>() ?? const [],
+      webCandidateUrls:
+          (map['webCandidateUrls'] as List?)?.cast<String>() ?? const [],
+      webCitedUrls: (map['webCitedUrls'] as List?)?.cast<String>() ?? const [],
     );
   }
 
@@ -60,6 +73,7 @@ class RetrievalLog {
     int? feedback,
     List<String>? clickedCitationIds,
     List<String>? citedIds,
+    List<String>? webCitedUrls,
   }) {
     return RetrievalLog(
       id: id,
@@ -72,6 +86,8 @@ class RetrievalLog {
       timestamp: timestamp,
       feedback: feedback ?? this.feedback,
       clickedCitationIds: clickedCitationIds ?? this.clickedCitationIds,
+      webCandidateUrls: webCandidateUrls,
+      webCitedUrls: webCitedUrls ?? this.webCitedUrls,
     );
   }
 }

@@ -22,6 +22,9 @@ class ChatMessageRecord {
   final ChatMessageStatus status;
   final String? errorCode;
 
+  /// Web URLs the model cited (via `[wN]`) in a web-fallback answer.
+  final List<String> webUrls;
+
   const ChatMessageRecord({
     required this.id,
     required this.threadId,
@@ -37,6 +40,7 @@ class ChatMessageRecord {
     this.feedback,
     this.status = ChatMessageStatus.completed,
     this.errorCode,
+    this.webUrls = const [],
   });
 
   ChatMessageRecord copyWith({
@@ -50,6 +54,7 @@ class ChatMessageRecord {
     int? feedback,
     ChatMessageStatus? status,
     String? errorCode,
+    List<String>? webUrls,
   }) {
     return ChatMessageRecord(
       id: id,
@@ -66,6 +71,7 @@ class ChatMessageRecord {
       feedback: feedback ?? this.feedback,
       status: status ?? this.status,
       errorCode: errorCode ?? this.errorCode,
+      webUrls: webUrls ?? this.webUrls,
     );
   }
 }
@@ -95,13 +101,14 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       feedback: (fields[11] as num?)?.toInt(),
       status: _statusFromStoredValue((fields[12] as num?)?.toInt()),
       errorCode: fields[13] as String?,
+      webUrls: _stringList(fields[14]),
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -129,7 +136,9 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(12)
       ..write(_statusToStoredValue(obj.status))
       ..writeByte(13)
-      ..write(obj.errorCode);
+      ..write(obj.errorCode)
+      ..writeByte(14)
+      ..write(obj.webUrls);
   }
 }
 

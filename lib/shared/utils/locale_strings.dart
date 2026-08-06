@@ -293,6 +293,12 @@ class LocaleStrings {
   final String chatKnowledgeBaseOnly;
   final String chatKbPlusGeneral;
   final String chatApply;
+  final String webSearchSection;
+  final String webSearchConfig;
+  final String webSearchApiKey;
+  final String webSearchOn;
+  final String webSearchOff;
+  final String webSearchNotConfigured;
 
   const LocaleStrings({
     required this.appTitle,
@@ -587,6 +593,12 @@ class LocaleStrings {
     required this.chatKnowledgeBaseOnly,
     required this.chatKbPlusGeneral,
     required this.chatApply,
+    required this.webSearchSection,
+    required this.webSearchConfig,
+    required this.webSearchApiKey,
+    required this.webSearchOn,
+    required this.webSearchOff,
+    required this.webSearchNotConfigured,
   });
 
   static LocaleStrings of(int languageIndex, {Locale? deviceLocale}) {
@@ -926,6 +938,13 @@ class LocaleStrings {
     chatKnowledgeBaseOnly: 'Knowledge Base Only',
     chatKbPlusGeneral: 'KB + General',
     chatApply: 'Apply',
+    webSearchSection: 'Web Search',
+    webSearchConfig: 'Web Search (Tavily)',
+    webSearchApiKey: 'Tavily API Key',
+    webSearchOn: 'Web search on — answers may include live sources',
+    webSearchOff: 'Web search off',
+    webSearchNotConfigured:
+        'Set a Tavily API key in Settings > API to enable web search',
   );
 
   static const _zh = LocaleStrings(
@@ -1222,5 +1241,11 @@ class LocaleStrings {
     chatKnowledgeBaseOnly: '仅知识库',
     chatKbPlusGeneral: '知识库 + 通用',
     chatApply: '应用',
+    webSearchSection: '联网搜索',
+    webSearchConfig: '联网搜索（Tavily）',
+    webSearchApiKey: 'Tavily API Key',
+    webSearchOn: '已开启联网搜索 — 回答可能引用实时来源',
+    webSearchOff: '未开启联网搜索',
+    webSearchNotConfigured: '请在 设置-API 中配置 Tavily API Key 以启用联网搜索',
   );
 }

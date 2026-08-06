@@ -20,6 +20,13 @@ final chatSessionsProvider =
       return ChatSessionsNotifier(ref);
     });
 
+/// Session-level web-search toggle for the RAG chat. Defaults to OFF so the
+/// local-first / privacy-first contract is never silently broken; the user
+/// opts into live web search per conversation from the input bar.
+///
+/// Lives for the app session only — it is not persisted.
+final chatWebSearchEnabledProvider = StateProvider<bool>((ref) => false);
+
 class ChatSessionState {
   final List<ChatThread> threads;
   final String? activeThreadId;

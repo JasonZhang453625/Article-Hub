@@ -18,13 +18,15 @@ class ApiConfigScreen extends ConsumerStatefulWidget {
 class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
   late final TextEditingController _aiBaseUrlCtrl, _aiApiKeyCtrl, _aiModelCtrl;
   late final TextEditingController _embBaseUrlCtrl, _embApiKeyCtrl, _embModelCtrl;
-  bool _aiSaving = false, _embSaving = false;
+  late final TextEditingController _tavilyApiKeyCtrl;
+  bool _aiSaving = false, _embSaving = false, _tavilySaving = false;
 
   @override
   void initState() {
     super.initState();
     _aiBaseUrlCtrl = TextEditingController(); _aiApiKeyCtrl = TextEditingController(); _aiModelCtrl = TextEditingController();
     _embBaseUrlCtrl = TextEditingController(); _embApiKeyCtrl = TextEditingController(); _embModelCtrl = TextEditingController();
+    _tavilyApiKeyCtrl = TextEditingController();
   }
 
   @override
@@ -34,6 +36,7 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     if (s != null) {
       _aiBaseUrlCtrl.text = s.aiBaseUrl; _aiApiKeyCtrl.text = s.aiApiKey; _aiModelCtrl.text = s.aiModel;
       _embBaseUrlCtrl.text = s.embeddingBaseUrl; _embApiKeyCtrl.text = s.embeddingApiKey; _embModelCtrl.text = s.embeddingModel;
+      _tavilyApiKeyCtrl.text = s.tavilyApiKey;
     }
   }
 
@@ -41,6 +44,7 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
   void dispose() {
     _aiBaseUrlCtrl.dispose(); _aiApiKeyCtrl.dispose(); _aiModelCtrl.dispose();
     _embBaseUrlCtrl.dispose(); _embApiKeyCtrl.dispose(); _embModelCtrl.dispose();
+    _tavilyApiKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -55,6 +59,8 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     }
   }
 
+
+
   Future<void> _saveEmb() async {
     setState(() => _embSaving = true);
     await ref.read(settingsProvider.notifier).setEmbeddingConfig(
@@ -62,6 +68,17 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     );
     if (mounted) {
       setState(() => _embSaving = false);
+      showAppSnackBar(context, message: ref.read(stringsProvider).aiSettingsSaved);
+    }
+  }
+
+  Future<void> _saveTavily() async {
+    setState(() => _tavilySaving = true);
+    await ref.read(settingsProvider.notifier).setTavilyApiKey(
+      _tavilyApiKeyCtrl.text.trim(),
+    );
+    if (mounted) {
+      setState(() => _tavilySaving = false);
       showAppSnackBar(context, message: ref.read(stringsProvider).aiSettingsSaved);
     }
   }
@@ -102,6 +119,16 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                 _field(s.embeddingModel, _embModelCtrl, AppSettings.defaultEmbeddingModel),
               ],
               saving: _embSaving, onSave: _saveEmb,
+              theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark,
+            ),
+            const SizedBox(height: 14),
+            SectionLabel(label: s.webSearchSection, theme: theme),
+            const SizedBox(height: 8),
+            _ApiCard(icon: Icons.public_rounded, title: s.webSearchConfig,
+              fields: [
+                _field(s.webSearchApiKey, _tavilyApiKeyCtrl, 'tvly-...', obscured: true),
+              ],
+              saving: _tavilySaving, onSave: _saveTavily,
               theme: theme, cardColor: cardColor, outlineColor: outlineColor, isDark: isDark,
             ),
           ]),

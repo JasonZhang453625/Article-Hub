@@ -203,6 +203,10 @@ class ChatBubble extends ConsumerWidget {
                   onCitationClick: onCitationClick,
                 ),
               ],
+              if (message.webUrls.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                WebCitationChips(urls: message.webUrls),
+              ],
               if (message.isNoResult) ...[
                 const SizedBox(height: 12),
                 ChatNoResultActions(

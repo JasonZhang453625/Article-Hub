@@ -60,7 +60,12 @@ Future<RetrievalComputeOutput> runRetrievalInIsolate({
     'topK': topK,
   };
 
-  return Isolate.run(() => _runRetrievalCompute(input));
+  return Isolate.run(() => _runRetrievalCompute(input))
+      // The computation is normally milliseconds. A hard deadline guarantees
+      // the caller can never wait forever — e.g. if the OS froze the app
+      // mid-spawn while backgrounded, which would otherwise leave the chat
+      // answer stuck in the "sending" state indefinitely.
+      .timeout(const Duration(seconds: 30));
 }
 
 RetrievalComputeOutput _runRetrievalCompute(Map<String, dynamic> input) {
