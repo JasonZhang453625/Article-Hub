@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Memora landing page 服务器端部署脚本。
+# 由 GitHub Actions (landing-page/.github/workflows/deploy.yml) 通过 SSH 触发。
+#
+# 依赖服务器 Agent 报告的信息：
+#   LANDING_REPO_DIR   - landing 仓库 checkout 路径（服务器 agent 报告）
+#   LANDING_SITE_ROOT  - memora.wang 站点 root 目录（服务器 agent 报告）
+#   LANDING_DEPLOY_MODE - "static"（rsync dist/）或 "caddy-reload"（文件直读）
+#
+# 用法: memora-deploy-landing
+
+REPO_DIR="${LANDING_REPO_DIR:-/opt/memora-landing-page}"
+SITE_ROOT="${LANDING_SITE_ROOT:-/opt/memora-landing}"
+DEPLOY_MODE="${LANDING_DEPLOY_MODE:-static}"
+
+if [[ ! -d "$REPO_DIR/.git" ]]; then
+  echo "error: landing repo not found at $REPO_DIR" >&2
+  exit 66
+fi
+
+# 1. 拉取最新 master
+git -C "$REPO_DIR" fetch origin --prune
+git -C "$REPO_DIR" pull --ff-only origin master
+
+# 2. 构建
+(
+  cd "$REPO_DIR"
+  npm ci
+  npm run build
+)
+
+# 3. 部署
+# 站点 root (/opt/memora-landing) 是 Caddy 容器挂载卷，file_server 直读磁盘，
+# rsync 完成后即时生效，无需 caddy reload。
+case "$DEPLOY_MODE" in
+  static)
+    install -d -m 0755 "$SITE_ROOT"
+    rsync -a --delete "$REPO_DIR/dist/" "$SITE_ROOT/"
+    ;;
+  *)
+    echo "error: unknown LANDING_DEPLOY_MODE '$DEPLOY_MODE'" >&2
+    exit 65
+    ;;
+esac
+
+echo "landing deployed: $(git -C "$REPO_DIR" rev-parse --short HEAD)"

@@ -167,18 +167,19 @@ jobs:
           DEPLOY_HOST: ${{ secrets.APK_DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.APK_DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.APK_DEPLOY_USER }}
-          VERSION: ${{ steps.version.outputs.version }}
           SHA256: ${{ steps.artifact.outputs.sha256 }}
           SIZE: ${{ steps.artifact.outputs.size }}
         shell: bash
         run: |
           set -euo pipefail
-          SSH=(ssh -i "$HOME/.ssh/memora_deploy" -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST")
           SCP=(scp -i "$HOME/.ssh/memora_deploy" -P "$DEPLOY_PORT")
-          "${SSH[@]}" "memora-publish-apk prepare '$VERSION'"
-          "${SCP[@]}" .release/app-release.apk .release/latest.json \
-            "$DEPLOY_USER@$DEPLOY_HOST:.memora-apk-incoming/$VERSION/"
-          "${SSH[@]}" "memora-publish-apk verify '$VERSION' '$SHA256' '$SIZE'"
+          "${SCP[@]}" .release/app-release.apk \
+            "$DEPLOY_USER@$DEPLOY_HOST:/opt/memora-apk/android/app-release.apk"
+          ssh -i "$HOME/.ssh/memora_deploy" -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "test -f /opt/memora-apk/android/app-release.apk && \
+             test \"\$(stat -c '%s' /opt/memora-apk/android/app-release.apk)\" = '$SIZE' && \
+             test \"\$(sha256sum /opt/memora-apk/android/app-release.apk | awk '{print \$1}')\" = '$SHA256'"
 
       - name: Publish GitHub Release
         env:
@@ -195,28 +196,25 @@ jobs:
           DEPLOY_PORT: ${{ secrets.APK_DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.APK_DEPLOY_USER }}
           VERSION: ${{ steps.version.outputs.version }}
-          SHA256: ${{ steps.artifact.outputs.sha256 }}
-          SIZE: ${{ steps.artifact.outputs.size }}
         shell: bash
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/memora_deploy" -p "$DEPLOY_PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "memora-publish-apk activate '$VERSION' '$SHA256' '$SIZE'"
+            "/opt/memora-apk/update-manifest.sh '$VERSION'"
 
       - name: Verify public download endpoints
         env:
-          TAG: ${{ steps.version.outputs.tag }}
-          SHA256: ${{ steps.artifact.outputs.sha256 }}
+          VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 5 --retry-delay 3 \
             "https://api.memora.wang/downloads/android/latest.json" \
-            | jq -e --arg sha256 "$SHA256" '.sha256 == $sha256' >/dev/null
+            | jq -e --arg version "$VERSION" '.version == $version' >/dev/null
           curl --fail --silent --show-error --location --range 0-0 \
-            "https://api.memora.wang/downloads/android/releases/$TAG/Memora-$TAG.apk" \
+            "https://api.memora.wang/downloads/android/app-release.apk" \
             -o /dev/null
           curl --fail --silent --show-error --location --range 0-0 \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/app-release.apk" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/$VERSION/app-release.apk" \
             -o /dev/null
