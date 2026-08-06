@@ -9,12 +9,21 @@ The `/build` command automates the entire **check → commit → bump → build 
 
 ## Prerequisites
 
-The GitHub Actions release workflow requires two repository secrets (set once in `https://github.com/JasonZhang453625/Article-Hub/settings/secrets/actions`):
+The GitHub Actions release workflow requires the following repository secrets (set once in `https://github.com/JasonZhang453625/Article-Hub/settings/environments/production-download`):
 
 | Secret | Content |
 |---|---|
 | `KEYSTORE_B64` | Base64 of `android/app/upload-keystore.jks` — generate with: `base64 -w0 android/app/upload-keystore.jks` |
 | `KEY_PROPERTIES_B64` | Base64 of `android/key.properties` — generate with: `base64 -w0 android/key.properties` |
+| `APK_DEPLOY_HOST` | `47.103.95.241` |
+| `APK_DEPLOY_PORT` | `22` |
+| `APK_DEPLOY_USER` | `memora-deploy` |
+| `APK_DEPLOY_SSH_KEY` | Private key for server deploy SSH (see `docs/RELEASE_AUTOMATION_SETUP.md`) |
+| `APK_DEPLOY_KNOWN_HOSTS` | Server host key line |
+
+The same 5 `APK_DEPLOY_*` secrets are needed in the **`Memora-Landing-Page`** repo's `production-download` environment for the landing deploy workflow.
+
+> **Server prerequisites:** the server must have the `memora-deploy` user, the deploy SSH key in `authorized_keys`, `/opt/memora-apk` + `/opt/memora-landing` writable by that user, and `/usr/local/bin/memora-deploy-landing` installed. See `docs/RELEASE_AUTOMATION_SETUP.md`.
 
 ### CI Buildability Check
 
@@ -194,10 +203,13 @@ The GitHub Actions workflow (`.github/workflows/release.yml`) listens for tag pu
 - Builds the release APK
 - Creates a GitHub Release with the APK attached as an asset
 - Auto-generates description from the commit messages since the last tag
+- **Automatically uploads the APK to the China server** (`/opt/memora-apk/android/app-release.apk`) via SSH, verifies SHA-256/size, and activates it with `update-manifest.sh`
 
 ### Phase 9: Update Landing Page
 
-The landing page is a separate Astro project in `landing-page/` deployed to Vercel. Its remote is `git@github.com:JasonZhang453625/Memora-Landing-Page.git` (SSH — same port-443 setup as the main repo). The page has hardcoded version strings and a download URL that must be updated to match the current release.
+The landing page is a separate Astro project in `landing-page/` deployed via GitHub Actions (`landing-page/.github/workflows/deploy.yml`) + a server-side script (`deploy/memora-deploy-landing`). **Pushing to the landing repo's `master` branch automatically triggers the server-side deploy** (SSH → git pull → npm ci/build → rsync `dist/` to `/opt/memora-landing`). No manual server steps needed.
+
+The page has a fallback version constant that must be updated to match the current release (the live version is otherwise driven by `api.memora.wang/downloads/android/latest.json` at runtime).
 
 1. **Check for uncommitted changes** in the landing page repo:
 
@@ -205,31 +217,13 @@ The landing page is a separate Astro project in `landing-page/` deployed to Verc
 cd landing-page && git status --short
 ```
 
-2. **Update version strings** in `landing-page/src/pages/index.astro`. The new version `<VERSION>` is already known from Phase 4 (the `bump_version.dart` output as `VERSION=X.Y.Z`).
+2. **Update the fallback version constant** in `landing-page/src/pages/index.astro` (the new version `<VERSION>` is known from Phase 4):
 
-Find and replace these two occurrences:
+```astro
+const fallbackVersion = '<VERSION>';
+```
 
-- **Download URL** — replace the old version in the URL with the new version:
-  ```
-  const downloadUrl = 'https://github.com/JasonZhang453625/Article-Hub/releases/download/v<OLD_VERSION>/app-release.apk';
-  ```
-  → becomes:
-  ```
-  const downloadUrl = 'https://github.com/JasonZhang453625/Article-Hub/releases/download/v<VERSION>/app-release.apk';
-  ```
-
-- **Display text** — replace the old version in the display text with the new version:
-  ```
-  <span>Memora <OLD_VERSION> · GitHub Release 下载</span>
-  ```
-  → becomes:
-  ```
-  <span>Memora <VERSION> · GitHub Release 下载</span>
-  ```
-
-Extract `<OLD_VERSION>` from the current file content.
-
-3. **Commit and push** in the landing page repo:
+3. **Commit and push** in the landing page repo (this triggers the automatic deploy):
 
 ```bash
 cd landing-page
@@ -239,9 +233,17 @@ git rev-parse --abbrev-ref HEAD
 git push origin $(git rev-parse --abbrev-ref HEAD)
 ```
 
-> **Note:** The landing page deploy is handled by Vercel (configured via `vercel.json`). Pushing triggers an automatic deploy. The branch may be `main` or `master` — detect it dynamically.
+> **Note:** The deploy is automatic via GitHub Actions → server SSH (`memora-deploy-landing`). Push is the only step needed; do NOT manually SSH or run server commands.
+>
+> If there are no changes to commit (version already up to date), skip the commit and push step.
 
-If there are no changes to commit (rare, but possible if already up to date), skip the commit and push step.
+4. **Optional verification** (after ~2-3 minutes, the deploy run should have completed):
+
+```bash
+curl -s https://memora.wang/ | grep -o 'data-fallback-version="[^"]*"'
+```
+
+Expect `data-fallback-version="<VERSION>"`.
 
 ### Phase 10: Summary
 
@@ -252,9 +254,11 @@ After Phase 9 completes, report a summary:
 - 版本: <VERSION>
 - APK: build\app\outputs\flutter-apk\app-release.apk
 - 标签: v<VERSION>（已推送）
-- Landing page: 版本已更新并推送至 Memora-Landing-Page
+- Landing page: 版本已更新并推送至 Memora-Landing-Page（自动部署已触发）
 - Release: GitHub Actions 正在构建…
 ```
+
+> **Note:** The GitHub Actions release workflow (`.github/workflows/release.yml`) now also handles the **server APK upload** automatically: after building the APK, it SCPs it to `/opt/memora-apk/android/app-release.apk`, verifies SHA-256/size on the server, and runs `update-manifest.sh <VERSION>` to atomically switch `latest.json`/`latest.apk`. No manual `scp`/`ssh` needed.
 
 ## Edge Cases
 
