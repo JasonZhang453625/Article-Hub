@@ -32,7 +32,8 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
-/tools/
+/tools/*
+!/tools/bump_version.dart
 
 # Symbolication related
 app.*.symbols

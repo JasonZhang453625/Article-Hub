@@ -30,6 +30,7 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           APP_VERSION=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)
           APP_VERSION_NAME="${APP_VERSION%%+*}"
+          APP_BUILD_NUMBER="${APP_VERSION#*+}"
 
           if [[ ! "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must use vMAJOR.MINOR.PATCH, got: $GITHUB_REF_NAME" >&2
@@ -39,8 +40,24 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match pubspec.yaml version $APP_VERSION" >&2
             exit 1
           fi
+          if [[ "$APP_VERSION" == "$APP_VERSION_NAME" || ! "$APP_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "pubspec.yaml must include a numeric Android build number" >&2
+            exit 1
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$APP_VERSION_NAME"
+          if (( 10#$MINOR > 99 || 10#$PATCH > 99 )); then
+            echo "Minor and patch versions must be between 0 and 99" >&2
+            exit 1
+          fi
+          EXPECTED_BUILD_NUMBER=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
+          if (( APP_BUILD_NUMBER != EXPECTED_BUILD_NUMBER )); then
+            echo "Build number $APP_BUILD_NUMBER does not match $APP_VERSION_NAME -> $EXPECTED_BUILD_NUMBER" >&2
+            exit 1
+          fi
 
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build-number=$APP_BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
@@ -84,6 +101,7 @@ jobs:
         id: artifact
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.build-number }}
           TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
@@ -94,16 +112,24 @@ jobs:
           SHA256=$(sha256sum .release/app-release.apk | awk '{print $1}')
           SIZE=$(stat -c '%s' .release/app-release.apk)
           PUBLISHED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          PREV_TAG=$(git tag --sort=-version:refname | grep -Fxv "$TAG" | head -n 1 || true)
+          if [[ -z "$PREV_TAG" ]]; then
+            RELEASE_NOTES='[]'
+          else
+            RELEASE_NOTES=$(git log --format='%s' "${PREV_TAG}..HEAD" | jq -R -s 'split("\n") | map(select(length > 0))')
+          fi
           printf '%s  app-release.apk\n' "$SHA256" > .release/app-release.apk.sha256
 
           jq -n \
             --arg version "$VERSION" \
+            --argjson versionCode "$VERSION_CODE" \
             --arg publishedAt "$PUBLISHED_AT" \
             --arg sha256 "$SHA256" \
             --arg serverUrl "https://api.memora.wang/downloads/android/releases/$TAG/Memora-$TAG.apk" \
             --arg githubUrl "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/app-release.apk" \
             --argjson size "$SIZE" \
-            '{version: $version, publishedAt: $publishedAt, size: $size, sha256: $sha256, serverUrl: $serverUrl, githubUrl: $githubUrl}' \
+            --argjson releaseNotes "$RELEASE_NOTES" \
+            '{schemaVersion: 1, platform: "android", channel: "stable", version: $version, versionCode: $versionCode, publishedAt: $publishedAt, size: $size, sha256: $sha256, releaseNotes: $releaseNotes, mandatory: false, serverUrl: $serverUrl, githubUrl: $githubUrl}' \
             > .release/latest.json
 
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
@@ -219,6 +245,7 @@ jobs:
       - name: Verify public download endpoints
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.build-number }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -234,8 +261,14 @@ jobs:
           grep -Eiq '^access-control-allow-origin:[[:space:]]*\*' "$MANIFEST_HEADERS"
           jq -e \
             --arg version "$VERSION" \
+            --argjson version_code "$VERSION_CODE" \
             --arg server_url "https://api.memora.wang/downloads/android/releases/v$VERSION/Memora-v$VERSION.apk" \
-            '.version == $version and .serverUrl == $server_url' \
+            '.schemaVersion == 1
+              and .platform == "android"
+              and .channel == "stable"
+              and .version == $version
+              and .versionCode == $version_code
+              and .serverUrl == $server_url' \
             "$MANIFEST_BODY" >/dev/null
 
           for url in \

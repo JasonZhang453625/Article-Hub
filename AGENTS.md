@@ -95,7 +95,7 @@ lib/
 - **Article.copyWith uses sentinel values** (`Article.clearValue`) to distinguish "leave field unchanged" from "clear the field". Pass `Article.clearValue` to explicitly null out a nullable field.
 - **Processing pipeline is single-pass and resumable**. Each stage writes `processingStatus` + `processingStage` to Hive so a crash never loses progress. Extracted page content is held in a transient in-memory `_contentCache` keyed by article id — **never** persisted into the user-facing `notes` field. AI-suggested folders write to `suggestedFolderId`; the user must confirm before the article actually moves.
 - **No `build_runner` or codegen** in this project. Everything is manual.
-- **Version bump before release builds**: Run `dart run tools/bump_version.dart` before `flutter build apk --release` (or any release build). This auto-increments the patch version in `pubspec.yaml` (e.g. 2.0.0 → 2.0.1). The tool also preserves any existing build number (`+N` suffix).
+- **Version bump before release builds**: Run `dart run tools/bump_version.dart` before `flutter build apk --release` (or any release build), unless `pubspec.yaml` already contains the intentional unpublished version for the iteration. The tool increments the patch version and maps the Android build number as `MAJOR * 10000 + MINOR * 100 + PATCH` (for example `2.1.8+20108`). `MINOR` and `PATCH` must remain within `0..99`.
 
 ## Testing
 

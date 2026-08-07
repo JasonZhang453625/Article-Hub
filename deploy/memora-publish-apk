@@ -26,6 +26,13 @@ validate_release() {
   local manifest="$incoming/latest.json"
   local server_url="https://api.memora.wang/downloads/android/releases/v$version/Memora-v$version.apk"
   local github_url="https://github.com/JasonZhang453625/Article-Hub/releases/download/v$version/app-release.apk"
+  local major minor patch version_code
+  IFS='.' read -r major minor patch <<< "$version"
+  (( 10#$minor <= 99 && 10#$patch <= 99 )) || {
+    echo "minor and patch versions must be between 0 and 99" >&2
+    exit 65
+  }
+  version_code=$((10#$major * 10000 + 10#$minor * 100 + 10#$patch))
 
   [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]] || {
     echo "invalid SHA-256" >&2
@@ -54,11 +61,16 @@ validate_release() {
 
   jq -e \
     --arg version "$version" \
+    --argjson version_code "$version_code" \
     --arg sha256 "$expected_sha256" \
     --arg server_url "$server_url" \
     --arg github_url "$github_url" \
     --argjson size "$expected_size" \
-    '.version == $version
+    '.schemaVersion == 1
+      and .platform == "android"
+      and .channel == "stable"
+      and .version == $version
+      and .versionCode == $version_code
       and .sha256 == $sha256
       and .size == $size
       and .serverUrl == $server_url

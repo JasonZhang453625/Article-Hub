@@ -200,6 +200,23 @@ class LocaleStrings {
   final String settingsOtherDesc;
   final String settingsDev;
   final String settingsDevDesc;
+  final String checkForUpdates;
+  final String checkForUpdatesDesc;
+  final String currentVersion;
+  final String checkingForUpdates;
+  final String latestVersion;
+  final String newVersionAvailable;
+  final String alreadyLatest;
+  final String updateCheckFailed;
+  final String updateNow;
+  final String later;
+  final String downloadingUpdate;
+  final String verifyingUpdate;
+  final String installingUpdate;
+  final String allowInstall;
+  final String allowInstallDesc;
+  final String updateFailed;
+  final String releaseNotes;
   final String fontWeight;
   final String operations;
   final String knowledgeSectionLabel;
@@ -508,6 +525,23 @@ class LocaleStrings {
     required this.settingsOtherDesc,
     required this.settingsDev,
     required this.settingsDevDesc,
+    required this.checkForUpdates,
+    required this.checkForUpdatesDesc,
+    required this.currentVersion,
+    required this.checkingForUpdates,
+    required this.latestVersion,
+    required this.newVersionAvailable,
+    required this.alreadyLatest,
+    required this.updateCheckFailed,
+    required this.updateNow,
+    required this.later,
+    required this.downloadingUpdate,
+    required this.verifyingUpdate,
+    required this.installingUpdate,
+    required this.allowInstall,
+    required this.allowInstallDesc,
+    required this.updateFailed,
+    required this.releaseNotes,
     required this.fontWeight,
     required this.operations,
     required this.knowledgeSectionLabel,
@@ -854,6 +888,24 @@ class LocaleStrings {
     settingsOtherDesc: 'Source platforms, backup & restore',
     settingsDev: 'Feedback Stats',
     settingsDevDesc: 'Response feedback data (dev)',
+    checkForUpdates: 'Check for Updates',
+    checkForUpdatesDesc: 'Current version',
+    currentVersion: 'Current version',
+    checkingForUpdates: 'Checking for updates…',
+    latestVersion: 'Latest version',
+    newVersionAvailable: 'New Version Available',
+    alreadyLatest: 'You are using the latest version.',
+    updateCheckFailed: 'Could not check for updates. Try again later.',
+    updateNow: 'Update Now',
+    later: 'Later',
+    downloadingUpdate: 'Downloading update…',
+    verifyingUpdate: 'Verifying update…',
+    installingUpdate: 'Opening the system installer…',
+    allowInstall: 'Allow Installation',
+    allowInstallDesc:
+        'Allow Memora to install updates, then return to continue.',
+    updateFailed: 'Update failed. Please try again.',
+    releaseNotes: 'What’s New',
     fontWeight: 'Font Weight',
     operations: 'Operations',
     knowledgeSectionLabel: 'Memory Management',
@@ -1174,6 +1226,23 @@ class LocaleStrings {
     settingsOtherDesc: '来源平台、备份与恢复',
     settingsDev: '反馈统计',
     settingsDevDesc: '对话反馈数据（开发用）',
+    checkForUpdates: '检查更新',
+    checkForUpdatesDesc: '当前版本',
+    currentVersion: '当前版本',
+    checkingForUpdates: '正在检查更新…',
+    latestVersion: '最新版本',
+    newVersionAvailable: '发现新版本',
+    alreadyLatest: '当前已是最新版本',
+    updateCheckFailed: '检查更新失败，请稍后重试',
+    updateNow: '立即更新',
+    later: '稍后',
+    downloadingUpdate: '正在下载更新…',
+    verifyingUpdate: '正在校验安装包…',
+    installingUpdate: '正在打开系统安装界面…',
+    allowInstall: '允许安装',
+    allowInstallDesc: '请允许记忆海安装更新，授权后返回即可继续。',
+    updateFailed: '更新失败，请重试',
+    releaseNotes: '更新内容',
     fontWeight: '字体粗细',
     operations: '操作',
     knowledgeSectionLabel: '记忆管理',

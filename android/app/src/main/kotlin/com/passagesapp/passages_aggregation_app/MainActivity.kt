@@ -8,17 +8,21 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "app.articlehub/backup"
+    private val backupChannel = "app.articlehub/backup"
+    private val updateChannel = "app.memora/update"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, backupChannel).setMethodCallHandler { call, result ->
             if (call.method == "getInitialBackupFile") {
                 result.success(getSharedFilePath(intent))
             } else {
                 result.notImplemented()
             }
         }
+        val updateHandler = AppUpdateHandler(this)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, updateChannel)
+            .setMethodCallHandler(updateHandler::handle)
     }
 
     override fun onNewIntent(intent: Intent) {

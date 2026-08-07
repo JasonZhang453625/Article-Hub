@@ -6,6 +6,27 @@ App 的业务 API 已部署在 `https://api.memora.wang`，但 APK 下载源是�
 - `GET /downloads/android/latest.apk`
 - `GET /downloads/android/releases/v{version}/Memora-v{version}.apk`
 
+`latest.json` 同时保存用户可见版本号和 Android 内部构建号。内部构建号固定按
+`MAJOR * 10000 + MINOR * 100 + PATCH` 映射，例如 `2.1.8 -> 20108`；
+`MINOR` 和 `PATCH` 必须位于 `0..99`。
+
+```json
+{
+  "schemaVersion": 1,
+  "platform": "android",
+  "channel": "stable",
+  "version": "2.1.8",
+  "versionCode": 20108,
+  "publishedAt": "2026-08-08T00:00:00Z",
+  "size": 85764455,
+  "sha256": "...",
+  "releaseNotes": ["新增应用内检查更新与安装"],
+  "mandatory": false,
+  "serverUrl": "https://api.memora.wang/downloads/android/releases/v2.1.8/Memora-v2.1.8.apk",
+  "githubUrl": "https://github.com/JasonZhang453625/Article-Hub/releases/download/v2.1.8/app-release.apk"
+}
+```
+
 ## 服务器目录
 
 生产机默认目录为 `/opt/memora-apk/android`：
