@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${MEMORA_APK_ROOT:-/srv/memora-downloads/android}"
+ROOT="${MEMORA_APK_ROOT:-/opt/memora-apk/android}"
 INCOMING_ROOT="${MEMORA_APK_INCOMING:-$HOME/.memora-apk-incoming}"
 
 usage() {
@@ -24,6 +24,8 @@ validate_release() {
   local incoming="$INCOMING_ROOT/$version"
   local apk="$incoming/app-release.apk"
   local manifest="$incoming/latest.json"
+  local server_url="https://api.memora.wang/downloads/android/releases/v$version/Memora-v$version.apk"
+  local github_url="https://github.com/JasonZhang453625/Article-Hub/releases/download/v$version/app-release.apk"
 
   [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]] || {
     echo "invalid SHA-256" >&2
@@ -53,8 +55,14 @@ validate_release() {
   jq -e \
     --arg version "$version" \
     --arg sha256 "$expected_sha256" \
+    --arg server_url "$server_url" \
+    --arg github_url "$github_url" \
     --argjson size "$expected_size" \
-    '.version == $version and .sha256 == $sha256 and .size == $size' \
+    '.version == $version
+      and .sha256 == $sha256
+      and .size == $size
+      and .serverUrl == $server_url
+      and .githubUrl == $github_url' \
     "$manifest" >/dev/null
 }
 
@@ -82,16 +90,31 @@ case "$command" in
     incoming="$INCOMING_ROOT/$version"
     release_dir="$ROOT/releases/v$version"
     release_name="Memora-v$version.apk"
+    release_apk="$release_dir/$release_name"
     temp_manifest="$ROOT/.latest.json.$$"
-    temp_link="$ROOT/.latest.apk.$$"
+    temp_latest_link="$ROOT/.latest.apk.$$"
+    temp_legacy_link="$ROOT/.app-release.apk.$$"
 
     install -d -m 0755 "$ROOT/releases" "$release_dir"
-    install -m 0644 "$incoming/app-release.apk" "$release_dir/$release_name"
-    install -m 0644 "$incoming/latest.json" "$temp_manifest"
-    ln -s "releases/v$version/$release_name" "$temp_link"
+    if [[ -e "$release_apk" ]]; then
+      existing_sha256=$(sha256sum "$release_apk" | awk '{print $1}')
+      [[ "$existing_sha256" == "$3" ]] || {
+        echo "refusing to overwrite immutable release $release_apk" >&2
+        exit 66
+      }
+    else
+      install -m 0644 "$incoming/app-release.apk" "$release_apk"
+    fi
 
-    mv -Tf "$temp_link" "$ROOT/latest.apk"
+    trap 'rm -f "$temp_manifest" "$temp_latest_link" "$temp_legacy_link"' EXIT
+    install -m 0644 "$incoming/latest.json" "$temp_manifest"
+    ln -s "releases/v$version/$release_name" "$temp_latest_link"
+    ln -s "releases/v$version/$release_name" "$temp_legacy_link"
+
+    mv -Tf "$temp_latest_link" "$ROOT/latest.apk"
+    mv -Tf "$temp_legacy_link" "$ROOT/app-release.apk"
     mv -f "$temp_manifest" "$ROOT/latest.json"
+    trap - EXIT
     rm -f "$incoming/app-release.apk" "$incoming/latest.json"
     rmdir "$incoming"
     ;;

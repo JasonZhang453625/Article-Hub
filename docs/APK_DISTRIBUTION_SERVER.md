@@ -8,18 +8,19 @@ App 的业务 API 已部署在 `https://api.memora.wang`，但 APK 下载源是�
 
 ## 服务器目录
 
-默认目录为 `/srv/memora-downloads/android`：
+生产机默认目录为 `/opt/memora-apk/android`：
 
 ```text
-/srv/memora-downloads/android/
+/opt/memora-apk/android/
+├── app-release.apk
 ├── latest.apk
 ├── latest.json
 └── releases/
-    └── v2.1.4/
-        └── Memora-v2.1.4.apk
+    └── v2.1.6/
+        └── Memora-v2.1.6.apk
 ```
 
-`latest.apk` 是指向当前正式版本的符号链接；版本目录中的 APK 不覆盖、不原地修改。
+`latest.apk` 与兼容旧链接的 `app-release.apk` 都指向当前正式版本；版本目录中的 APK 不覆盖、不原地修改。
 
 ## 发布用户
 
@@ -28,9 +29,11 @@ App 的业务 API 已部署在 `https://api.memora.wang`，但 APK 下载源是�
 1. 将脚本安装为服务器命令：
 
    ```bash
-   sudo install -m 0755 deploy/memora-publish-apk /usr/local/bin/memora-publish-apk
+   sudo install -m 0755 -o memora-deploy -g memora-deploy \
+     deploy/memora-publish-apk /opt/memora-apk/memora-publish-apk
    ```
-2. 将 `/srv/memora-downloads/android` 所有权授予发布用户。
+   正常发布时，GitHub Actions 会在 staging 前自动同步这份脚本，避免服务器脚本与仓库漂移。
+2. 将 `/opt/memora-apk` 所有权授予发布用户。
 3. 确保服务器安装 `bash`、`jq`、`sha256sum` 和 `stat`。
 4. 只给该用户写入 APK 目录所需的权限，不授予应用数据库、环境变量或业务日志权限。
 5. 将发布 SSH 公钥加入该用户的 `authorized_keys`。
@@ -38,9 +41,9 @@ App 的业务 API 已部署在 `https://api.memora.wang`，但 APK 下载源是�
 发布命令分为三个阶段：
 
 ```bash
-memora-publish-apk prepare 2.1.4
-memora-publish-apk verify 2.1.4 SHA256 SIZE
-memora-publish-apk activate 2.1.4 SHA256 SIZE
+/opt/memora-apk/memora-publish-apk prepare 2.1.6
+/opt/memora-apk/memora-publish-apk verify 2.1.6 SHA256 SIZE
+/opt/memora-apk/memora-publish-apk activate 2.1.6 SHA256 SIZE
 ```
 
 GitHub Release 发布前只执行 `prepare` 和 `verify`。GitHub Release 成功公开后才执行 `activate`，因此失败的上传不会替换当前下载版本。
@@ -50,8 +53,9 @@ GitHub Release 发布前只执行 `prepare` 和 `verify`。GitHub Release 成功
 在现有 `api.memora.wang` 站点中，把静态下载路由放在 API 反向代理之前：
 
 ```caddyfile
-handle_path /downloads/android/* {
-    root * /srv/memora-downloads/android
+handle_path /downloads/* {
+    # 宿主机 /opt/memora-apk 挂载到 Caddy 容器 /srv/downloads
+    root * /srv/downloads
     header Access-Control-Allow-Origin "*"
     header X-Content-Type-Options "nosniff"
     file_server
@@ -83,7 +87,8 @@ handle {
 ```bash
 curl -fsS https://api.memora.wang/downloads/android/latest.json | jq .
 curl -I https://api.memora.wang/downloads/android/latest.apk
-curl -I https://api.memora.wang/downloads/android/releases/v2.1.4/Memora-v2.1.4.apk
+curl -I https://api.memora.wang/downloads/android/app-release.apk
+curl -I https://api.memora.wang/downloads/android/releases/v2.1.6/Memora-v2.1.6.apk
 ```
 
-三个地址正常返回后，服务器端 APK 下载任务才算完成。仅 `/health` 返回 200 代表业务 API 在线，不代表下载源已部署。
+manifest 必须返回 `Access-Control-Allow-Origin: *`，三个 APK 地址必须支持 Range 请求。全部正常后，服务器端 APK 下载任务才算完成。仅 `/health` 返回 200 代表业务 API 在线，不代表下载源已部署。
