@@ -68,6 +68,9 @@ app.*.map.json
 # Local scratch / working dir
 /tmp/
 
+# Local deployment credentials (never commit)
+/apikey.txt
+
 # Personal / research artifacts (not for public repo)
 /docs/简历_项目经历_优化版.md
 /docs/调研问卷.docx

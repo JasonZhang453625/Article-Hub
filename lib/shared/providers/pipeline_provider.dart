@@ -15,12 +15,32 @@ import 'page_loader_provider.dart';
 import 'settings_providers.dart';
 import 'auth_provider.dart';
 
-final imageUnderstandingServiceProvider = Provider<ImageUnderstandingService>((
+final imageUnderstandingServiceProvider = Provider<ImageUnderstandingGateway?>((
   ref,
 ) {
-  final service = ImageUnderstandingService(
-    getSession: () => ref.read(currentSessionProvider),
-    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null) return null;
+  if (ref.watch(hostedAiEnabledProvider)) {
+    final model = settings.hostedVisionModel.trim();
+    if (model.isEmpty) return null;
+    final service = ImageUnderstandingService(
+      getSession: () => ref.read(currentSessionProvider),
+      refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+      provider: imageProviderForModel(model),
+      model: model,
+    );
+    ref.onDispose(service.dispose);
+    return service;
+  }
+  if (settings.imageAiBaseUrl.trim().isEmpty ||
+      settings.imageAiApiKey.trim().isEmpty ||
+      settings.imageAiModel.trim().isEmpty) {
+    return null;
+  }
+  final service = OpenAiImageUnderstandingService(
+    baseUrl: settings.imageAiBaseUrl,
+    apiKey: settings.imageAiApiKey,
+    model: settings.imageAiModel,
   );
   ref.onDispose(service.dispose);
   return service;
@@ -28,8 +48,10 @@ final imageUnderstandingServiceProvider = Provider<ImageUnderstandingService>((
 
 final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
   final articles = ref.read(articlesProvider.notifier);
-  final embedding = ref.read(embeddingServiceProvider);
-  final index = ref.read(indexServiceProvider);
+  final embedding = ref.watch(embeddingServiceProvider);
+  final index = ref.watch(indexServiceProvider);
+  final aiGateway = ref.watch(summaryAiGatewayProvider);
+  final imageUnderstanding = ref.watch(imageUnderstandingServiceProvider);
 
   final pageLoader = ref.read(pageLoaderProvider);
 
@@ -41,7 +63,8 @@ final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {
     extractor: ContentExtractor(loader: pageLoader, ownsLoader: false),
     embedding: embedding,
     index: index,
-    imageUnderstanding: ref.read(imageUnderstandingServiceProvider),
+    aiGateway: aiGateway,
+    imageUnderstanding: imageUnderstanding,
     createFolder: (name) async {
       final folder = Folder(id: const Uuid().v4(), name: name);
       await ref.read(foldersProvider.notifier).add(folder);
@@ -65,15 +88,15 @@ final processingQueueProvider = Provider<ProcessingQueue>((ref) {
     process: (article) => ref.read(processingPipelineProvider).resume(article),
     canProcess: (article) {
       if (article.isLocalImage) {
-        if (ref.read(currentSessionProvider) == null) return false;
+        if (ref.read(imageUnderstandingServiceProvider) == null &&
+            article.imageUnderstanding == null) {
+          return false;
+        }
         if (article.isFullText) return true;
       } else if (article.isFullText) {
         return true;
       }
-      final settings = ref.read(settingsProvider).valueOrNull;
-      return settings != null &&
-          settings.aiBaseUrl.trim().isNotEmpty &&
-          settings.aiApiKey.trim().isNotEmpty;
+      return ref.read(summaryAiGatewayProvider) != null;
     },
   );
 

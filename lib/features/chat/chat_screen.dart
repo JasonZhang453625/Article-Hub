@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -146,35 +147,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
     final runId = ++_answerRunId;
     final sessions = ref.read(chatSessionsProvider.notifier);
-    late final PersistedUserMessage persistedUser;
+    ChatMessageRecord? pending;
     try {
-      persistedUser = await sessions.addUserMessage(query);
-    } catch (error) {
-      if (mounted) {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
-      }
-      return;
-    }
-    ChatMessageRecord pending;
-    try {
+      final persistedUser = await sessions.addUserMessage(query);
       pending = await sessions.addPendingMessage(
         threadId: persistedUser.threadId,
         query: query,
       );
-    } catch (error) {
-      if (mounted) {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
-      }
-      return;
+      _scrollToBottom();
+      await _runAnswer(pending: pending, history: history, runId: runId);
+    } catch (error, stackTrace) {
+      _handleRunFailure(
+        pending: pending,
+        error: error,
+        stackTrace: stackTrace,
+        runId: runId,
+      );
+    } finally {
+      _finishLoading(runId);
     }
-    _scrollToBottom();
-    await _runAnswer(pending: pending, history: history, runId: runId);
   }
 
   /// Re-runs a previously interrupted answer on its original message,
@@ -193,9 +184,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
     final runId = ++_answerRunId;
     final retried = record.copyWith(status: ChatMessageStatus.sending);
-    await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
-    _scrollToBottom();
-    await _runAnswer(pending: retried, history: history, runId: runId);
+    try {
+      await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
+      _scrollToBottom();
+      await _runAnswer(pending: retried, history: history, runId: runId);
+    } catch (error, stackTrace) {
+      _handleRunFailure(
+        pending: retried,
+        error: error,
+        stackTrace: stackTrace,
+        runId: runId,
+      );
+    } finally {
+      _finishLoading(runId);
+    }
   }
 
   /// Runs the RAG pipeline and writes the outcome back onto [pending].
@@ -214,9 +216,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     Future<void> finish(ChatMessageRecord updated) =>
         sessions.updateMessage(updated);
 
-    if (settings == null ||
-        settings.aiBaseUrl.trim().isEmpty ||
-        settings.aiApiKey.trim().isEmpty) {
+    if (settings == null || ref.read(chatAiGatewayProvider) == null) {
       await finish(
         pending.copyWith(
           content: s.configureAiFirst,
@@ -224,9 +224,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           errorCode: 'ai_not_configured',
         ),
       );
-      _finishLoading(runId);
       return;
     }
+    final activeSettings = settings;
 
     final conversation = ref.read(ragConversationServiceProvider);
     if (conversation == null) {
@@ -237,7 +237,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           errorCode: 'ai_unavailable',
         ),
       );
-      _finishLoading(runId);
       return;
     }
 
@@ -252,16 +251,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // With an empty knowledge base, web search (explicitly enabled) is still
     // a valid source — only block when the user expects local-only answers.
     if (completedArticles.isEmpty &&
-        settings.chatKnowledgeSourceIndex == 0 &&
+        activeSettings.chatKnowledgeSourceIndex == 0 &&
         !ref.read(chatWebSearchEnabledProvider)) {
       await finish(
         pending.copyWith(
           content: s.knowledgeBaseEmpty,
           isNoResult: true,
           query: pending.query,
+          status: ChatMessageStatus.completed,
         ),
       );
-      _finishLoading(runId);
       return;
     }
 
@@ -271,9 +270,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           question: pending.query ?? '',
           history: history,
           articles: completedArticles,
-          knowledgeOnly: settings.chatKnowledgeSourceIndex == 0,
-          detailedAnswer: settings.chatAnswerLengthIndex == 1,
-          languageHint: aiLanguagePrompt(settings.languageIndex),
+          knowledgeOnly: activeSettings.chatKnowledgeSourceIndex == 0,
+          detailedAnswer: activeSettings.chatAnswerLengthIndex == 1,
+          languageHint: aiLanguagePrompt(activeSettings.languageIndex),
           webSearch: ref.read(chatWebSearchEnabledProvider),
         ),
       );
@@ -330,7 +329,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       );
     }
-    _finishLoading(runId);
   }
 
   List<RagConversationTurn> _completedHistory(
@@ -357,6 +355,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (message.id == id) return message;
     }
     return null;
+  }
+
+  void _handleRunFailure({
+    required ChatMessageRecord? pending,
+    required Object error,
+    required StackTrace stackTrace,
+    required int runId,
+  }) {
+    if (runId != _answerRunId || !mounted) return;
+    developer.log(
+      'chat answer run failed outside the normal RAG error path',
+      name: 'memora.chat',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    final message = error.toString();
+    if (pending != null) {
+      final s = ref.read(stringsProvider);
+      ref
+          .read(chatSessionsProvider.notifier)
+          .replaceMessageInMemory(
+            pending.copyWith(
+              content: '${s.aiError}: $message',
+              status: ChatMessageStatus.failed,
+              errorCode: 'local_persistence_error',
+            ),
+          );
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   void _finishLoading(int runId) {
@@ -523,9 +554,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             onSend: () => _send(),
             webSearchEnabled: ref.watch(chatWebSearchEnabledProvider),
             webSearchAvailable: ref.watch(webSearchConfiguredProvider),
-            onToggleWebSearch: () => ref
-                .read(chatWebSearchEnabledProvider.notifier)
-                .state = !ref.read(chatWebSearchEnabledProvider),
+            onToggleWebSearch: () =>
+                ref.read(chatWebSearchEnabledProvider.notifier).state = !ref
+                    .read(chatWebSearchEnabledProvider),
           ),
         ],
       ),

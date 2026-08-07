@@ -237,9 +237,7 @@ class _SummarySection extends ConsumerStatefulWidget {
 class _SummarySectionState extends ConsumerState<_SummarySection> {
   Future<void> _regenerate() async {
     final settings = ref.read(settingsProvider).valueOrNull;
-    if (settings == null ||
-        settings.aiBaseUrl.trim().isEmpty ||
-        settings.aiApiKey.trim().isEmpty) {
+    if (settings == null || ref.read(summaryAiGatewayProvider) == null) {
       return;
     }
 
@@ -269,7 +267,7 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
     final theme = widget.theme;
     final isDark = widget.isDark;
     final summary = widget.article.displayMemoryMarkdown;
-    final aiConfigured = ref.watch(aiConfiguredProvider);
+    final aiConfigured = ref.watch(summaryAiGatewayProvider) != null;
     final s = ref.watch(stringsProvider);
     final pipelineGenerating =
         widget.article.processingStage == ProcessingStage.summary;

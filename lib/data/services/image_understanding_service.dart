@@ -15,7 +15,15 @@ import 'local_image_importer.dart';
 const String imageUnderstandingPromptVersion = 'image-understanding-v1';
 const String senseNovaProvider = 'sensenova';
 const String senseNovaModel = 'sensenova-6.7-flash-lite';
-const String senseNovaMessagesUrl = 'https://token.sensenova.cn/v1/messages';
+const String mimoImageProvider = 'mimo';
+const String openAiCompatibleImageProvider = 'openai-compatible';
+
+String imageProviderForModel(String model) {
+  final normalized = model.trim().toLowerCase();
+  if (normalized.contains('sensenova')) return senseNovaProvider;
+  if (normalized.contains('mimo')) return mimoImageProvider;
+  return openAiCompatibleImageProvider;
+}
 
 const String _imageUnderstandingSystemPrompt = '''
 你是 Memora 的图片理解与忠实转写引擎。输入包含 1 到 9 张按顺序排列的用户图片。
@@ -72,23 +80,36 @@ abstract interface class ImageUnderstandingGateway {
   });
 }
 
+abstract interface class IdentifiedImageUnderstandingGateway
+    implements ImageUnderstandingGateway {
+  String get provider;
+  String get model;
+}
+
 typedef ImageUnderstandingSessionGetter = AuthSession? Function();
 typedef ImageUnderstandingSessionRefresher = Future<AuthSession?> Function();
 
-class ImageUnderstandingService implements ImageUnderstandingGateway {
+class ImageUnderstandingService implements IdentifiedImageUnderstandingGateway {
   final http.Client _client;
   final ImageUnderstandingSessionGetter _getSession;
   final ImageUnderstandingSessionRefresher _refreshSession;
+  @override
+  final String provider;
+  @override
+  final String model;
   final Duration timeout;
 
   ImageUnderstandingService({
     http.Client? client,
     required ImageUnderstandingSessionGetter getSession,
     required ImageUnderstandingSessionRefresher refreshSession,
+    this.model = senseNovaModel,
+    String? provider,
     this.timeout = const Duration(seconds: 90),
   }) : _client = client ?? http.Client(),
        _getSession = getSession,
-       _refreshSession = refreshSession;
+       _refreshSession = refreshSession,
+       provider = provider ?? imageProviderForModel(model);
 
   @override
   Future<ImageUnderstandingDocument> understand({
@@ -113,8 +134,15 @@ class ImageUnderstandingService implements ImageUnderstandingGateway {
       );
     }
 
-    var credentialResponse = await _fetchCredential(session);
-    if (credentialResponse.statusCode == 401) {
+    final clientRequestId = _clientRequestId(articleId, images);
+    var providerResponse = await _uploadToBackend(
+      session: session,
+      articleId: articleId,
+      clientRequestId: clientRequestId,
+      images: images,
+      locale: locale,
+    );
+    if (providerResponse.statusCode == 401) {
       session = await _refreshSession();
       if (session == null) {
         throw const ImageUnderstandingException(
@@ -123,39 +151,21 @@ class ImageUnderstandingService implements ImageUnderstandingGateway {
           retryable: false,
         );
       }
-      credentialResponse = await _fetchCredential(session);
-    }
-    if (credentialResponse.statusCode < 200 ||
-        credentialResponse.statusCode >= 300) {
-      throw _decodeBackendError(credentialResponse);
-    }
-
-    final credential = _decodeObject(credentialResponse.bodyBytes);
-    final apiKey = credential['apiKey'];
-    if (credential['schemaVersion'] != 1 ||
-        credential['provider'] != senseNovaProvider ||
-        apiKey is! String ||
-        apiKey.trim().isEmpty) {
-      throw const ImageUnderstandingException(
-        code: 'invalid_credential_response',
-        message: 'Memora returned an invalid image-model credential.',
-        retryable: true,
+      providerResponse = await _uploadToBackend(
+        session: session,
+        articleId: articleId,
+        clientRequestId: clientRequestId,
+        images: images,
+        locale: locale,
       );
     }
-
-    final clientRequestId = _clientRequestId(articleId, images);
-    final providerResponse = await _sendToSenseNova(
-      apiKey: apiKey.trim(),
-      images: images,
-      locale: locale,
-    );
     if (providerResponse.statusCode < 200 ||
         providerResponse.statusCode >= 300) {
-      throw _decodeProviderError(providerResponse);
+      throw _decodeBackendError(providerResponse);
     }
 
     try {
-      final document = _decodeProviderDocument(
+      final document = _decodeBackendDocument(
         providerResponse,
         images: images,
         fallbackRequestId: clientRequestId,
@@ -173,73 +183,61 @@ class ImageUnderstandingService implements ImageUnderstandingGateway {
     }
   }
 
-  Future<http.Response> _fetchCredential(AuthSession session) {
-    return _client
-        .get(
-          BackendConfig.uri('/ai/sensenova-credential'),
-          headers: {
-            'Authorization': 'Bearer ${session.accessToken}',
-            'Accept': 'application/json',
-          },
-        )
-        .timeout(
-          const Duration(seconds: 20),
-          onTimeout: () {
-            throw const ImageUnderstandingException(
-              code: 'credential_timeout',
-              message: 'Fetching the image-model credential timed out.',
-              retryable: true,
-            );
-          },
-        );
-  }
-
-  Future<http.Response> _sendToSenseNova({
-    required String apiKey,
+  /// Uploads the ordered image set to the Memora backend, which proxies to
+  /// the image model provider. The backend is responsible for parsing,
+  /// validating and normalizing the provider output, so this method only
+  /// needs to decode the already-validated result envelope.
+  Future<http.Response> _uploadToBackend({
+    required AuthSession session,
+    required String articleId,
+    required String clientRequestId,
     required List<ImageUnderstandingUpload> images,
     required String locale,
   }) {
-    final content = <Map<String, dynamic>>[
-      {
-        'type': 'text',
-        'text':
-            'locale: $locale\n严格返回 $imageUnderstandingPromptVersion JSON。\n图片清单按下面的文字块与图片块一一对应。',
-      },
-      for (final upload in images) ...[
-        {
-          'type': 'text',
-          'text':
-              'attachmentId: ${upload.attachment.id}, order: ${upload.attachment.order}',
-        },
-        {
-          'type': 'image',
-          'source': {
-            'type': 'base64',
-            'media_type': upload.attachment.mimeType.toLowerCase(),
-            'data': base64Encode(upload.bytes),
-          },
-        },
-      ],
-    ];
-    return _client
-        .post(
-          Uri.parse(senseNovaMessagesUrl),
-          headers: {
-            'Authorization': 'Bearer $apiKey',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: jsonEncode({
-            'model': senseNovaModel,
-            'max_tokens': 16384,
-            'temperature': 0.1,
-            'output_config': {'effort': 'low'},
-            'system': _imageUnderstandingSystemPrompt,
-            'messages': [
-              {'role': 'user', 'content': content},
+    final request =
+        http.MultipartRequest(
+            'POST',
+            BackendConfig.uri('/ai/image-understanding'),
+          )
+          ..headers['Authorization'] = 'Bearer ${session.accessToken}'
+          ..headers['Accept'] = 'application/json'
+          ..headers['Idempotency-Key'] = clientRequestId
+          ..fields['metadata'] = jsonEncode({
+            'schemaVersion': 1,
+            'clientRequestId': clientRequestId,
+            'articleId': articleId,
+            'promptVersion': imageUnderstandingPromptVersion,
+            'locale': locale,
+            'provider': provider,
+            'model': model,
+            'images': [
+              for (final upload in images)
+                {
+                  'attachmentId': upload.attachment.id,
+                  'order': upload.attachment.order,
+                  'mimeType': upload.attachment.mimeType.toLowerCase(),
+                  'byteLength': upload.attachment.byteLength,
+                  'sha256': upload.attachment.sha256,
+                },
             ],
-          }),
-        )
+          });
+
+    for (final upload in images) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'images',
+          upload.bytes,
+          filename: upload.attachment.originalFileName,
+          contentType: http.MediaType(
+            'image',
+            upload.attachment.mimeType.toLowerCase().replaceFirst('image/', ''),
+          ),
+        ),
+      );
+    }
+
+    return _client
+        .send(request)
         .timeout(
           timeout,
           onTimeout: () {
@@ -249,46 +247,34 @@ class ImageUnderstandingService implements ImageUnderstandingGateway {
               retryable: true,
             );
           },
-        );
+        )
+        .then(http.Response.fromStream);
   }
 
-  ImageUnderstandingDocument _decodeProviderDocument(
+  ImageUnderstandingDocument _decodeBackendDocument(
     http.Response response, {
     required List<ImageUnderstandingUpload> images,
     required String fallbackRequestId,
   }) {
     final envelope = _decodeObject(response.bodyBytes);
-    final stopReason = envelope['stop_reason'];
-    if (stopReason == 'max_tokens') {
-      throw const ImageUnderstandingException(
-        code: 'response_truncated',
-        message: 'Image understanding was truncated. Please retry.',
-        retryable: true,
+    if (envelope['schemaVersion'] != 1) {
+      throw const FormatException('Memora returned an invalid response schema');
+    }
+    final result = envelope['result'];
+    if (result is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Memora returned no image understanding result',
       );
     }
-    final blocks = envelope['content'];
-    if (blocks is! List) {
-      throw const FormatException('SenseNova returned no content');
-    }
-    final text = blocks
-        .whereType<Map>()
-        .where((block) => block['type'] == 'text')
-        .map((block) => block['text'])
-        .whereType<String>()
-        .join('\n')
-        .trim();
-    if (text.isEmpty) {
-      throw const FormatException('SenseNova returned no text content');
-    }
-    final modelJson = _decodeModelJson(text);
+    final modelJson = Map<String, dynamic>.from(result);
     modelJson
-      ..['requestId'] = envelope['id'] is String
-          ? envelope['id']
+      ..['requestId'] = envelope['requestId'] is String
+          ? envelope['requestId']
           : fallbackRequestId
-      ..['provider'] = senseNovaProvider
-      ..['model'] = envelope['model'] is String
-          ? envelope['model']
-          : senseNovaModel
+      ..['provider'] = result['provider'] is String
+          ? result['provider']
+          : provider
+      ..['model'] = result['model'] is String ? result['model'] : model
       ..['promptVersion'] = imageUnderstandingPromptVersion
       ..['generatedAt'] = DateTime.now().toUtc().toIso8601String()
       ..['sourceImages'] = images
@@ -300,117 +286,49 @@ class ImageUnderstandingService implements ImageUnderstandingGateway {
             },
           )
           .toList();
-    final usage = envelope['usage'];
+    final usage = result['usage'];
     if (usage is Map) {
       modelJson['usage'] = {
-        'inputTokens': usage['input_tokens'] is int ? usage['input_tokens'] : 0,
-        'outputTokens': usage['output_tokens'] is int
-            ? usage['output_tokens']
+        'inputTokens': usage['inputTokens'] is int ? usage['inputTokens'] : 0,
+        'outputTokens': usage['outputTokens'] is int
+            ? usage['outputTokens']
             : 0,
       };
     }
     return ImageUnderstandingDocument.fromJson(modelJson);
   }
 
-  Map<String, dynamic> _decodeModelJson(String text) {
-    var value = text.trim();
-    if (value.startsWith('```') && value.endsWith('```')) {
-      value = value.replaceFirst(RegExp(r'^```(?:json)?\s*'), '');
-      value = value.replaceFirst(RegExp(r'\s*```$'), '');
-    }
-    final decoded = jsonDecode(value);
-    if (decoded is Map<String, dynamic>) return decoded;
-    throw const FormatException('SenseNova did not return a JSON object');
-  }
-
   Future<void> _validateUploads(List<ImageUnderstandingUpload> images) async {
-    if (images.isEmpty || images.length > maxImagesPerMemory) {
-      throw ImageUnderstandingException(
-        code: 'invalid_input',
-        message: 'Select between 1 and $maxImagesPerMemory images.',
-        retryable: false,
-      );
-    }
-    final ids = <String>{};
-    final orders = <int>{};
-    for (final upload in images) {
-      final attachment = upload.attachment;
-      if (!attachment.isImage ||
-          !supportedImageUnderstandingMimeTypes.contains(
-            attachment.mimeType.toLowerCase(),
-          ) ||
-          !attachment.hasUploadFingerprint ||
-          upload.bytes.length != attachment.byteLength ||
-          !ids.add(attachment.id) ||
-          !orders.add(attachment.order)) {
-        throw const ImageUnderstandingException(
-          code: 'invalid_input',
-          message: 'One or more image attachments are invalid.',
-          retryable: false,
-        );
-      }
-      final digest = await Sha256().hash(upload.bytes);
-      if (_hex(digest.bytes) != attachment.sha256.toLowerCase()) {
-        throw const ImageUnderstandingException(
-          code: 'attachment_changed',
-          message: 'An image changed after it was added.',
-          retryable: false,
-        );
-      }
-    }
+    await _validateImageUploads(images);
   }
 
   void _validateDocument(
     ImageUnderstandingDocument document,
     List<ImageUnderstandingUpload> images,
   ) {
-    if (document.schemaVersion != 1 ||
-        document.provider != senseNovaProvider ||
-        document.promptVersion != imageUnderstandingPromptVersion ||
-        document.combinedMarkdown.trim().isEmpty ||
-        document.pages.length != images.length ||
-        !document.matchesAttachments(
-          images.map((upload) => upload.attachment).toList(),
-          expectedPromptVersion: imageUnderstandingPromptVersion,
-        )) {
-      throw const FormatException(
-        'Image understanding result is incomplete or does not match the images.',
-      );
-    }
-    final expectedPages = {
-      for (final upload in images)
-        '${upload.attachment.id}:${upload.attachment.order}',
-    };
-    final actualPages = {
-      for (final page in document.pages) '${page.attachmentId}:${page.order}',
-    };
-    if (expectedPages.length != actualPages.length ||
-        !expectedPages.containsAll(actualPages)) {
-      throw const FormatException(
-        'Image understanding result contains missing or duplicate pages.',
-      );
-    }
+    _validateImageDocument(
+      document,
+      images,
+      expectedProvider: provider,
+      expectedModel: model,
+    );
   }
 
   String _clientRequestId(
     String articleId,
     List<ImageUnderstandingUpload> images,
   ) {
-    final fingerprint = images
-        .map(
-          (upload) =>
-              '${upload.attachment.order}:${upload.attachment.id}:${upload.attachment.sha256}',
-        )
-        .join('|');
-    return const Uuid().v5(
-      Namespace.url.value,
-      '$articleId|$imageUnderstandingPromptVersion|$fingerprint',
+    return _imageClientRequestId(
+      articleId,
+      images,
+      provider: provider,
+      model: model,
     );
   }
 
   ImageUnderstandingException _decodeBackendError(http.Response response) {
-    var code = 'credential_request_failed';
-    var message = 'Could not get the image-model credential.';
+    var code = 'image_understanding_failed';
+    var message = 'Image understanding failed.';
     var retryable = response.statusCode == 429 || response.statusCode >= 500;
     String? requestId;
     try {
@@ -436,36 +354,203 @@ class ImageUnderstandingService implements ImageUnderstandingGateway {
     );
   }
 
-  ImageUnderstandingException _decodeProviderError(http.Response response) {
-    final statusCode = response.statusCode;
-    final retryable =
-        statusCode == 408 || statusCode == 429 || statusCode >= 500;
-    final code = switch (statusCode) {
-      401 || 403 => 'provider_auth_failed',
-      413 => 'images_too_large',
-      429 => 'provider_rate_limited',
-      _ when statusCode >= 500 => 'provider_unavailable',
-      _ => 'provider_request_failed',
-    };
-    final message = switch (statusCode) {
-      401 || 403 => 'SenseNova rejected the configured API key.',
-      413 => 'The selected images are too large for SenseNova.',
-      429 => 'SenseNova is busy. Please retry later.',
-      _ when statusCode >= 500 => 'SenseNova is temporarily unavailable.',
-      _ => 'SenseNova could not understand the selected images.',
-    };
-    return ImageUnderstandingException(
-      code: code,
-      message: message,
-      retryable: retryable,
-      statusCode: statusCode,
-    );
-  }
-
   Map<String, dynamic> _decodeObject(List<int> bytes) {
     final decoded = jsonDecode(utf8.decode(bytes));
     if (decoded is Map<String, dynamic>) return decoded;
     throw const FormatException('Expected a JSON object');
+  }
+
+  void dispose() => _client.close();
+}
+
+/// Direct OpenAI-compatible image understanding for BYOK mode.
+class OpenAiImageUnderstandingService
+    implements IdentifiedImageUnderstandingGateway {
+  final http.Client _client;
+  final String baseUrl;
+  final String apiKey;
+  @override
+  final String model;
+  @override
+  final String provider;
+  final Duration timeout;
+
+  OpenAiImageUnderstandingService({
+    http.Client? client,
+    required this.baseUrl,
+    required this.apiKey,
+    required this.model,
+    String? provider,
+    this.timeout = const Duration(seconds: 90),
+  }) : _client = client ?? http.Client(),
+       provider = provider ?? imageProviderForModel(model);
+
+  bool get isConfigured =>
+      baseUrl.trim().isNotEmpty &&
+      apiKey.trim().isNotEmpty &&
+      model.trim().isNotEmpty;
+
+  Uri _chatUri() {
+    var base = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    if (!base.endsWith('/v1') && !base.contains('/v1/')) {
+      base = '$base/v1';
+    }
+    return Uri.parse('$base/chat/completions');
+  }
+
+  @override
+  Future<ImageUnderstandingDocument> understand({
+    required String articleId,
+    required List<ImageUnderstandingUpload> images,
+    required String locale,
+  }) async {
+    await _validateImageUploads(images);
+    if (!isConfigured) {
+      throw const ImageUnderstandingException(
+        code: 'image_ai_not_configured',
+        message: 'Local image recognition is not configured.',
+        retryable: false,
+      );
+    }
+
+    final requestId = _imageClientRequestId(
+      articleId,
+      images,
+      provider: provider,
+      model: model,
+    );
+    final manifest = {
+      'schemaVersion': 1,
+      'clientRequestId': requestId,
+      'articleId': articleId,
+      'promptVersion': imageUnderstandingPromptVersion,
+      'locale': locale,
+      'images': [
+        for (final upload in images)
+          {
+            'attachmentId': upload.attachment.id,
+            'order': upload.attachment.order,
+            'mimeType': upload.attachment.mimeType.toLowerCase(),
+            'byteLength': upload.attachment.byteLength,
+            'sha256': upload.attachment.sha256,
+          },
+      ],
+    };
+    final content = <Map<String, dynamic>>[
+      {
+        'type': 'text',
+        'text': 'locale: $locale\nmanifest: ${jsonEncode(manifest)}',
+      },
+      for (final upload in images) ...[
+        {
+          'type': 'text',
+          'text':
+              'attachmentId: ${upload.attachment.id}, order: ${upload.attachment.order}',
+        },
+        {
+          'type': 'image_url',
+          'image_url': {
+            'url':
+                'data:${upload.attachment.mimeType.toLowerCase()};base64,${base64Encode(upload.bytes)}',
+          },
+        },
+      ],
+    ];
+    final body = <String, dynamic>{
+      'model': model,
+      'messages': [
+        {'role': 'system', 'content': _imageUnderstandingSystemPrompt},
+        {'role': 'user', 'content': content},
+      ],
+      'temperature': 0.1,
+    };
+    if (model.toLowerCase().contains('mimo')) {
+      body['max_completion_tokens'] = 16384;
+      body['thinking'] = {'type': 'disabled'};
+    } else {
+      body['max_tokens'] = 16384;
+    }
+
+    final http.Response response;
+    try {
+      response = await _client
+          .post(
+            _chatUri(),
+            headers: {
+              'Authorization': 'Bearer ${apiKey.trim()}',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } on TimeoutException {
+      throw const ImageUnderstandingException(
+        code: 'provider_timeout',
+        message: 'Image understanding timed out.',
+        retryable: true,
+      );
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _decodeOpenAiImageError(response);
+    }
+
+    try {
+      final envelope = _decodeJsonObject(response.bodyBytes);
+      final choices = envelope['choices'];
+      if (choices is! List || choices.isEmpty || choices.first is! Map) {
+        throw const FormatException('Image AI returned no choices');
+      }
+      final message = (choices.first as Map)['message'];
+      if (message is! Map) {
+        throw const FormatException('Image AI returned no assistant message');
+      }
+      final text = _assistantText(message['content']);
+      if (text.isEmpty) {
+        throw const FormatException('Image AI returned empty content');
+      }
+      final modelJson = _decodeImageModelJson(text)
+        ..['requestId'] = envelope['id'] is String ? envelope['id'] : requestId
+        ..['provider'] = provider
+        ..['model'] = model
+        ..['promptVersion'] = imageUnderstandingPromptVersion
+        ..['generatedAt'] = DateTime.now().toUtc().toIso8601String()
+        ..['sourceImages'] = [
+          for (final upload in images)
+            {
+              'attachmentId': upload.attachment.id,
+              'order': upload.attachment.order,
+              'sha256': upload.attachment.sha256,
+            },
+        ];
+      final usage = envelope['usage'];
+      if (usage is Map) {
+        modelJson['usage'] = {
+          'inputTokens': usage['prompt_tokens'] is int
+              ? usage['prompt_tokens']
+              : 0,
+          'outputTokens': usage['completion_tokens'] is int
+              ? usage['completion_tokens']
+              : 0,
+        };
+      }
+      final document = ImageUnderstandingDocument.fromJson(modelJson);
+      _validateImageDocument(
+        document,
+        images,
+        expectedProvider: provider,
+        expectedModel: model,
+      );
+      return document;
+    } on ImageUnderstandingException {
+      rethrow;
+    } on FormatException catch (error) {
+      throw ImageUnderstandingException(
+        code: 'invalid_response',
+        message: error.message,
+        retryable: true,
+      );
+    }
   }
 
   void dispose() => _client.close();
@@ -492,4 +577,161 @@ class ImageUnderstandingException implements Exception {
 
 String _hex(List<int> bytes) {
   return bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+}
+
+Future<void> _validateImageUploads(
+  List<ImageUnderstandingUpload> images,
+) async {
+  if (images.isEmpty || images.length > maxImagesPerMemory) {
+    throw ImageUnderstandingException(
+      code: 'invalid_input',
+      message: 'Select between 1 and $maxImagesPerMemory images.',
+      retryable: false,
+    );
+  }
+  final ids = <String>{};
+  final orders = <int>{};
+  for (final upload in images) {
+    final attachment = upload.attachment;
+    if (!attachment.isImage ||
+        !supportedImageUnderstandingMimeTypes.contains(
+          attachment.mimeType.toLowerCase(),
+        ) ||
+        !attachment.hasUploadFingerprint ||
+        upload.bytes.length != attachment.byteLength ||
+        !ids.add(attachment.id) ||
+        !orders.add(attachment.order)) {
+      throw const ImageUnderstandingException(
+        code: 'invalid_input',
+        message: 'One or more image attachments are invalid.',
+        retryable: false,
+      );
+    }
+    final digest = await Sha256().hash(upload.bytes);
+    if (_hex(digest.bytes) != attachment.sha256.toLowerCase()) {
+      throw const ImageUnderstandingException(
+        code: 'attachment_changed',
+        message: 'An image changed after it was added.',
+        retryable: false,
+      );
+    }
+  }
+}
+
+void _validateImageDocument(
+  ImageUnderstandingDocument document,
+  List<ImageUnderstandingUpload> images, {
+  required String expectedProvider,
+  required String expectedModel,
+}) {
+  if (document.schemaVersion != 1 ||
+      document.provider != expectedProvider ||
+      document.model != expectedModel ||
+      document.promptVersion != imageUnderstandingPromptVersion ||
+      document.combinedMarkdown.trim().isEmpty ||
+      document.pages.length != images.length ||
+      !document.matchesAttachments(
+        images.map((upload) => upload.attachment).toList(),
+        expectedPromptVersion: imageUnderstandingPromptVersion,
+      )) {
+    throw const FormatException(
+      'Image understanding result is incomplete or does not match the images.',
+    );
+  }
+  final expectedPages = {
+    for (final upload in images)
+      '${upload.attachment.id}:${upload.attachment.order}',
+  };
+  final actualPages = {
+    for (final page in document.pages) '${page.attachmentId}:${page.order}',
+  };
+  if (expectedPages.length != actualPages.length ||
+      !expectedPages.containsAll(actualPages)) {
+    throw const FormatException(
+      'Image understanding result contains missing or duplicate pages.',
+    );
+  }
+}
+
+String _imageClientRequestId(
+  String articleId,
+  List<ImageUnderstandingUpload> images, {
+  required String provider,
+  required String model,
+}) {
+  final fingerprint = images
+      .map(
+        (upload) =>
+            '${upload.attachment.order}:${upload.attachment.id}:${upload.attachment.sha256}',
+      )
+      .join('|');
+  return const Uuid().v5(
+    Namespace.url.value,
+    '$articleId|$imageUnderstandingPromptVersion|$provider|$model|$fingerprint',
+  );
+}
+
+Map<String, dynamic> _decodeJsonObject(List<int> bytes) {
+  final decoded = jsonDecode(utf8.decode(bytes));
+  if (decoded is Map<String, dynamic>) return decoded;
+  throw const FormatException('Expected a JSON object');
+}
+
+String _assistantText(dynamic content) {
+  if (content is String) return content.trim();
+  if (content is List) {
+    return content
+        .whereType<Map>()
+        .where((block) => block['type'] == 'text')
+        .map((block) => block['text'])
+        .whereType<String>()
+        .join('\n')
+        .trim();
+  }
+  return '';
+}
+
+Map<String, dynamic> _decodeImageModelJson(String text) {
+  var value = text.trim();
+  final fenced = RegExp(
+    r'^```(?:json)?\s*\n?(.*?)\n?```$',
+    dotAll: true,
+  ).firstMatch(value);
+  if (fenced != null) value = fenced.group(1)!.trim();
+  final decoded = jsonDecode(value);
+  if (decoded is Map<String, dynamic>) return decoded;
+  throw const FormatException('Image AI did not return a JSON object');
+}
+
+ImageUnderstandingException _decodeOpenAiImageError(http.Response response) {
+  final statusCode = response.statusCode;
+  var code = switch (statusCode) {
+    401 || 403 => 'provider_auth_failed',
+    413 => 'images_too_large',
+    429 => 'provider_rate_limited',
+    _ when statusCode >= 500 => 'provider_unavailable',
+    _ => 'provider_request_failed',
+  };
+  var message = switch (statusCode) {
+    401 || 403 => 'The image provider rejected the configured API key.',
+    413 => 'The selected images are too large for the image provider.',
+    429 => 'The image provider rate limit was reached. Please retry later.',
+    _ when statusCode >= 500 =>
+      'The image provider is temporarily unavailable.',
+    _ => 'The image provider could not understand the selected images.',
+  };
+  try {
+    final decoded = _decodeJsonObject(response.bodyBytes);
+    final error = decoded['error'];
+    if (error is Map) {
+      if (error['code'] is String) code = error['code'] as String;
+      if (error['message'] is String) message = error['message'] as String;
+    }
+  } catch (_) {}
+  return ImageUnderstandingException(
+    code: code,
+    message: message,
+    retryable: statusCode == 408 || statusCode == 429 || statusCode >= 500,
+    statusCode: statusCode,
+  );
 }

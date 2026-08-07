@@ -90,11 +90,13 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   Future<List<ChatMessageRecord>> _recoverInterrupted(String threadId) async {
     final messages = _repo.getMessages(threadId);
     var changed = false;
-    final recovered = messages.map((message) {
-      if (message.status != ChatMessageStatus.sending) return message;
-      changed = true;
-      return message.copyWith(status: ChatMessageStatus.interrupted);
-    }).toList(growable: false);
+    final recovered = messages
+        .map((message) {
+          if (message.status != ChatMessageStatus.sending) return message;
+          changed = true;
+          return message.copyWith(status: ChatMessageStatus.interrupted);
+        })
+        .toList(growable: false);
     if (changed) {
       for (final message in recovered) {
         if (message.status == ChatMessageStatus.interrupted) {
@@ -265,6 +267,27 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     await _ensureLoaded();
     final current = _current;
     await _repo.putMessage(updated);
+    final messages = current.messages
+        .map((message) => message.id == updated.id ? updated : message)
+        .toList(growable: false);
+    state = AsyncValue.data(
+      ChatSessionState(
+        threads: current.threads,
+        activeThreadId: current.activeThreadId,
+        messages: List.unmodifiable(messages),
+      ),
+    );
+  }
+
+  /// Best-effort UI fallback when Hive rejects a final answer update.
+  ///
+  /// The durable write has already failed in that case, so keeping the
+  /// in-memory placeholder in `sending` would leave an endless typing bubble.
+  /// On the next app start the persisted placeholder is recovered as
+  /// `interrupted` by [_recoverInterrupted].
+  void replaceMessageInMemory(ChatMessageRecord updated) {
+    final current = state.valueOrNull;
+    if (current == null) return;
     final messages = current.messages
         .map((message) => message.id == updated.id ? updated : message)
         .toList(growable: false);

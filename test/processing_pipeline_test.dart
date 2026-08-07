@@ -14,6 +14,7 @@ import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
+import 'package:memora/data/services/ai_service.dart';
 import 'package:memora/data/services/content_extractor.dart';
 import 'package:memora/data/services/attachment_store.dart';
 import 'package:memora/data/services/image_understanding_service.dart';
@@ -204,12 +205,18 @@ void main() {
       () async {
         final seed = seedArticle().copyWith(tags: ['manual-tag']);
         final notifier = await seedAndGetNotifier(seed);
+        final settings = AppSettings(
+          aiBaseUrl: 'https://example.com/v1',
+          aiApiKey: 'test-key',
+          aiModel: 'test-model',
+        );
         final pipeline = ProcessingPipeline(
           articles: notifier,
-          getSettings: () => AppSettings(
-            aiBaseUrl: 'https://example.com/v1',
-            aiApiKey: 'test-key',
-            aiModel: 'test-model',
+          getSettings: () => settings,
+          aiGateway: AiService(
+            baseUrl: settings.aiBaseUrl,
+            apiKey: settings.aiApiKey,
+            model: settings.aiModel,
           ),
           getFolders: () => const <Folder>[],
           metadata: MetadataService(

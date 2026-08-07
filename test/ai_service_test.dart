@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -255,4 +256,189 @@ void main() {
     expect((messages.last as Map)['role'], 'user');
     expect((messages.last as Map)['content'], 'Current question');
   });
+
+  test('classic chat models send only max_tokens', () async {
+    late Map<String, dynamic> payload;
+    final client = MockClient((request) async {
+      payload = jsonDecode(request.body) as Map<String, dynamic>;
+      if (payload.containsKey('max_tokens') &&
+          payload.containsKey('max_completion_tokens')) {
+        return http.Response(
+          jsonEncode({
+            'error': {
+              'message':
+                  "Both 'max_tokens' and 'max_completion_tokens' were supplied.",
+            },
+          }),
+          400,
+        );
+      }
+      return _chatResponse('ok');
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+    );
+
+    final result = await http.runWithClient(
+      () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+      () => client,
+    );
+
+    expect(result, 'ok');
+    expect(payload['max_tokens'], 800);
+    expect(payload.containsKey('max_completion_tokens'), isFalse);
+  });
+
+  test('OpenAI reasoning models send only max_completion_tokens', () async {
+    for (final model in ['gpt-5-mini', 'openai/o3-mini']) {
+      late Map<String, dynamic> payload;
+      final client = MockClient((request) async {
+        payload = jsonDecode(request.body) as Map<String, dynamic>;
+        return _chatResponse('ok');
+      });
+      final ai = AiService(
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'test-key',
+        model: model,
+      );
+
+      final result = await http.runWithClient(
+        () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+        () => client,
+      );
+
+      expect(result, 'ok', reason: model);
+      expect(payload['max_completion_tokens'], 800, reason: model);
+      expect(payload.containsKey('max_tokens'), isFalse, reason: model);
+    }
+  });
+
+  test(
+    'MiMo chat keeps its single token field and disables thinking',
+    () async {
+      late Map<String, dynamic> payload;
+      final client = MockClient((request) async {
+        payload = jsonDecode(request.body) as Map<String, dynamic>;
+        return _chatResponse('ok');
+      });
+      final ai = AiService(
+        baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+        apiKey: 'test-key',
+        model: 'mimo-v2.5',
+      );
+
+      await http.runWithClient(
+        () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+        () => client,
+      );
+
+      expect(payload['max_completion_tokens'], 800);
+      expect(payload.containsKey('max_tokens'), isFalse);
+      expect(payload['thinking'], {'type': 'disabled'});
+    },
+  );
+
+  for (final statusCode in [429, 503]) {
+    test('chat retries HTTP $statusCode once and then succeeds', () async {
+      var calls = 0;
+      final client = MockClient((request) async {
+        calls++;
+        if (calls == 1) {
+          return http.Response(
+            jsonEncode({
+              'error': {'message': 'transient failure'},
+            }),
+            statusCode,
+          );
+        }
+        return _chatResponse('recovered');
+      });
+      final ai = AiService(
+        baseUrl: 'https://example.com/v1',
+        apiKey: 'test-key',
+        model: 'gpt-4o-mini',
+        retryDelay: Duration.zero,
+      );
+
+      final result = await http.runWithClient(
+        () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+        () => client,
+      );
+
+      expect(result, 'recovered');
+      expect(calls, 2);
+      expect(ai.lastError, isNull);
+    });
+  }
+
+  test('chat retries a timeout once and then succeeds', () async {
+    var calls = 0;
+    final firstRequest = Completer<void>();
+    final client = MockClient((request) async {
+      calls++;
+      if (calls == 1) await firstRequest.future;
+      return _chatResponse('recovered');
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      timeout: const Duration(milliseconds: 5),
+      retryDelay: Duration.zero,
+    );
+
+    final result = await http.runWithClient(
+      () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+      () => client,
+    );
+    firstRequest.complete();
+
+    expect(result, 'recovered');
+    expect(calls, 2);
+    expect(ai.lastError, isNull);
+  });
+
+  test('chat does not retry HTTP 400 and preserves provider details', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      return http.Response(
+        jsonEncode({
+          'error': {'message': 'invalid token parameter'},
+        }),
+        400,
+      );
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      retryDelay: Duration.zero,
+    );
+
+    final result = await http.runWithClient(
+      () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+      () => client,
+    );
+
+    expect(result, isNull);
+    expect(calls, 1);
+    expect(ai.lastError, 'HTTP 400: invalid token parameter');
+  });
+}
+
+http.Response _chatResponse(String content) {
+  return http.Response(
+    jsonEncode({
+      'choices': [
+        {
+          'message': {'content': content},
+          'finish_reason': 'stop',
+        },
+      ],
+    }),
+    200,
+  );
 }

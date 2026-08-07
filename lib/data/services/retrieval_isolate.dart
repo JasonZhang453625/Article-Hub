@@ -35,18 +35,22 @@ Future<RetrievalComputeOutput> runRetrievalInIsolate({
   int topK = 5,
 }) {
   assert(
-    records.every((m) =>
-        m['articleId'] is String &&
-        m['model'] is String &&
-        m['vector'] is List<double>),
+    records.every(
+      (m) =>
+          m['articleId'] is String &&
+          m['model'] is String &&
+          m['vector'] is List<double>,
+    ),
     'records must have articleId (String), model (String), vector (List<double>)',
   );
   assert(
-    articles.every((m) =>
-        m['id'] is String &&
-        m['title'] is String &&
-        (m['summary'] is String) &&
-        m['tags'] is List),
+    articles.every(
+      (m) =>
+          m['id'] is String &&
+          m['title'] is String &&
+          (m['summary'] is String) &&
+          m['tags'] is List,
+    ),
     'articles must have id, title, summary (String), tags (List)',
   );
 
@@ -61,11 +65,30 @@ Future<RetrievalComputeOutput> runRetrievalInIsolate({
   };
 
   return Isolate.run(() => _runRetrievalCompute(input))
-      // The computation is normally milliseconds. A hard deadline guarantees
-      // the caller can never wait forever — e.g. if the OS froze the app
-      // mid-spawn while backgrounded, which would otherwise leave the chat
-      // answer stuck in the "sending" state indefinitely.
-      .timeout(const Duration(seconds: 30));
+  // The computation is normally milliseconds. A hard deadline guarantees
+  // the caller can never wait forever — e.g. if the OS froze the app
+  // mid-spawn while backgrounded, which would otherwise leave the chat
+  // answer stuck in the "sending" state indefinitely.
+  .timeout(const Duration(seconds: 30));
+}
+
+/// Last-resort retrieval path used when spawning or running the background
+/// isolate fails. It deliberately ignores vector data and keeps the
+/// deterministic keyword search available on the current isolate.
+RetrievalComputeOutput runKeywordRetrievalInProcess({
+  required String query,
+  required List<Map<String, dynamic>> articles,
+  int topK = 5,
+}) {
+  return _runRetrievalCompute({
+    'query': query,
+    'queryVector': const <double>[],
+    'embeddingModel': '',
+    'records': const <Map<String, dynamic>>[],
+    'articles': articles,
+    'minRelevance': 0.3,
+    'topK': topK,
+  });
 }
 
 RetrievalComputeOutput _runRetrievalCompute(Map<String, dynamic> input) {
@@ -77,8 +100,7 @@ RetrievalComputeOutput _runRetrievalCompute(Map<String, dynamic> input) {
   final minRelevance = input['minRelevance'] as double;
   final topK = input['topK'] as int;
 
-  final keywordRanked =
-      _keywordRetrieve(query, articles, topK);
+  final keywordRanked = _keywordRetrieve(query, articles, topK);
 
   final vectorRanked = _vectorRetrieve(
     queryVector,
@@ -155,8 +177,7 @@ List<List<Object>> _keywordRetrieve(
   int topK,
 ) {
   final lower = query.toLowerCase();
-  final words =
-      lower.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  final words = lower.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
   if (words.isEmpty) return [];
 
   final scored = <List<Object>>[];

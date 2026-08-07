@@ -1,10 +1,13 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/services/embedding_service.dart';
+import 'dart:async';
+
 import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/services/index_service.dart';
 import 'package:memora/data/services/retrieval_service.dart';
+import 'package:memora/data/services/retrieval_isolate.dart';
 
 void main() {
   group('cosineSimilarity', () {
@@ -210,6 +213,76 @@ void main() {
     });
   });
 
+  group('Retrieval service resilience', () {
+    final article = Article(
+      id: 'flutter',
+      url: 'https://example.com/flutter',
+      title: 'Flutter state management',
+      source: SourcePlatform.web,
+      summary: 'Riverpod keeps application state predictable.',
+      tags: const ['flutter', 'riverpod'],
+    );
+    final embedding = EmbeddingService(
+      baseUrl: '',
+      apiKey: '',
+      model: 'test-embedding',
+    );
+
+    test('index read failure still returns keyword matches', () async {
+      final service = RetrievalService(
+        embedding: embedding,
+        index: _ThrowingIndexService(),
+        compute:
+            ({
+              required String query,
+              required List<double> queryVector,
+              required String embeddingModel,
+              required List<Map<String, dynamic>> records,
+              required List<Map<String, dynamic>> articles,
+              required double minRelevance,
+              required int topK,
+            }) async {
+              expect(records, isEmpty);
+              return runKeywordRetrievalInProcess(
+                query: query,
+                articles: articles,
+                topK: topK,
+              );
+            },
+      );
+
+      final result = await service.retrieve('flutter', [article]);
+
+      expect(result.method, RetrievalMethod.keyword);
+      expect(result.articles.map((item) => item.id), ['flutter']);
+    });
+
+    test(
+      'isolate failure falls back to in-process keyword retrieval',
+      () async {
+        final service = RetrievalService(
+          embedding: embedding,
+          index: _EmptyIndexService(),
+          compute:
+              ({
+                required String query,
+                required List<double> queryVector,
+                required String embeddingModel,
+                required List<Map<String, dynamic>> records,
+                required List<Map<String, dynamic>> articles,
+                required double minRelevance,
+                required int topK,
+              }) async => throw TimeoutException('retrieval isolate timed out'),
+        );
+
+        final result = await service.retrieve('riverpod', [article]);
+
+        expect(result.method, RetrievalMethod.keyword);
+        expect(result.articles.map((item) => item.id), ['flutter']);
+      },
+    );
+  });
+
   group('Hybrid retrieval RRF fusion', () {
     final articles = [
       Article(
@@ -309,8 +382,22 @@ void main() {
     });
 
     test('topK limits the number of fused results', () {
-      final vector = [articles[0], articles[1], articles[2], articles[3], articles[4], articles[5]];
-      final keyword = [articles[5], articles[4], articles[3], articles[2], articles[1], articles[0]];
+      final vector = [
+        articles[0],
+        articles[1],
+        articles[2],
+        articles[3],
+        articles[4],
+        articles[5],
+      ];
+      final keyword = [
+        articles[5],
+        articles[4],
+        articles[3],
+        articles[2],
+        articles[1],
+        articles[0],
+      ];
       final fused = rrfFuse(vector, keyword, topK: 3);
       expect(fused.length, 3);
     });
@@ -323,4 +410,16 @@ void main() {
       expect(identical(fused[0], articles[0]), true);
     });
   });
+}
+
+class _ThrowingIndexService extends IndexService {
+  @override
+  Future<List<IndexRecord>> getAll() async {
+    throw StateError('vector index is unavailable');
+  }
+}
+
+class _EmptyIndexService extends IndexService {
+  @override
+  Future<List<IndexRecord>> getAll() async => const [];
 }

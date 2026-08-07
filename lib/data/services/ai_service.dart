@@ -20,26 +20,64 @@ class AiSummaryResult {
   }
 }
 
-class AiService {
+/// Common interface for LLM completion providers.
+///
+/// [AiService] implements the BYOK path (client talks directly to the user's
+/// configured OpenAI-compatible provider). [HostedAiService] implements the
+/// hosted path (client talks to the Memora backend, which proxies to its own
+/// model credentials). Pipeline stages and RAG only depend on this interface.
+abstract interface class AiGateway {
+  bool get isConfigured;
+
+  String? get lastError;
+
+  void Function(int totalTokens)? onTokensUsed;
+
+  Future<AiSummaryResult> summarizeWithTitle(
+    String title,
+    String content, {
+    String languageHint = '',
+  });
+
+  Future<String?> chat({
+    required String systemPrompt,
+    required String userMessage,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  });
+}
+
+class AiService implements AiGateway {
   static const int _singlePassLimit = 15000;
   static const int _chunkSize = 12000;
   static const int _summaryMaxTokens = 4000;
+  static const int _maxTransientRetries = 1;
+  static const Duration defaultTimeout = Duration(seconds: 90);
+  static const Duration defaultRetryDelay = Duration(milliseconds: 800);
 
   final String baseUrl;
   final String apiKey;
   final String model;
   final Duration timeout;
+  final Duration retryDelay;
   final PromptService _prompts;
+
+  @override
   String? lastError;
 
+  int? lastStatusCode;
+
   /// Called after a successful API response with the total_tokens from usage.
+  @override
   void Function(int totalTokens)? onTokensUsed;
 
   AiService({
     required this.baseUrl,
     required this.apiKey,
     required this.model,
-    this.timeout = const Duration(seconds: 60),
+    this.timeout = defaultTimeout,
+    this.retryDelay = defaultRetryDelay,
     PromptService? promptService,
   }) : _prompts = promptService ?? PromptService();
 
@@ -51,6 +89,7 @@ class AiService {
     return Uri.parse('$base/chat/completions');
   }
 
+  @override
   bool get isConfigured =>
       baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
 
@@ -60,17 +99,28 @@ class AiService {
     return b.contains('mimo') || m.contains('mimo');
   }
 
-  Map<String, dynamic> get _summaryOutputOptions {
+  bool get _usesMaxCompletionTokens {
+    if (_isMiMo) return true;
+    final normalizedModel = model.trim().toLowerCase().split('/').last;
+    return normalizedModel.startsWith('gpt-5') ||
+        RegExp(r'^(?:o1|o3|o4)(?:[-.]|$)').hasMatch(normalizedModel);
+  }
+
+  Map<String, dynamic> _outputTokenOptions(int maxTokens) {
     if (_isMiMo) {
       return {
-        'max_completion_tokens': _summaryMaxTokens,
+        'max_completion_tokens': maxTokens,
         'thinking': {'type': 'disabled'},
       };
     }
-    return {'max_tokens': _summaryMaxTokens};
+    if (_usesMaxCompletionTokens) {
+      return {'max_completion_tokens': maxTokens};
+    }
+    return {'max_tokens': maxTokens};
   }
 
   /// Summarize content and also generate a proper article title.
+  @override
   Future<AiSummaryResult> summarizeWithTitle(
     String title,
     String content, {
@@ -116,7 +166,7 @@ class AiService {
         {'role': 'user', 'content': 'Title: $title\n\n$content'},
       ],
       'temperature': 0.3,
-      ..._summaryOutputOptions,
+      ..._outputTokenOptions(_summaryMaxTokens),
     });
 
     return _postChatWithTitle(_chatUri(), body);
@@ -154,7 +204,7 @@ class AiService {
           },
         ],
         'temperature': 0.2,
-        ..._summaryOutputOptions,
+        ..._outputTokenOptions(_summaryMaxTokens),
       });
 
       final summary = await _postChat(_chatUri(), body);
@@ -357,6 +407,7 @@ class AiService {
     return value.trim();
   }
 
+  @override
   Future<String?> chat({
     required String systemPrompt,
     required String userMessage,
@@ -372,9 +423,9 @@ class AiService {
       {'role': 'user', 'content': userMessage},
     ];
 
-    final isMiMo = _isMiMo;
     developer.log(
-      'chat() isMiMo=$isMiMo model="$model" baseUrl="$baseUrl"',
+      'chat() usesMaxCompletionTokens=$_usesMaxCompletionTokens '
+      'model="$model" baseUrl="$baseUrl"',
       name: 'memora.ai',
     );
     final payload = <String, dynamic>{
@@ -382,88 +433,131 @@ class AiService {
       'messages': messages,
       'temperature': temperature,
     };
-    if (isMiMo) {
-      payload['max_completion_tokens'] = maxTokens;
-      payload['thinking'] = {'type': 'disabled'};
-    } else {
-      payload['max_tokens'] = maxTokens;
-      payload['max_completion_tokens'] = maxTokens;
-    }
+    payload.addAll(_outputTokenOptions(maxTokens));
 
     return _postChat(uri, jsonEncode(payload));
   }
 
   Future<String?> _postChat(Uri uri, String body) async {
     lastError = null;
-    try {
-      final response = await http
-          .post(
-            uri,
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $apiKey',
-            },
-            body: body,
-          )
-          .timeout(timeout);
+    lastStatusCode = null;
+    for (var attempt = 0; attempt <= _maxTransientRetries; attempt++) {
+      lastStatusCode = null;
+      try {
+        final response = await http
+            .post(
+              uri,
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $apiKey',
+              },
+              body: body,
+            )
+            .timeout(timeout);
 
-      developer.log(
-        'API response status: ${response.statusCode}, url: $uri',
-        name: 'memora.ai',
-      );
-      if (response.statusCode != 200) {
-        lastError =
-            'HTTP ${response.statusCode}: ${_responseError(response.body)}';
+        lastStatusCode = response.statusCode;
         developer.log(
-          'response body: ${response.body.substring(0, response.body.length.clamp(0, 500))}',
+          'API response status: ${response.statusCode}, url: $uri',
+          name: 'memora.ai',
+        );
+        if (response.statusCode != 200) {
+          final error =
+              'HTTP ${response.statusCode}: ${_responseError(response.body)}';
+          developer.log(
+            'AI request failed with HTTP ${response.statusCode}',
+            name: 'memora.ai',
+          );
+          if (_isTransientStatus(response.statusCode, response.body) &&
+              attempt < _maxTransientRetries) {
+            await _waitBeforeRetry(attempt, error);
+            continue;
+          }
+          lastError = error;
+          return null;
+        }
+
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final choices = json['choices'] as List?;
+        if (choices == null || choices.isEmpty) {
+          lastError = 'AI response did not contain any choices';
+          return null;
+        }
+
+        final message = choices[0]['message'] as Map<String, dynamic>?;
+        final text = message?['content'] as String?;
+
+        if (onTokensUsed != null) {
+          final usage = json['usage'] as Map<String, dynamic>?;
+          final totalTokens = usage?['total_tokens'] as int?;
+          if (totalTokens != null && totalTokens > 0) {
+            onTokensUsed!(totalTokens);
+          }
+        }
+
+        final finishReason = choices[0]['finish_reason'] as String?;
+        if (finishReason != null && finishReason != 'stop') {
+          developer.log(
+            'AI response finish_reason: $finishReason',
+            name: 'memora.ai',
+          );
+        }
+
+        if (text != null && text.trim().isNotEmpty) return text.trim();
+        lastError = 'AI response content was empty';
+        return null;
+      } on TimeoutException {
+        final error = 'AI request timed out after ${timeout.inSeconds} seconds';
+        if (attempt < _maxTransientRetries) {
+          await _waitBeforeRetry(attempt, error);
+          continue;
+        }
+        lastError = error;
+        developer.log(
+          'AI API timeout ($timeout), url: $uri',
           name: 'memora.ai',
         );
         return null;
-      }
-
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final choices = json['choices'] as List?;
-      if (choices == null || choices.isEmpty) {
-        lastError = 'AI response did not contain any choices';
+      } catch (e, st) {
+        lastError = 'AI request failed: $e';
+        developer.log(
+          'API call error',
+          name: 'memora.ai',
+          error: e,
+          stackTrace: st,
+        );
         return null;
       }
+    }
+    return null;
+  }
 
-      final message = choices[0]['message'] as Map<String, dynamic>?;
-      final text = message?['content'] as String?;
+  bool _isTransientStatus(int statusCode, String body) =>
+      (statusCode == 429 &&
+          _responseErrorCode(body) != 'daily_quota_exceeded') ||
+      statusCode >= 500 && statusCode <= 599;
 
-      if (onTokensUsed != null) {
-        final usage = json['usage'] as Map<String, dynamic>?;
-        final totalTokens = usage?['total_tokens'] as int?;
-        if (totalTokens != null && totalTokens > 0) {
-          onTokensUsed!(totalTokens);
+  String? _responseErrorCode(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final error = decoded['error'];
+        if (error is Map<String, dynamic> && error['code'] is String) {
+          return error['code'] as String;
         }
       }
+    } catch (_) {}
+    return null;
+  }
 
-      final finishReason = choices[0]['finish_reason'] as String?;
-      if (finishReason != null && finishReason != 'stop') {
-        developer.log(
-          'AI response finish_reason: $finishReason',
-          name: 'memora.ai',
-        );
-      }
-
-      if (text != null && text.trim().isNotEmpty) return text.trim();
-      lastError = 'AI response content was empty';
-      return null;
-    } on TimeoutException {
-      lastError = 'AI request timed out after ${timeout.inSeconds} seconds';
-      developer.log('AI API timeout ($timeout), url: $uri', name: 'memora.ai');
-      return null;
-    } catch (e, st) {
-      lastError = 'AI request failed: $e';
-      developer.log(
-        'API call error',
-        name: 'memora.ai',
-        error: e,
-        stackTrace: st,
-      );
-      return null;
-    }
+  Future<void> _waitBeforeRetry(int attempt, String reason) async {
+    developer.log(
+      '$reason; retrying AI request (${attempt + 1}/$_maxTransientRetries)',
+      name: 'memora.ai',
+    );
+    if (retryDelay <= Duration.zero) return;
+    await Future<void>.delayed(
+      Duration(milliseconds: retryDelay.inMilliseconds * (attempt + 1)),
+    );
   }
 
   String _responseError(String body) {

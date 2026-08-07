@@ -21,6 +21,17 @@ class RetrievalResult {
 
 enum RetrievalMethod { vector, keyword, hybrid, none }
 
+typedef RetrievalComputeRunner =
+    Future<RetrievalComputeOutput> Function({
+      required String query,
+      required List<double> queryVector,
+      required String embeddingModel,
+      required List<Map<String, dynamic>> records,
+      required List<Map<String, dynamic>> articles,
+      required double minRelevance,
+      required int topK,
+    });
+
 /// Retrieves relevant articles from the knowledge base using hybrid search.
 ///
 /// When embeddings are configured, vector and keyword retrieval run in
@@ -32,16 +43,19 @@ class RetrievalService {
   final IndexService _index;
   final double _minRelevance;
   final int _topK;
+  final RetrievalComputeRunner _compute;
 
   RetrievalService({
     required EmbeddingService embedding,
     required IndexService index,
     double minRelevance = 0.3,
     int topK = 5,
+    RetrievalComputeRunner? compute,
   }) : _embedding = embedding,
        _index = index,
        _minRelevance = minRelevance,
-       _topK = topK;
+       _topK = topK,
+       _compute = compute ?? runRetrievalInIsolate;
 
   /// Retrieve articles relevant to [query].
   ///
@@ -78,7 +92,18 @@ class RetrievalService {
     }
 
     // Pull index records (Hive I/O — fine on main thread).
-    final records = await _index.getAll();
+    List<IndexRecord> records;
+    try {
+      records = await _index.getAll();
+    } catch (error, stackTrace) {
+      developer.log(
+        'vector index read failed; falling back to keyword retrieval',
+        name: 'memora.retrieval',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      records = const [];
+    }
     final recordMaps = records
         .map(
           (r) => {
@@ -89,16 +114,32 @@ class RetrievalService {
         )
         .toList();
 
-    // Dispatch CPU-heavy computation to a background Isolate.
-    final output = await runRetrievalInIsolate(
-      query: query,
-      queryVector: queryVector,
-      embeddingModel: _embedding.model,
-      records: recordMaps,
-      articles: articleMaps,
-      minRelevance: _minRelevance,
-      topK: _topK,
-    );
+    // Dispatch CPU-heavy computation to a background Isolate. If isolate
+    // startup or execution fails, keep a synchronous keyword-only fallback.
+    RetrievalComputeOutput output;
+    try {
+      output = await _compute(
+        query: query,
+        queryVector: queryVector,
+        embeddingModel: _embedding.model,
+        records: recordMaps,
+        articles: articleMaps,
+        minRelevance: _minRelevance,
+        topK: _topK,
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'retrieval isolate failed; using in-process keyword retrieval',
+        name: 'memora.retrieval',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      output = runKeywordRetrievalInProcess(
+        query: query,
+        articles: articleMaps,
+        topK: _topK,
+      );
+    }
 
     stopwatch.stop();
 

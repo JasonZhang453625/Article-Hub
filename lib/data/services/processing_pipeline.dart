@@ -11,6 +11,7 @@ import 'ai_service.dart';
 import 'attachment_store.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
+import 'hosted_ai_service.dart';
 import 'index_service.dart';
 import 'image_understanding_service.dart';
 import 'local_file_importer.dart';
@@ -48,6 +49,7 @@ class ProcessingPipeline {
   final IndexService? _index;
   final Future<Folder?> Function(String name)? _createFolder;
   final PromptService _prompts;
+  final AiGateway? _aiGateway;
   final ImageUnderstandingGateway? _imageUnderstanding;
   final AttachmentStore _attachments;
 
@@ -73,6 +75,7 @@ class ProcessingPipeline {
     IndexService? index,
     Future<Folder?> Function(String name)? createFolder,
     PromptService? promptService,
+    AiGateway? aiGateway,
     ImageUnderstandingGateway? imageUnderstanding,
     AttachmentStore? attachmentStore,
   }) : _articles = articles,
@@ -84,6 +87,7 @@ class ProcessingPipeline {
        _index = index,
        _createFolder = createFolder,
        _prompts = promptService ?? PromptService(),
+       _aiGateway = aiGateway,
        _imageUnderstanding = imageUnderstanding,
        _attachments = attachmentStore ?? AttachmentStore();
 
@@ -309,14 +313,19 @@ class ProcessingPipeline {
     }
 
     var understanding = current.imageUnderstanding;
+    final gateway = _imageUnderstanding;
+    final identityMatches =
+        gateway is! IdentifiedImageUnderstandingGateway ||
+        (understanding?.provider == gateway.provider &&
+            understanding?.model == gateway.model);
     final canReuse =
-        understanding?.matchesAttachments(
-          images,
-          expectedPromptVersion: imageUnderstandingPromptVersion,
-        ) ??
-        false;
+        identityMatches &&
+        (understanding?.matchesAttachments(
+              images,
+              expectedPromptVersion: imageUnderstandingPromptVersion,
+            ) ??
+            false);
     if (!canReuse) {
-      final gateway = _imageUnderstanding;
       if (gateway == null) {
         final failed = _fail(
           current,
@@ -508,18 +517,12 @@ class ProcessingPipeline {
   Future<Article> _stageSummary(Article article) async {
     await _notifyStage(article, ProcessingStage.summary);
     final settings = _settings;
-    if (settings == null ||
-        settings.aiBaseUrl.trim().isEmpty ||
-        settings.aiApiKey.trim().isEmpty) {
+    final ai = _aiGateway;
+    if (settings == null || ai == null || !ai.isConfigured) {
       _contentCache.remove(article.id);
       return _fail(article, 'summary', 'AI not configured');
     }
 
-    final ai = AiService(
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-    );
     final langHint = aiLanguagePrompt(settings.languageIndex);
 
     try {
@@ -556,11 +559,14 @@ class ProcessingPipeline {
         }
       }
 
+      final isHosted = ai is HostedAiService;
       final generatedMemory = result.memory!.withGeneration(
         MemoryGeneration(
           method: 'llm',
-          provider: _providerLabel(settings.aiBaseUrl),
-          model: settings.aiModel,
+          provider: isHosted
+              ? 'memora-hosted'
+              : _providerLabel(settings.aiBaseUrl),
+          model: isHosted ? ai.model : settings.aiModel,
           promptVersion: 'full_summary_v1',
           generatedAt: DateTime.now(),
         ),
@@ -586,9 +592,8 @@ class ProcessingPipeline {
   Future<Article> _stageTags(Article article) async {
     await _notifyStage(article, ProcessingStage.tags);
     final settings = _settings;
-    if (settings == null ||
-        settings.aiBaseUrl.trim().isEmpty ||
-        settings.aiApiKey.trim().isEmpty) {
+    final ai = _aiGateway;
+    if (settings == null || ai == null || !ai.isConfigured) {
       return article;
     }
 
@@ -613,12 +618,7 @@ class ProcessingPipeline {
   }
 
   Future<List<String>> _generateTags(String title, String summary) async {
-    final settings = _settings!;
-    final ai = AiService(
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-    );
+    final ai = _aiGateway!;
 
     final tagSystem = await _prompts.load('tags/system.txt');
     final tagPrompt = await _prompts.load('tags/user_prompt.txt');
@@ -651,9 +651,8 @@ class ProcessingPipeline {
   Future<Article> _stageFolderSuggestion(Article article) async {
     await _notifyStage(article, ProcessingStage.folderSuggestion);
     final settings = _settings;
-    if (settings == null ||
-        settings.aiBaseUrl.trim().isEmpty ||
-        settings.aiApiKey.trim().isEmpty) {
+    final ai = _aiGateway;
+    if (settings == null || ai == null || !ai.isConfigured) {
       developer.log(
         'folder suggestion: skipped (AI not configured)',
         name: 'memora.pipeline',
@@ -739,12 +738,7 @@ class ProcessingPipeline {
     String summary,
     List<String> folderNames,
   ) async {
-    final settings = _settings!;
-    final ai = AiService(
-      baseUrl: settings.aiBaseUrl,
-      apiKey: settings.aiApiKey,
-      model: settings.aiModel,
-    );
+    final ai = _aiGateway!;
 
     final namesList = folderNames.map((n) => '"$n"').join(', ');
     final systemPrompt = folderNames.isEmpty

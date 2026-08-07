@@ -78,7 +78,7 @@
 ### 思考模型兼容
 
 - 支持 MiMo（关闭思考模式 + `max_completion_tokens`）。
-- 同时发送 `max_tokens` 与 `max_completion_tokens`，自动覆盖 DeepSeek、o1/o3 等其他 OpenAI-compatible 思考模型。
+- 按模型能力只发送一个 token 上限字段：MiMo、GPT-5、o1/o3/o4 使用 `max_completion_tokens`，其他 OpenAI-compatible 模型使用 `max_tokens`。
 - 文件夹分类等短回答类调用为思考过程预留 token，并自动剥离 `<think>...</think>` 标签。
 
 ### 本地检索与 RAG 对话
@@ -321,7 +321,7 @@ Memora has no hosted content backend or AI proxy backend. Articles, summaries, o
 ### Thinking-model compatibility
 
 - Native support for MiMo (thinking disabled + `max_completion_tokens`).
-- Sends both `max_tokens` and `max_completion_tokens` so DeepSeek, o1/o3, and other OpenAI-compatible thinking models work out of the box.
+- Sends exactly one model-appropriate token limit: `max_completion_tokens` for MiMo, GPT-5, and o1/o3/o4; `max_tokens` for other OpenAI-compatible models.
 - Short-answer calls (e.g. folder classification) reserve enough tokens for the model's thinking phase and strip `<think>...</think>` tags from the response.
 
 ### Local retrieval and RAG chat

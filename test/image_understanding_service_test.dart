@@ -116,60 +116,76 @@ void main() {
   });
 
   group('ImageUnderstandingService', () {
-    test('fetches the key then sends images directly to SenseNova', () async {
-      final bytes = Uint8List.fromList([1, 2, 3, 4]);
-      final attachment = await _attachmentFor(bytes);
-      final captured = <http.Request>[];
-      final client = MockClient((request) async {
-        captured.add(request);
-        if (request.url.path == '/ai/sensenova-credential') {
-          return http.Response(
-            jsonEncode({
-              'schemaVersion': 1,
-              'provider': 'sensenova',
-              'apiKey': 'sk-direct-test',
-            }),
-            200,
-          );
-        }
-        return http.Response.bytes(
-          utf8.encode(jsonEncode(_providerResponse(attachment))),
-          200,
-          headers: {'content-type': 'application/json; charset=utf-8'},
-        );
-      });
-      final service = ImageUnderstandingService(
-        client: client,
-        getSession: () => _session('access-1'),
-        refreshSession: () async => null,
+    test('labels arbitrary BYOK vision models as OpenAI-compatible', () {
+      expect(imageProviderForModel('mimo-v2.5'), mimoImageProvider);
+      expect(imageProviderForModel(senseNovaModel), senseNovaProvider);
+      expect(
+        imageProviderForModel('gpt-4.1-mini'),
+        openAiCompatibleImageProvider,
       );
-
-      final result = await service.understand(
-        articleId: 'article-1',
-        images: [
-          ImageUnderstandingUpload(attachment: attachment, bytes: bytes),
-        ],
-        locale: 'zh-CN',
-      );
-
-      expect(result.requestId, 'provider-request-1');
-      expect(result.combinedMarkdown, contains('完整内容'));
-      expect(result.usage?.inputTokens, 12);
-      expect(captured, hasLength(2));
-      expect(captured.first.method, 'GET');
-      expect(captured.first.url.path, '/ai/sensenova-credential');
-      expect(captured.first.headers['authorization'], 'Bearer access-1');
-      expect(captured.last.method, 'POST');
-      expect(captured.last.url.host, 'token.sensenova.cn');
-      expect(captured.last.url.path, '/v1/messages');
-      expect(captured.last.headers['authorization'], 'Bearer sk-direct-test');
-      expect(captured.last.body, contains('image-understanding-v1'));
-      expect(captured.last.body, contains('attachment-1'));
-      expect(captured.last.body, contains(base64Encode(bytes)));
-      service.dispose();
     });
 
-    test('refreshes the Memora session once before fetching the key', () async {
+    test(
+      'uploads images to the Memora backend and decodes the result',
+      () async {
+        final bytes = Uint8List.fromList([1, 2, 3, 4]);
+        final attachment = await _attachmentFor(bytes);
+        final captured = <http.BaseRequest>[];
+        final client = MockClient((request) async {
+          captured.add(request);
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode({
+                'schemaVersion': 1,
+                'requestId': 'backend-request-1',
+                'clientRequestId': 'client-request-1',
+                'result': _resultJson(attachment),
+              }),
+            ),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        });
+        final service = ImageUnderstandingService(
+          client: client,
+          getSession: () => _session('access-1'),
+          refreshSession: () async => null,
+        );
+
+        final result = await service.understand(
+          articleId: 'article-1',
+          images: [
+            ImageUnderstandingUpload(attachment: attachment, bytes: bytes),
+          ],
+          locale: 'zh-CN',
+        );
+
+        expect(result.requestId, 'backend-request-1');
+        expect(result.combinedMarkdown, contains('完整内容'));
+        expect(result.usage?.inputTokens, 12);
+        expect(captured, hasLength(1));
+        final request = captured.single;
+        expect(request.method, 'POST');
+        expect(request.url.path, '/ai/image-understanding');
+        expect(request.headers['authorization'], 'Bearer access-1');
+        expect(request.headers['idempotency-key'], isNotNull);
+        expect(
+          request.headers['content-type'],
+          startsWith('multipart/form-data; boundary='),
+        );
+        final multipartBody = utf8.decode(
+          (request as http.Request).bodyBytes,
+          allowMalformed: true,
+        );
+        expect(multipartBody, contains('name="metadata"'));
+        expect(multipartBody, contains('name="images"'));
+        expect(multipartBody, contains('"provider":"sensenova"'));
+        expect(multipartBody, contains('"model":"sensenova-6.7-flash-lite"'));
+        service.dispose();
+      },
+    );
+
+    test('refreshes the Memora session once on 401 before retrying', () async {
       final bytes = Uint8List.fromList([1, 2, 3, 4]);
       final attachment = await _attachmentFor(bytes);
       var calls = 0;
@@ -178,18 +194,15 @@ void main() {
         calls++;
         authorizations.add(request.headers['authorization']);
         if (calls == 1) return http.Response('{}', 401);
-        if (calls == 2) {
-          return http.Response(
+        return http.Response.bytes(
+          utf8.encode(
             jsonEncode({
               'schemaVersion': 1,
-              'provider': 'sensenova',
-              'apiKey': 'sk-after-refresh',
+              'requestId': 'backend-request-2',
+              'clientRequestId': 'client-request-1',
+              'result': _resultJson(attachment),
             }),
-            200,
-          );
-        }
-        return http.Response.bytes(
-          utf8.encode(jsonEncode(_providerResponse(attachment))),
+          ),
           200,
           headers: {'content-type': 'application/json; charset=utf-8'},
         );
@@ -208,12 +221,8 @@ void main() {
         locale: 'zh-CN',
       );
 
-      expect(calls, 3);
-      expect(authorizations, [
-        'Bearer expired',
-        'Bearer fresh',
-        'Bearer sk-after-refresh',
-      ]);
+      expect(calls, 2);
+      expect(authorizations, ['Bearer expired', 'Bearer fresh']);
       service.dispose();
     });
 
@@ -252,6 +261,112 @@ void main() {
       expect(calls, 0);
       service.dispose();
     });
+
+    test('surfaces backend error codes with retryable flag', () async {
+      final bytes = Uint8List.fromList([1, 2, 3, 4]);
+      final attachment = await _attachmentFor(bytes);
+      final service = ImageUnderstandingService(
+        client: MockClient((_) async {
+          return http.Response(
+            jsonEncode({
+              'error': {
+                'code': 'provider_rate_limited',
+                'message': 'SenseNova is busy. Please retry later.',
+                'retryable': true,
+                'requestId': 'backend-err-1',
+              },
+            }),
+            429,
+          );
+        }),
+        getSession: () => _session('access'),
+        refreshSession: () async => null,
+      );
+
+      await expectLater(
+        service.understand(
+          articleId: 'article-1',
+          images: [
+            ImageUnderstandingUpload(attachment: attachment, bytes: bytes),
+          ],
+          locale: 'zh-CN',
+        ),
+        throwsA(
+          isA<ImageUnderstandingException>()
+              .having((error) => error.code, 'code', 'provider_rate_limited')
+              .having((error) => error.retryable, 'retryable', isTrue)
+              .having((error) => error.statusCode, 'statusCode', 429),
+        ),
+      );
+      service.dispose();
+    });
+
+    test('BYOK image gateway sends OpenAI image_url data blocks', () async {
+      final bytes = Uint8List.fromList([1, 2, 3, 4]);
+      final attachment = await _attachmentFor(bytes);
+      late Map<String, dynamic> sentBody;
+      final service = OpenAiImageUnderstandingService(
+        client: MockClient((request) async {
+          sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(request.url.path, '/v1/chat/completions');
+          expect(request.headers['authorization'], 'Bearer byok-key');
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode({
+                'id': 'byok-request-1',
+                'model': 'mimo-v2.5',
+                'choices': [
+                  {
+                    'message': {
+                      'content': jsonEncode(
+                        _resultJson(
+                          attachment,
+                          provider: 'mimo',
+                          model: 'mimo-v2.5',
+                        ),
+                      ),
+                    },
+                    'finish_reason': 'stop',
+                  },
+                ],
+                'usage': {'prompt_tokens': 12, 'completion_tokens': 34},
+              }),
+            ),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+        baseUrl: 'https://vision.example.com/v1',
+        apiKey: 'byok-key',
+        model: 'mimo-v2.5',
+      );
+
+      final result = await service.understand(
+        articleId: 'article-1',
+        images: [
+          ImageUnderstandingUpload(attachment: attachment, bytes: bytes),
+        ],
+        locale: 'zh-CN',
+      );
+
+      final messages = sentBody['messages'] as List;
+      final systemPrompt = (messages.first as Map)['content'] as String;
+      expect(systemPrompt, contains('图片理解与忠实转写引擎'));
+      expect(systemPrompt, contains('不得遗漏、合并或改变顺序'));
+      expect(systemPrompt, isNot(contains('ä½')));
+      final userContent = (messages.last as Map)['content'] as List;
+      final imageBlock = userContent.whereType<Map>().firstWhere(
+        (block) => block['type'] == 'image_url',
+      );
+      final imageUrl = (imageBlock['image_url'] as Map)['url'] as String;
+      expect(imageUrl, startsWith('data:image/jpeg;base64,'));
+      expect(sentBody['max_completion_tokens'], 16384);
+      expect(sentBody['thinking'], {'type': 'disabled'});
+      expect(result.provider, 'mimo');
+      expect(result.model, 'mimo-v2.5');
+      expect(result.requestId, 'byok-request-1');
+      service.dispose();
+    });
   });
 }
 
@@ -270,11 +385,15 @@ Future<ArticleAttachment> _attachmentFor(Uint8List bytes) async {
   );
 }
 
-Map<String, dynamic> _resultJson(ArticleAttachment attachment) {
+Map<String, dynamic> _resultJson(
+  ArticleAttachment attachment, {
+  String provider = 'sensenova',
+  String model = 'sensenova-6.7-flash-lite',
+}) {
   return ImageUnderstandingDocument(
     requestId: 'request-1',
-    provider: 'sensenova',
-    model: 'sensenova-6.7-flash-lite',
+    provider: provider,
+    model: model,
     promptVersion: imageUnderstandingPromptVersion,
     generatedAt: DateTime.utc(2026, 8, 1),
     sourceImages: [
@@ -295,27 +414,8 @@ Map<String, dynamic> _resultJson(ArticleAttachment attachment) {
       ),
     ],
     combinedMarkdown: '# 图片转写\n\n完整内容',
+    usage: const ImageUnderstandingUsage(inputTokens: 12, outputTokens: 34),
   ).toJson();
-}
-
-Map<String, dynamic> _providerResponse(ArticleAttachment attachment) {
-  final modelResult = _resultJson(attachment)
-    ..remove('requestId')
-    ..remove('provider')
-    ..remove('model')
-    ..remove('promptVersion')
-    ..remove('generatedAt')
-    ..remove('sourceImages')
-    ..remove('usage');
-  return {
-    'id': 'provider-request-1',
-    'model': 'sensenova-6.7-flash-lite',
-    'stop_reason': 'end_turn',
-    'content': [
-      {'type': 'text', 'text': jsonEncode(modelResult)},
-    ],
-    'usage': {'input_tokens': 12, 'output_tokens': 34},
-  };
 }
 
 AuthSession _session(String accessToken) {

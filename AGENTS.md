@@ -76,6 +76,16 @@ lib/
 
 - **Don't touch unrelated changes.** Unstaged/untracked files that are NOT part of the current task were likely modified in another session — leave them alone. Only stage and commit files relevant to the current request.
 
+## Credential access
+
+- Never store access tokens, passwords, private keys, or complete credential-bearing commands in this repository, `AGENTS.md`, Codex memory, logs, or chat.
+- For GitHub API, issue, pull-request, workflow, and repository-status operations, prefer the authenticated Codex GitHub connector. Local Git remotes use SSH.
+- When remote-server access is required, read the machine-local instructions in `.codex/access.local.md`. That file is intentionally ignored by Git and must remain local-only.
+- Prefer SSH public-key authentication. Never place a server password on a command line; do not weaken host-key checking.
+- If a credential has appeared in chat or another plaintext channel, treat it as exposed: rotate/revoke it instead of persisting it.
+- Tavily MCP and CLI authentication must use OAuth. Never put a Tavily API key in an MCP URL, config file, environment dump, or `tvly login --api-key` command.
+- Tavily skills must not auto-run `curl | bash` installers; the CLI is already installed. Treat `tavily-dynamic-search` Python/`uv run` execution as approval-required.
+
 ## Critical conventions
 
 - **Hive adapters are hand-written**, not generated. When adding a field to a model, update the `TypeAdapter` manually — both `read()` and `write()` — and bump the field count in `writeByte()`. New fields MUST use null-aware reads (`fields[N] as Type?`) for backward compatibility with data written by older builds.

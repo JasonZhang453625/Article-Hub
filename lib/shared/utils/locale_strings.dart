@@ -182,6 +182,14 @@ class LocaleStrings {
   final String baseUrl;
   final String apiKey;
   final String model;
+  final String aiModeByok;
+  final String aiModeHosted;
+  final String aiModeHostedDesc;
+  final String aiModeLoginRequired;
+  final String chatAiSection;
+  final String imageAiSection;
+  final String hostedWebSearchDesc;
+  final String hostedModelLabel;
   final String saveAiSettings;
   final String aiSettingsSaved;
   final String settingsAppearance;
@@ -482,6 +490,14 @@ class LocaleStrings {
     required this.baseUrl,
     required this.apiKey,
     required this.model,
+    required this.aiModeByok,
+    required this.aiModeHosted,
+    required this.aiModeHostedDesc,
+    required this.aiModeLoginRequired,
+    required this.chatAiSection,
+    required this.imageAiSection,
+    required this.hostedWebSearchDesc,
+    required this.hostedModelLabel,
     required this.saveAiSettings,
     required this.aiSettingsSaved,
     required this.settingsAppearance,
@@ -644,7 +660,7 @@ class LocaleStrings {
     importFile: 'Import File',
     selectImages: 'Select images',
     imagePrivacyNotice:
-        'When signed in, this device sends the selected images directly to SenseNova for understanding. When signed out, they are saved only as local attachments and are not analyzed. Continue?',
+        'When Memora hosted AI is enabled, selected images are sent to the Memora server and processed by your selected hosted model. When it is disabled, images are sent directly to your configured image-understanding service. Without a configured service, they are saved only as local attachments. Continue?',
     imageSelectionLimit: 'You can select up to 9 images.',
     fileReadError: 'Failed to read file',
     pdfExtracting: 'Extracting PDF text...',
@@ -818,6 +834,16 @@ class LocaleStrings {
     baseUrl: 'Base URL',
     apiKey: 'API Key',
     model: 'Model',
+    aiModeByok: 'Own API key',
+    aiModeHosted: 'Memora hosted',
+    aiModeHostedDesc:
+        'Use models and web search provided by the Memora server.',
+    aiModeLoginRequired: 'Sign in to enable Memora hosted AI.',
+    chatAiSection: 'AI Chat',
+    imageAiSection: 'Image Understanding',
+    hostedWebSearchDesc:
+        'Web search is provided by the Memora server in hosted mode; no Tavily key is required.',
+    hostedModelLabel: 'Hosted model',
     saveAiSettings: 'Save AI Settings',
     aiSettingsSaved: 'AI settings saved',
     settingsAppearance: 'Appearance',
@@ -974,7 +1000,7 @@ class LocaleStrings {
     importFile: '导入文件',
     selectImages: '选择图片',
     imagePrivacyNotice:
-        '登录后，所选图片将由本机直接发送给 SenseNova 进行理解；未登录时仅保存为本地附件，不会进行识别。是否继续？',
+        '开启记忆海托管 AI 时，所选图片会发送至 Memora 服务器，并由你选择的托管模型处理；关闭时，图片会直接发送至你配置的识图服务。若未配置识图服务，则仅保存为本地附件。是否继续？',
     imageSelectionLimit: '最多选择 9 张图片。',
     fileReadError: '无法读取文件',
     pdfExtracting: '正在提取 PDF 文本…',
@@ -1130,6 +1156,14 @@ class LocaleStrings {
     baseUrl: '基础 URL',
     apiKey: 'API 密钥',
     model: '模型',
+    aiModeByok: '自己的 API 密钥',
+    aiModeHosted: '记忆海托管',
+    aiModeHostedDesc: '使用记忆海服务器提供的模型与联网搜索。',
+    aiModeLoginRequired: '登录后才能开启记忆海托管 AI。',
+    chatAiSection: 'AI 对话',
+    imageAiSection: '识图模型',
+    hostedWebSearchDesc: '托管模式下联网搜索由记忆海服务器提供，无需填写 Tavily Key。',
+    hostedModelLabel: '托管模型',
     saveAiSettings: '保存 AI 设置',
     aiSettingsSaved: 'AI 设置已保存',
     settingsAppearance: '界面',

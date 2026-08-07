@@ -125,6 +125,80 @@ void main() {
     expect(result.citedIds, isEmpty);
   });
 
+  test(
+    'provider failure details are surfaced instead of empty response',
+    () async {
+      final article = agentArticle();
+      final service = RagConversationService(
+        retrieve: (query, articles) async => RetrievalResult(
+          articles: [article],
+          method: RetrievalMethod.keyword,
+          duration: const Duration(milliseconds: 4),
+          candidateIds: [article.id],
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => null,
+        completionError: () => 'HTTP 429: rate limit exceeded',
+        saveLog: (_) async {},
+        promptService: _FakePromptService(),
+      );
+
+      final result = await service.ask(
+        RagConversationRequest(
+          question: 'Explain handoff',
+          articles: [article],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+        ),
+      );
+
+      expect(result.outcome, RagConversationOutcome.error);
+      expect(result.error, 'HTTP 429: rate limit exceeded');
+    },
+  );
+
+  test('missing provider details keep the empty response fallback', () async {
+    final article = agentArticle();
+    final service = RagConversationService(
+      retrieve: (query, articles) async => RetrievalResult(
+        articles: [article],
+        method: RetrievalMethod.keyword,
+        duration: const Duration(milliseconds: 4),
+      ),
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async => '   ',
+      completionError: () => '   ',
+      saveLog: (_) async {},
+      promptService: _FakePromptService(),
+    );
+
+    final result = await service.ask(
+      RagConversationRequest(
+        question: 'Explain handoff',
+        articles: [article],
+        knowledgeOnly: true,
+        detailedAnswer: false,
+        languageHint: '',
+      ),
+    );
+
+    expect(result.outcome, RagConversationOutcome.error);
+    expect(result.error, 'empty response');
+  });
+
   test('query rewrite failure falls back to the original question', () async {
     final rewriter = HistoryAwareQueryRewriter(
       complete:

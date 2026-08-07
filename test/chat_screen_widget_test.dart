@@ -33,8 +33,13 @@ void main() {
     List<ChatMessageRecord> messages = const [],
     AppSettings? settings,
     RagConversationService? conversation,
+    bool failTerminalAssistantWrites = false,
   }) async {
-    final chatRepository = _InMemoryChatRepository(threads, messages);
+    final chatRepository = _InMemoryChatRepository(
+      threads,
+      messages,
+      failTerminalAssistantWrites: failTerminalAssistantWrites,
+    );
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -45,9 +50,7 @@ void main() {
             (ref) => _TestSettingsNotifier(ref, settings),
           ),
           if (conversation != null)
-            ragConversationServiceProvider.overrideWith(
-              (ref) => conversation,
-            ),
+            ragConversationServiceProvider.overrideWith((ref) => conversation),
           // In-memory repository: no file I/O, safe inside fake-async.
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
@@ -114,13 +117,106 @@ void main() {
     expect(find.textContaining('configure your AI provider'), findsOneWidget);
   });
 
-  testWidgets('knowledge base plus general can answer with an empty knowledge base', (
+  testWidgets(
+    'knowledge base plus general can answer with an empty knowledge base',
+    (tester) async {
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => 'General answer',
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+      await pumpChat(
+        tester,
+        articles: [],
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+          chatAnswerLengthIndex: 1,
+          chatKnowledgeSourceIndex: 1,
+        ),
+        conversation: conversation,
+      );
+
+      await tester.enterText(find.byType(TextField), 'What is an API?');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
+
+      expect(find.text('General answer'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'empty local knowledge completes the placeholder instead of leaving dots',
+    (tester) async {
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => 'unused',
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+      await pumpChat(
+        tester,
+        articles: [],
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+          chatKnowledgeSourceIndex: 0,
+        ),
+        conversation: conversation,
+      );
+
+      await tester.enterText(find.byType(TextField), 'What did I save?');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Your Memora is empty. Process some memories first, then come back to ask questions.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+    },
+  );
+
+  testWidgets('final message persistence failure releases the input', (
     tester,
   ) async {
+    final article = Article(
+      id: 'k1',
+      url: 'https://example.com',
+      title: 'AI Basics',
+      source: SourcePlatform.web,
+      summary: 'An intro to AI.',
+      processingStatus: ProcessingStatus.completed,
+    );
     final conversation = RagConversationService(
-      retrieve: (query, articles) async => const RetrievalResult(
-        articles: [],
-        method: RetrievalMethod.none,
+      retrieve: (query, articles) async => RetrievalResult(
+        articles: [article],
+        method: RetrievalMethod.keyword,
         duration: Duration.zero,
       ),
       complete:
@@ -130,27 +226,28 @@ void main() {
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
-          }) async => 'General answer',
+          }) async => 'Answer [1].',
       saveLog: (_) async {},
       promptService: _TestChatPromptService(),
     );
     await pumpChat(
       tester,
-      articles: [],
+      articles: [article],
       settings: AppSettings(
-        aiBaseUrl: 'https://example.com/v1',
-        aiApiKey: 'test-key',
-        chatAnswerLengthIndex: 1,
-        chatKnowledgeSourceIndex: 1,
+        chatAiBaseUrl: 'https://example.com/v1',
+        chatAiApiKey: 'test-key',
       ),
       conversation: conversation,
+      failTerminalAssistantWrites: true,
     );
 
-    await tester.enterText(find.byType(TextField), 'What is an API?');
+    await tester.enterText(find.byType(TextField), 'What is AI?');
     await tester.tap(find.byIcon(Icons.send_rounded));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('General answer'), findsOneWidget);
+    expect(find.textContaining('assistant update failed'), findsWidgets);
+    expect(find.byIcon(Icons.send_rounded), findsOneWidget);
   });
 
   testWidgets('input bar and send button render', (tester) async {
@@ -374,12 +471,14 @@ class _InMemoryArticleRepository implements ArticleRepository {
 class _InMemoryChatRepository implements ChatRepository {
   final Map<String, ChatThread> _threads;
   final Map<String, ChatMessageRecord> _messages;
+  final bool failTerminalAssistantWrites;
 
   _InMemoryChatRepository(
     Iterable<ChatThread> threads,
-    Iterable<ChatMessageRecord> messages,
-  ) : _threads = {for (final thread in threads) thread.id: thread},
-      _messages = {for (final message in messages) message.id: message};
+    Iterable<ChatMessageRecord> messages, {
+    this.failTerminalAssistantWrites = false,
+  }) : _threads = {for (final thread in threads) thread.id: thread},
+       _messages = {for (final message in messages) message.id: message};
 
   @override
   Future<void> init() async {}
@@ -414,6 +513,11 @@ class _InMemoryChatRepository implements ChatRepository {
 
   @override
   Future<void> putMessage(ChatMessageRecord message) async {
+    if (failTerminalAssistantWrites &&
+        message.role == ChatMessageRole.assistant &&
+        message.status != ChatMessageStatus.sending) {
+      throw StateError('assistant update failed');
+    }
     _messages[message.id] = message;
   }
 

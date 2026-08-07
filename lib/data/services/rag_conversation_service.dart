@@ -25,6 +25,8 @@ typedef RagCompletion =
       int maxTokens,
     });
 
+typedef RagCompletionError = String? Function();
+
 typedef RagSaveLog = Future<void> Function(RetrievalLog log);
 
 typedef RagWebSearch =
@@ -38,9 +40,8 @@ class RagConversationRequest {
   final bool detailedAnswer;
   final String languageHint;
 
-  /// When true (and a web search backend is configured), the conversation
-  /// may fall back to live web search when local retrieval finds nothing
-  /// relevant. Local results always win — the web is only a fallback.
+  /// When true (and a web search backend is configured), local retrieval and
+  /// live web search run together and both may contribute evidence.
   final bool webSearch;
   final int contextTokenBudget;
   final int contextWindowTokens;
@@ -71,7 +72,7 @@ class RagConversationResult {
   final String logId;
 
   /// Web URLs the model actually cited (via `[wN]`) this turn, in candidate
-  /// order. Empty unless the web fallback was used.
+  /// order. Empty when no web evidence was cited.
   final List<String> webUrls;
 
   const RagConversationResult({
@@ -137,6 +138,7 @@ class HistoryAwareQueryRewriter {
 class RagConversationService {
   final RagRetrieve _retrieve;
   final RagCompletion _complete;
+  final RagCompletionError? _completionError;
   final RagSaveLog _saveLog;
   final PromptService _prompts;
   final RagContextBuilder _contextBuilder;
@@ -148,6 +150,7 @@ class RagConversationService {
   RagConversationService({
     required RagRetrieve retrieve,
     required RagCompletion complete,
+    RagCompletionError? completionError,
     required RagSaveLog saveLog,
     required PromptService promptService,
     RagContextBuilder contextBuilder = const RagContextBuilder(),
@@ -157,6 +160,7 @@ class RagConversationService {
     int webTopK = 5,
   }) : _retrieve = retrieve,
        _complete = complete,
+       _completionError = completionError,
        _saveLog = saveLog,
        _prompts = promptService,
        _contextBuilder = contextBuilder,
@@ -179,41 +183,59 @@ class RagConversationService {
       history: request.history,
     );
 
-    // 1. Local retrieval — and, when web search is enabled, a live web
-    //    search runs in parallel so the fallback adds no extra latency.
-    RetrievalResult retrieval;
-    try {
-      retrieval = await _retrieve(rewrittenQuery, request.articles);
-    } catch (error) {
+    // Start both operations before awaiting either one. Dart futures are
+    // eager, so local retrieval and Tavily overlap instead of running in
+    // sequence.
+    final retrievalStopwatch = Stopwatch()..start();
+    final retrievalFuture = _attemptRetrieval(rewrittenQuery, request.articles);
+    final webFuture = request.webSearch && _webSearch != null
+        ? _attemptWebSearch(rewrittenQuery)
+        : Future.value((fatalError: null, results: const <WebSearchResult>[]));
+    final retrievalAttempt = await retrievalFuture;
+    final webAttempt = await webFuture;
+    final webResults = webAttempt.results;
+    retrievalStopwatch.stop();
+
+    if (webAttempt.fatalError != null) {
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
-        error: error.toString(),
+        error: webAttempt.fatalError.toString(),
+        rewrittenQuery: rewrittenQuery,
+        method:
+            retrievalAttempt.result?.method.name ?? RetrievalMethod.none.name,
+        logId: logId,
+      );
+    }
+
+    if (retrievalAttempt.result == null && webResults.isEmpty) {
+      return RagConversationResult(
+        outcome: RagConversationOutcome.error,
+        error: retrievalAttempt.error.toString(),
         rewrittenQuery: rewrittenQuery,
         method: RetrievalMethod.none.name,
         logId: logId,
       );
     }
-
-    final webStopwatch = Stopwatch();
-    List<WebSearchResult> webResults = const [];
-    if (request.webSearch && _webSearch != null) {
-      webStopwatch.start();
-      try {
-        webResults = await _webSearch(rewrittenQuery, topK: _webTopK);
-      } catch (error) {
-        developer.log('web search failed: $error', name: 'memora.rag');
-      }
-      webStopwatch.stop();
-    }
+    final retrieval =
+        retrievalAttempt.result ??
+        const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+          candidateIds: [],
+        );
 
     final candidateIds = retrieval.candidateIds.isNotEmpty
         ? retrieval.candidateIds
         : retrieval.articles.map((article) => article.id).toList();
 
-    // 2. Local results win — the web is only a fallback when local
-    //    retrieval found nothing relevant.
     final useLocalContext = retrieval.articles.isNotEmpty;
-    final useWebContext = !useLocalContext && webResults.isNotEmpty;
+    final useWebContext = webResults.isNotEmpty;
+    final method = _methodFor(
+      local: useLocalContext,
+      web: useWebContext,
+      retrievalMethod: retrieval.method,
+    );
 
     if (!useLocalContext && !useWebContext && request.knowledgeOnly) {
       await _writeLog(
@@ -223,7 +245,7 @@ class RagConversationService {
         method: RetrievalMethod.none.name,
         candidateIds: candidateIds,
         citedIds: const [],
-        durationMs: retrieval.duration.inMilliseconds,
+        durationMs: retrievalStopwatch.elapsed.inMilliseconds,
       );
       return RagConversationResult(
         outcome: RagConversationOutcome.noResult,
@@ -235,12 +257,10 @@ class RagConversationService {
     }
 
     try {
-      // Web fallback uses a dedicated mode: snippets are the evidence and
-      // citations are [wN] URL references. Otherwise the existing
-      // local/hybrid contract applies unchanged.
-      final knowledgeRulePath = useWebContext
-          ? 'chat/knowledge_web.txt'
-          : request.knowledgeOnly
+      // The base mode stays authoritative. Web rules are additive, so
+      // enabling search cannot silently turn "knowledge + general" into a
+      // strict evidence-only mode.
+      final knowledgeRulePath = request.knowledgeOnly
           ? 'chat/knowledge_only.txt'
           : 'chat/knowledge_hybrid.txt';
       final userPromptPath = useWebContext
@@ -249,7 +269,14 @@ class RagConversationService {
       final lengthRulePath = request.detailedAnswer
           ? 'chat/length_detailed.txt'
           : 'chat/length_concise.txt';
-      final knowledgeRule = await _prompts.load(knowledgeRulePath);
+      final baseKnowledgeRule = await _prompts.load(knowledgeRulePath);
+      final webKnowledgeRule = useWebContext
+          ? await _prompts.load('chat/knowledge_web.txt')
+          : '';
+      final knowledgeRule = [
+        baseKnowledgeRule,
+        if (webKnowledgeRule.isNotEmpty) webKnowledgeRule,
+      ].join('\n\n');
       final lengthRule = await _prompts.load(lengthRulePath);
       final systemPrompt = await _prompts.load('chat/system.txt', {
         'knowledgeRule': knowledgeRule,
@@ -274,16 +301,16 @@ class RagConversationService {
           logId: logId,
           question: question,
           rewrittenQuery: rewrittenQuery,
-          method: retrieval.method.name,
+          method: method,
           candidateIds: candidateIds,
           citedIds: const [],
-          durationMs: retrieval.duration.inMilliseconds,
+          durationMs: retrievalStopwatch.elapsed.inMilliseconds,
         );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
           error: 'message exceeds the configured context window',
           rewrittenQuery: rewrittenQuery,
-          method: retrieval.method.name,
+          method: method,
           logId: logId,
         );
       }
@@ -296,13 +323,33 @@ class RagConversationService {
       final Map<String, String> citationMap;
       final List<String> webUrls;
       if (useWebContext) {
-        final built = _buildWebContext(
-          webResults,
-          tokenBudget: effectiveContextBudget,
+        const localHeading = '## 本地知识库\n';
+        const webHeading = '## 联网搜索\n';
+        final headingTokens =
+            RagContextBuilder.estimateTokens(webHeading) +
+            (useLocalContext
+                ? RagContextBuilder.estimateTokens(localHeading)
+                : 0);
+        final bodyBudget = effectiveContextBudget > headingTokens
+            ? effectiveContextBudget - headingTokens
+            : 0;
+        final localBudget = useLocalContext ? (bodyBudget * 3) ~/ 5 : 0;
+        final webBudget = useLocalContext
+            ? bodyBudget - localBudget
+            : bodyBudget;
+        final localContext = _contextBuilder.build(
+          query: rewrittenQuery,
+          candidates: retrieval.articles,
+          tokenBudget: localBudget,
         );
-        contextText = built.text;
-        citationMap = const {};
-        webUrls = built.urls;
+        final webContext = _buildWebContext(webResults, tokenBudget: webBudget);
+        final sections = <String>[
+          if (localContext.text.isNotEmpty) '$localHeading${localContext.text}',
+          if (webContext.text.isNotEmpty) '$webHeading${webContext.text}',
+        ];
+        contextText = sections.join('\n\n');
+        citationMap = localContext.citationMap;
+        webUrls = webContext.urls;
       } else {
         final context = _contextBuilder.build(
           query: rewrittenQuery,
@@ -333,53 +380,55 @@ class RagConversationService {
       );
 
       if (response == null || response.trim().isEmpty) {
+        final completionError = _completionError?.call()?.trim();
         await _writeLog(
           logId: logId,
           question: question,
           rewrittenQuery: rewrittenQuery,
-          method: useWebContext ? 'web' : retrieval.method.name,
+          method: method,
           candidateIds: candidateIds,
           citedIds: const [],
-          webCandidateUrls: useWebContext ? webUrls : const [],
+          webCandidateUrls: webUrls,
           webCitedUrls: const [],
-          durationMs: webStopwatch.elapsed.inMilliseconds,
+          durationMs: retrievalStopwatch.elapsed.inMilliseconds,
         );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
-          error: 'empty response',
+          error: completionError == null || completionError.isEmpty
+              ? 'empty response'
+              : completionError,
           rewrittenQuery: rewrittenQuery,
-          method: useWebContext ? 'web' : retrieval.method.name,
+          method: method,
           logId: logId,
         );
       }
 
-      final citedIds = useWebContext
-          ? const <String>[]
-          : extractValidCitations(
-              response: response,
-              citationMap: citationMap,
-              validIds: request.articles.map((article) => article.id).toSet(),
-            );
-      final citedWebUrls = useWebContext
-          ? extractValidWebCitations(response: response, urls: webUrls)
-          : const <String>[];
+      final citedIds = extractValidCitations(
+        response: response,
+        citationMap: citationMap,
+        validIds: request.articles.map((article) => article.id).toSet(),
+      );
+      final citedWebUrls = extractValidWebCitations(
+        response: response,
+        urls: webUrls,
+      );
       await _writeLog(
         logId: logId,
         question: question,
         rewrittenQuery: rewrittenQuery,
-        method: useWebContext ? 'web' : retrieval.method.name,
+        method: method,
         candidateIds: candidateIds,
         citedIds: citedIds,
-        webCandidateUrls: useWebContext ? webUrls : const [],
+        webCandidateUrls: webUrls,
         webCitedUrls: citedWebUrls,
-        durationMs: webStopwatch.elapsed.inMilliseconds,
+        durationMs: retrievalStopwatch.elapsed.inMilliseconds,
       );
       return RagConversationResult(
         outcome: RagConversationOutcome.answer,
         answer: response,
         rewrittenQuery: rewrittenQuery,
         citedIds: List.unmodifiable(citedIds),
-        method: useWebContext ? 'web' : retrieval.method.name,
+        method: method,
         logId: logId,
         webUrls: List.unmodifiable(citedWebUrls),
       );
@@ -388,22 +437,51 @@ class RagConversationService {
         logId: logId,
         question: question,
         rewrittenQuery: rewrittenQuery,
-        method: useWebContext ? 'web' : retrieval.method.name,
+        method: method,
         candidateIds: candidateIds,
         citedIds: const [],
-        webCandidateUrls: useWebContext
-            ? webResults.map((result) => result.url).toList()
-            : const [],
+        webCandidateUrls: webResults.map((result) => result.url).toList(),
         webCitedUrls: const [],
-        durationMs: webStopwatch.elapsed.inMilliseconds,
+        durationMs: retrievalStopwatch.elapsed.inMilliseconds,
       );
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
         error: error.toString(),
         rewrittenQuery: rewrittenQuery,
-        method: useWebContext ? 'web' : retrieval.method.name,
+        method: method,
         logId: logId,
       );
+    }
+  }
+
+  Future<({Object? error, RetrievalResult? result})> _attemptRetrieval(
+    String query,
+    List<Article> articles,
+  ) async {
+    try {
+      return (error: null, result: await _retrieve(query, articles));
+    } catch (error) {
+      developer.log('local retrieval failed: $error', name: 'memora.rag');
+      return (error: error, result: null);
+    }
+  }
+
+  Future<({Object? fatalError, List<WebSearchResult> results})>
+  _attemptWebSearch(String query) async {
+    try {
+      return (
+        fatalError: null,
+        results: await _webSearch!(query, topK: _webTopK),
+      );
+    } on WebSearchException catch (error) {
+      if (error.isDailyQuotaExceeded) {
+        return (fatalError: error, results: const <WebSearchResult>[]);
+      }
+      developer.log('web search failed: $error', name: 'memora.rag');
+      return (fatalError: null, results: const <WebSearchResult>[]);
+    } catch (error) {
+      developer.log('web search failed: $error', name: 'memora.rag');
+      return (fatalError: null, results: const <WebSearchResult>[]);
     }
   }
 
@@ -503,6 +581,16 @@ String? _cleanRewrite(String? response) {
   final firstLine = text.split('\n').first.trim();
   if (firstLine.isEmpty || firstLine.length > 500) return null;
   return firstLine;
+}
+
+String _methodFor({
+  required bool local,
+  required bool web,
+  required RetrievalMethod retrievalMethod,
+}) {
+  if (local && web) return '${retrievalMethod.name}+web';
+  if (web) return 'web';
+  return retrievalMethod.name;
 }
 
 List<String> _weakCandidates(String query, List<Article> articles) {

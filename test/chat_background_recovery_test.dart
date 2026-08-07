@@ -46,16 +46,14 @@ void main() {
             (ref) => _TestSettingsNotifier(
               ref,
               AppSettings(
-                aiBaseUrl: 'https://example.com/v1',
-                aiApiKey: 'test-key',
+                chatAiBaseUrl: 'https://example.com/v1',
+                chatAiApiKey: 'test-key',
                 chatKnowledgeSourceIndex: 1,
               ),
             ),
           ),
           if (conversation != null)
-            ragConversationServiceProvider.overrideWith(
-              (ref) => conversation,
-            ),
+            ragConversationServiceProvider.overrideWith((ref) => conversation),
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
           ),
@@ -77,111 +75,107 @@ void main() {
       ),
       // Simulates an LLM call that was killed by the OS while the app was
       // suspended: the future never completes.
-      complete: ({
-        required String systemPrompt,
-        required String userMessage,
-        List<Map<String, String>> history = const [],
-        double temperature = 0.3,
-        int maxTokens = 800,
-      }) => Completer<String?>().future,
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) => Completer<String?>().future,
       saveLog: (_) async {},
       promptService: _TestChatPromptService(),
     );
   }
 
-  testWidgets(
-    'backgrounding mid-answer must recover as interrupted on resume, '
-    'not stay stuck on the typing indicator',
-    (tester) async {
-      await pumpChat(
-        tester,
+  testWidgets('backgrounding mid-answer must recover as interrupted on resume, '
+      'not stay stuck on the typing indicator', (tester) async {
+    await pumpChat(
+      tester,
+      articles: [],
+      conversation: neverCompletingConversation(),
+    );
+
+    await tester.enterText(find.byType(TextField), 'background me');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The answer is in flight: typing indicator visible, send disabled.
+    expect(find.byType(ChatTypingIndicator), findsOneWidget);
+    expect(find.byIcon(Icons.send_rounded), findsNothing);
+
+    // App goes to the background while the answer is generating.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // User returns to the app.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // MUST NOT stay stuck: the stuck placeholder becomes the interrupted
+    // card (one-tap retry) and the input is usable again.
+    expect(find.byType(ChatTypingIndicator), findsNothing);
+    expect(
+      find.textContaining('interrupted'),
+      findsOneWidget,
+      reason: 'the interrupted card should be offered after resume',
+    );
+    expect(
+      find.byIcon(Icons.send_rounded),
+      findsOneWidget,
+      reason: 'the send button must be re-enabled after resume',
+    );
+  });
+
+  testWidgets('a late completion arriving after interruption must not clobber '
+      'the recovered state', (tester) async {
+    final gate = Completer<String?>();
+    final conversation = RagConversationService(
+      retrieve: (query, articles) async => const RetrievalResult(
         articles: [],
-        conversation: neverCompletingConversation(),
-      );
+        method: RetrievalMethod.none,
+        duration: Duration.zero,
+      ),
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) => gate.future,
+      saveLog: (_) async {},
+      promptService: _TestChatPromptService(),
+    );
+    await pumpChat(tester, articles: [], conversation: conversation);
 
-      await tester.enterText(find.byType(TextField), 'background me');
-      await tester.tap(find.byIcon(Icons.send_rounded));
-      await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(find.byType(TextField), 'background me');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(ChatTypingIndicator), findsOneWidget);
 
-      // The answer is in flight: typing indicator visible, send disabled.
-      expect(find.byType(ChatTypingIndicator), findsOneWidget);
-      expect(find.byIcon(Icons.send_rounded), findsNothing);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(milliseconds: 100));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 100));
 
-      // App goes to the background while the answer is generating.
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      await tester.pump(const Duration(milliseconds: 100));
+    // The dead request finally "answers" long after we recovered.
+    gate.complete('Late zombie answer');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
 
-      // User returns to the app.
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // MUST NOT stay stuck: the stuck placeholder becomes the interrupted
-      // card (one-tap retry) and the input is usable again.
-      expect(find.byType(ChatTypingIndicator), findsNothing);
-      expect(
-        find.textContaining('interrupted'),
-        findsOneWidget,
-        reason: 'the interrupted card should be offered after resume',
-      );
-      expect(
-        find.byIcon(Icons.send_rounded),
-        findsOneWidget,
-        reason: 'the send button must be re-enabled after resume',
-      );
-    },
-  );
-
-  testWidgets(
-    'a late completion arriving after interruption must not clobber '
-    'the recovered state',
-    (tester) async {
-      final gate = Completer<String?>();
-      final conversation = RagConversationService(
-        retrieve: (query, articles) async => const RetrievalResult(
-          articles: [],
-          method: RetrievalMethod.none,
-          duration: Duration.zero,
-        ),
-        complete: ({
-          required String systemPrompt,
-          required String userMessage,
-          List<Map<String, String>> history = const [],
-          double temperature = 0.3,
-          int maxTokens = 800,
-        }) => gate.future,
-        saveLog: (_) async {},
-        promptService: _TestChatPromptService(),
-      );
-      await pumpChat(tester, articles: [], conversation: conversation);
-
-      await tester.enterText(find.byType(TextField), 'background me');
-      await tester.tap(find.byIcon(Icons.send_rounded));
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(find.byType(ChatTypingIndicator), findsOneWidget);
-
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      await tester.pump(const Duration(milliseconds: 100));
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // The dead request finally "answers" long after we recovered.
-      gate.complete('Late zombie answer');
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(find.text('Late zombie answer'), findsNothing);
-      expect(find.textContaining('interrupted'), findsOneWidget);
-    },
-  );
+    expect(find.text('Late zombie answer'), findsNothing);
+    expect(find.textContaining('interrupted'), findsOneWidget);
+  });
 }
 
 class _TestSettingsNotifier extends SettingsNotifier {

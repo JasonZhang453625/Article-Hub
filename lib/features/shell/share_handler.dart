@@ -11,7 +11,6 @@ import 'package:uuid/uuid.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../shared/providers/pipeline_provider.dart';
-import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -149,7 +148,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
         images: selected,
         notes: result.notes,
         fullText: result.mode == ShareSaveMode.fullText,
-        processImages: ref.read(currentSessionProvider) != null,
+        processImages: ref.read(imageUnderstandingServiceProvider) != null,
       );
       await ref.read(articlesProvider.notifier).add(prepared);
       if (mounted) showAppSnackBar(context, message: s.savedProcessing);

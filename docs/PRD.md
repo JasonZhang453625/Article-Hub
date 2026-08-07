@@ -113,7 +113,7 @@ NotebookLM 等产品擅长对用户主动组织的一组来源进行深度研究
 - 进程页（原“待处理箱 / Inbox”），按状态分组，支持重试与删除，前台恢复自动重试；
 - 5 阶段处理流水线（metadata → content → summary → auto-tags → auto folder classification）；
 - 自动标签写入（不覆盖用户编辑）与自动文件夹分类（匹配现有文件夹或自动新建，写入 `folderId`）；
-- MiMo / DeepSeek / o1 / o3 等思考模型的兼容（thinking 关闭 + `max_completion_tokens` 与 `max_tokens` 双发，剥离 `<think>` 标签）；
+- MiMo / DeepSeek / GPT-5 / o1 / o3 / o4 等模型的兼容（按模型只发送一个 token 上限字段，必要时关闭 thinking，并剥离 `<think>` 标签）；
 - 知识库文件夹过滤 chip：点击文件夹页条目即可按文件夹查看知识库，过滤可见可清除；
 - 元数据封面回退：OG/Twitter 标签缺失时从正文 `<img>` 中挑选第一张有效图片；
 - 旧文章批量知识化入口（Settings 页，显示条数与确认）；

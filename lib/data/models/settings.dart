@@ -6,6 +6,14 @@ import 'source_platform.dart';
 class AppSettings {
   static const int typeId = 2;
 
+  static const String defaultHostedTextModel = 'mimo-v2.5';
+  static const String defaultHostedVisionModel = 'sensenova-6.7-flash-lite';
+  static const List<String> hostedTextModels = ['mimo-v2.5', 'mimo-v2.5-pro'];
+  static const List<String> hostedVisionModels = [
+    'mimo-v2.5',
+    'sensenova-6.7-flash-lite',
+  ];
+
   /// Built-in default embedding configuration (SiliconFlow BGE-M3).
   /// Used when the user hasn't provided their own config (BYOK).
   static const String defaultEmbeddingBaseUrl = 'https://api.siliconflow.cn/v1';
@@ -40,6 +48,27 @@ class AppSettings {
   String aiBaseUrl;
   String aiApiKey;
   String aiModel;
+
+  /// AI configuration for knowledge-base chat (BYOK).
+  String chatAiBaseUrl;
+  String chatAiApiKey;
+  String chatAiModel;
+
+  /// AI configuration for image understanding (BYOK).
+  String imageAiBaseUrl;
+  String imageAiApiKey;
+  String imageAiModel;
+
+  /// AI provider mode: 0 = BYOK (direct connection with the user's own key),
+  /// 1 = hosted (requests are proxied through the Memora backend).
+  int aiProviderMode;
+
+  /// Backend-hosted model id used when [aiProviderMode] is hosted.
+  String hostedAiModel;
+
+  /// Backend-hosted model ids for chat and image understanding.
+  String hostedChatModel;
+  String hostedVisionModel;
 
   /// Embedding configuration for semantic search / RAG (BYOK).
   ///
@@ -94,6 +123,16 @@ class AppSettings {
     this.aiBaseUrl = '',
     this.aiApiKey = '',
     this.aiModel = 'gpt-4o-mini',
+    this.chatAiBaseUrl = '',
+    this.chatAiApiKey = '',
+    this.chatAiModel = 'gpt-4o-mini',
+    this.imageAiBaseUrl = '',
+    this.imageAiApiKey = '',
+    this.imageAiModel = 'mimo-v2.5',
+    this.aiProviderMode = 0,
+    this.hostedAiModel = defaultHostedTextModel,
+    this.hostedChatModel = defaultHostedTextModel,
+    this.hostedVisionModel = defaultHostedVisionModel,
     this.embeddingBaseUrl = '',
     this.embeddingApiKey = '',
     this.embeddingModel = '',
@@ -228,6 +267,16 @@ class AppSettings {
     String? aiBaseUrl,
     String? aiApiKey,
     String? aiModel,
+    String? chatAiBaseUrl,
+    String? chatAiApiKey,
+    String? chatAiModel,
+    String? imageAiBaseUrl,
+    String? imageAiApiKey,
+    String? imageAiModel,
+    int? aiProviderMode,
+    String? hostedAiModel,
+    String? hostedChatModel,
+    String? hostedVisionModel,
     String? embeddingBaseUrl,
     String? embeddingApiKey,
     String? embeddingModel,
@@ -254,6 +303,16 @@ class AppSettings {
       aiBaseUrl: aiBaseUrl ?? this.aiBaseUrl,
       aiApiKey: aiApiKey ?? this.aiApiKey,
       aiModel: aiModel ?? this.aiModel,
+      chatAiBaseUrl: chatAiBaseUrl ?? this.chatAiBaseUrl,
+      chatAiApiKey: chatAiApiKey ?? this.chatAiApiKey,
+      chatAiModel: chatAiModel ?? this.chatAiModel,
+      imageAiBaseUrl: imageAiBaseUrl ?? this.imageAiBaseUrl,
+      imageAiApiKey: imageAiApiKey ?? this.imageAiApiKey,
+      imageAiModel: imageAiModel ?? this.imageAiModel,
+      aiProviderMode: aiProviderMode ?? this.aiProviderMode,
+      hostedAiModel: hostedAiModel ?? this.hostedAiModel,
+      hostedChatModel: hostedChatModel ?? this.hostedChatModel,
+      hostedVisionModel: hostedVisionModel ?? this.hostedVisionModel,
       embeddingBaseUrl: embeddingBaseUrl ?? this.embeddingBaseUrl,
       embeddingApiKey: embeddingApiKey ?? this.embeddingApiKey,
       embeddingModel: embeddingModel ?? this.embeddingModel,
@@ -290,6 +349,14 @@ class AppSettings {
       'clipboardDetectionEnabled': clipboardDetectionEnabled,
       'aiBaseUrl': aiBaseUrl,
       'aiModel': aiModel,
+      'chatAiBaseUrl': chatAiBaseUrl,
+      'chatAiModel': chatAiModel,
+      'imageAiBaseUrl': imageAiBaseUrl,
+      'imageAiModel': imageAiModel,
+      'aiProviderMode': aiProviderMode,
+      'hostedAiModel': hostedAiModel,
+      'hostedChatModel': hostedChatModel,
+      'hostedVisionModel': hostedVisionModel,
       'embeddingBaseUrl': embeddingBaseUrl,
       'embeddingModel': embeddingModel,
       'languageIndex': languageIndex,
@@ -313,6 +380,8 @@ class AppSettings {
     return {
       ...toJson(),
       'aiApiKey': aiApiKey,
+      'chatAiApiKey': chatAiApiKey,
+      'imageAiApiKey': imageAiApiKey,
       'embeddingApiKey': embeddingApiKey,
       'tavilyApiKey': tavilyApiKey,
     };
@@ -338,6 +407,38 @@ class AppSettings {
       aiModel: json['aiModel'] is String
           ? json['aiModel'] as String
           : 'gpt-4o-mini',
+      chatAiBaseUrl: json['chatAiBaseUrl'] is String
+          ? json['chatAiBaseUrl'] as String
+          : (json['aiBaseUrl'] is String ? json['aiBaseUrl'] as String : ''),
+      chatAiApiKey: json['chatAiApiKey'] is String
+          ? json['chatAiApiKey'] as String
+          : (json['aiApiKey'] is String ? json['aiApiKey'] as String : ''),
+      chatAiModel: json['chatAiModel'] is String
+          ? json['chatAiModel'] as String
+          : (json['aiModel'] is String
+                ? json['aiModel'] as String
+                : 'gpt-4o-mini'),
+      imageAiBaseUrl: json['imageAiBaseUrl'] is String
+          ? json['imageAiBaseUrl'] as String
+          : '',
+      imageAiApiKey: json['imageAiApiKey'] is String
+          ? json['imageAiApiKey'] as String
+          : '',
+      imageAiModel: json['imageAiModel'] is String
+          ? json['imageAiModel'] as String
+          : 'mimo-v2.5',
+      aiProviderMode: (json['aiProviderMode'] as num?)?.toInt() == 1 ? 1 : 0,
+      hostedAiModel: json['hostedAiModel'] is String
+          ? json['hostedAiModel'] as String
+          : defaultHostedTextModel,
+      hostedChatModel: json['hostedChatModel'] is String
+          ? json['hostedChatModel'] as String
+          : (json['hostedAiModel'] is String
+                ? json['hostedAiModel'] as String
+                : defaultHostedTextModel),
+      hostedVisionModel: json['hostedVisionModel'] is String
+          ? json['hostedVisionModel'] as String
+          : defaultHostedVisionModel,
       embeddingBaseUrl: json['embeddingBaseUrl'] is String
           ? json['embeddingBaseUrl'] as String
           : '',
@@ -412,13 +513,29 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       embeddingApiKey: (fields[11] as String?) ?? '',
       embeddingModel: (fields[12] as String?) ?? '',
       tavilyApiKey: (fields[22] as String?) ?? '',
+      aiProviderMode: (fields[23] as num?)?.toInt() == 1 ? 1 : 0,
+      hostedAiModel:
+          (fields[24] as String?) ?? AppSettings.defaultHostedTextModel,
+      chatAiBaseUrl: (fields[25] as String?) ?? (fields[6] as String?) ?? '',
+      chatAiApiKey: (fields[26] as String?) ?? (fields[7] as String?) ?? '',
+      chatAiModel:
+          (fields[27] as String?) ?? (fields[8] as String?) ?? 'gpt-4o-mini',
+      imageAiBaseUrl: (fields[28] as String?) ?? '',
+      imageAiApiKey: (fields[29] as String?) ?? '',
+      imageAiModel: (fields[30] as String?) ?? 'mimo-v2.5',
+      hostedChatModel:
+          (fields[31] as String?) ??
+          (fields[24] as String?) ??
+          AppSettings.defaultHostedTextModel,
+      hostedVisionModel:
+          (fields[32] as String?) ?? AppSettings.defaultHostedVisionModel,
     );
   }
 
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(23)
+      ..writeByte(33)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -464,6 +581,26 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(21)
       ..write(obj.memorySortNewestFirst)
       ..writeByte(22)
-      ..write(obj.tavilyApiKey);
+      ..write(obj.tavilyApiKey)
+      ..writeByte(23)
+      ..write(obj.aiProviderMode)
+      ..writeByte(24)
+      ..write(obj.hostedAiModel)
+      ..writeByte(25)
+      ..write(obj.chatAiBaseUrl)
+      ..writeByte(26)
+      ..write(obj.chatAiApiKey)
+      ..writeByte(27)
+      ..write(obj.chatAiModel)
+      ..writeByte(28)
+      ..write(obj.imageAiBaseUrl)
+      ..writeByte(29)
+      ..write(obj.imageAiApiKey)
+      ..writeByte(30)
+      ..write(obj.imageAiModel)
+      ..writeByte(31)
+      ..write(obj.hostedChatModel)
+      ..writeByte(32)
+      ..write(obj.hostedVisionModel);
   }
 }

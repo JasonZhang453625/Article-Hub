@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -5,6 +7,7 @@ import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/sync_outbox_service.dart';
 import 'article_providers.dart';
+import 'auth_provider.dart';
 import 'sync_providers.dart';
 
 final settingsProvider =
@@ -20,6 +23,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   Box<AppSettings>? _box;
 
   SettingsNotifier(this._ref) : super(const AsyncValue.loading()) {
+    _ref.listen(authControllerProvider, (_, next) {
+      next.whenData((session) {
+        if (session == null) unawaited(_forceByokMode());
+      });
+    });
     _load();
   }
 
@@ -35,6 +43,15 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
       await _box!.put(_key, settings);
     }
     state = AsyncValue.data(settings);
+    await _ref
+        .read(authControllerProvider)
+        .when(
+          data: (session) async {
+            if (session == null) await _forceByokMode();
+          },
+          error: (_, _) async {},
+          loading: () async {},
+        );
   }
 
   Future<void> _save(AppSettings settings) async {
@@ -90,6 +107,95 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(
       current.copyWith(aiBaseUrl: baseUrl, aiApiKey: apiKey, aiModel: model),
     );
+  }
+
+  Future<void> setChatAiConfig({
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(
+      current.copyWith(
+        chatAiBaseUrl: baseUrl,
+        chatAiApiKey: apiKey,
+        chatAiModel: model,
+      ),
+    );
+  }
+
+  Future<void> setImageAiConfig({
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(
+      current.copyWith(
+        imageAiBaseUrl: baseUrl,
+        imageAiApiKey: apiKey,
+        imageAiModel: model,
+      ),
+    );
+  }
+
+  /// Switches between BYOK (0) and hosted (1) AI provider modes and, for the
+  /// hosted mode, records the selected model id.
+  Future<void> setAiProviderMode(
+    int mode, {
+    String? hostedModel,
+    String? hostedChatModel,
+    String? hostedVisionModel,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    final canUseHosted = mode == 1 && _ref.read(currentSessionProvider) != null;
+    await _save(
+      current.copyWith(
+        aiProviderMode: canUseHosted ? 1 : 0,
+        hostedAiModel: _hostedTextModel(hostedModel ?? current.hostedAiModel),
+        hostedChatModel: _hostedTextModel(
+          hostedChatModel ?? current.hostedChatModel,
+        ),
+        hostedVisionModel: _hostedVisionModel(
+          hostedVisionModel ?? current.hostedVisionModel,
+        ),
+      ),
+    );
+  }
+
+  Future<void> setHostedAiModels({
+    String? summaryModel,
+    String? chatModel,
+    String? visionModel,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(
+      current.copyWith(
+        hostedAiModel: _hostedTextModel(summaryModel ?? current.hostedAiModel),
+        hostedChatModel: _hostedTextModel(chatModel ?? current.hostedChatModel),
+        hostedVisionModel: _hostedVisionModel(
+          visionModel ?? current.hostedVisionModel,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _forceByokMode() async {
+    final current = state.valueOrNull;
+    if (current == null || current.aiProviderMode == 0) return;
+    await _save(current.copyWith(aiProviderMode: 0));
+  }
+
+  String _hostedTextModel(String value) {
+    return AppSettings.hostedTextModels.contains(value)
+        ? value
+        : AppSettings.defaultHostedTextModel;
+  }
+
+  String _hostedVisionModel(String value) {
+    return AppSettings.hostedVisionModels.contains(value)
+        ? value
+        : AppSettings.defaultHostedVisionModel;
   }
 
   Future<void> setLanguage(int index) async {
@@ -258,8 +364,10 @@ final aiConfiguredProvider = Provider<bool>((ref) {
   return ref
       .watch(settingsProvider)
       .maybeWhen(
-        data: (s) =>
-            s.aiBaseUrl.trim().isNotEmpty && s.aiApiKey.trim().isNotEmpty,
+        data: (s) => s.aiProviderMode == 1
+            ? s.hostedAiModel.trim().isNotEmpty &&
+                  ref.watch(currentSessionProvider) != null
+            : s.aiBaseUrl.trim().isNotEmpty && s.aiApiKey.trim().isNotEmpty,
         orElse: () => false,
       );
 });

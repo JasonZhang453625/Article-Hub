@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/embedding_service.dart';
+import '../../data/services/hosted_ai_service.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/prompt_service.dart';
 import '../../data/services/rag_conversation_service.dart';
@@ -8,6 +9,7 @@ import '../../data/services/retrieval_service.dart';
 import '../../data/services/retrieval_log_service.dart';
 import '../../data/services/web_search_service.dart';
 import 'article_providers.dart';
+import 'auth_provider.dart';
 import 'settings_providers.dart';
 
 final embeddingServiceProvider = Provider<EmbeddingService?>((ref) {
@@ -49,34 +51,119 @@ final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
   return RetrievalLogService();
 });
 
-final webSearchServiceProvider = Provider<WebSearchService?>((ref) {
+/// Effective hosted mode is account-bound. A persisted hosted preference is
+/// deliberately ignored while signed out, so every capability falls back to
+/// its BYOK configuration.
+final hostedAiEnabledProvider = Provider<bool>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
-  if (settings == null || settings.tavilyApiKey.trim().isEmpty) return null;
-  return WebSearchService(apiKey: settings.tavilyApiKey);
+  final session = ref.watch(currentSessionProvider);
+  return settings?.aiProviderMode == 1 && session != null;
+});
+
+final webSearchServiceProvider = Provider<WebSearchGateway?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null) return null;
+  if (ref.watch(hostedAiEnabledProvider)) {
+    final service = HostedWebSearchService(
+      getSession: () => ref.read(currentSessionProvider),
+      refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+    );
+    ref.onDispose(service.dispose);
+    return service;
+  }
+  if (settings.tavilyApiKey.trim().isEmpty) return null;
+  return WebSearchService(apiKey: settings.tavilyApiKey.trim());
 });
 
 final webSearchConfiguredProvider = Provider<bool>((ref) {
   return ref.watch(webSearchServiceProvider) != null;
 });
 
-final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
+/// Whether the hosted (backend-proxied) AI path is available: the user must
+/// be signed in and have chosen a hosted model.
+final hostedAiConfiguredProvider = Provider<bool>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
-  final retrieval = ref.watch(retrievalServiceProvider);
-  if (settings == null ||
-      settings.aiBaseUrl.trim().isEmpty ||
-      settings.aiApiKey.trim().isEmpty ||
-      retrieval == null) {
-    return null;
+  if (settings == null || !ref.watch(hostedAiEnabledProvider)) return false;
+  return settings.hostedAiModel.trim().isNotEmpty &&
+      settings.hostedChatModel.trim().isNotEmpty;
+});
+
+final summaryAiGatewayProvider = Provider<AiGateway?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null) return null;
+
+  if (ref.watch(hostedAiEnabledProvider)) {
+    if (settings.hostedAiModel.trim().isEmpty) return null;
+    final gateway = HostedAiService(
+      getSession: () => ref.read(currentSessionProvider),
+      refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+      model: settings.hostedAiModel.trim(),
+      purpose: HostedAiPurpose.summary,
+    );
+    gateway.onTokensUsed = (tokens) {
+      ref.read(settingsProvider.notifier).addTokenUsage(tokens);
+    };
+    return gateway;
   }
 
-  final ai = AiService(
+  if (settings.aiBaseUrl.trim().isEmpty || settings.aiApiKey.trim().isEmpty) {
+    return null;
+  }
+  final gateway = AiService(
     baseUrl: settings.aiBaseUrl,
     apiKey: settings.aiApiKey,
     model: settings.aiModel,
   );
-  ai.onTokensUsed = (tokens) {
+  gateway.onTokensUsed = (tokens) {
     ref.read(settingsProvider.notifier).addTokenUsage(tokens);
   };
+  return gateway;
+});
+
+final chatAiGatewayProvider = Provider<AiGateway?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null) return null;
+
+  if (ref.watch(hostedAiEnabledProvider)) {
+    if (settings.hostedChatModel.trim().isEmpty) return null;
+    final gateway = HostedAiService(
+      getSession: () => ref.read(currentSessionProvider),
+      refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+      model: settings.hostedChatModel.trim(),
+      purpose: HostedAiPurpose.chat,
+    );
+    gateway.onTokensUsed = (tokens) {
+      ref.read(settingsProvider.notifier).addTokenUsage(tokens);
+    };
+    return gateway;
+  }
+
+  if (settings.chatAiBaseUrl.trim().isEmpty ||
+      settings.chatAiApiKey.trim().isEmpty ||
+      settings.chatAiModel.trim().isEmpty) {
+    return null;
+  }
+  final gateway = AiService(
+    baseUrl: settings.chatAiBaseUrl,
+    apiKey: settings.chatAiApiKey,
+    model: settings.chatAiModel,
+  );
+  gateway.onTokensUsed = (tokens) {
+    ref.read(settingsProvider.notifier).addTokenUsage(tokens);
+  };
+  return gateway;
+});
+
+/// Backward-compatible name for summary-generation call sites not yet split.
+final aiGatewayProvider = Provider<AiGateway?>((ref) {
+  return ref.watch(summaryAiGatewayProvider);
+});
+
+final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
+  final retrieval = ref.watch(retrievalServiceProvider);
+  final ai = ref.watch(chatAiGatewayProvider);
+  if (ai == null || retrieval == null) return null;
+
   final logService = ref.watch(retrievalLogServiceProvider);
   final webSearch = ref.watch(webSearchServiceProvider);
 
@@ -98,6 +185,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             maxTokens: maxTokens,
           );
         },
+    completionError: () => ai.lastError,
     saveLog: logService.save,
     promptService: PromptService(),
     webSearch: webSearch == null

@@ -12,8 +12,8 @@ import '../../data/services/local_file_importer.dart';
 import '../../data/services/local_image_importer.dart';
 import '../../data/services/attachment_store.dart';
 import '../../shared/providers/passage_providers.dart';
-import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
+import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/utils/url_helpers.dart';
 import '../../shared/utils/file_content_utils.dart';
 import '../../shared/utils/snackbar_helpers.dart';
@@ -128,7 +128,7 @@ class _AddArticleScreenState extends ConsumerState<AddArticleScreen> {
           tags: _tags,
           folderId: _selectedFolderId,
           fullText: _saveMode == ShareSaveMode.fullText,
-          processImages: ref.read(currentSessionProvider) != null,
+          processImages: ref.read(imageUnderstandingServiceProvider) != null,
         );
         await ref.read(articlesProvider.notifier).add(preparedImageArticle);
         if (mounted) Navigator.of(context).pop();
