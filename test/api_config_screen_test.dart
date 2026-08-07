@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/features/settings/api_config_screen.dart';
+import 'package:memora/shared/widgets/animated_dropdown.dart';
 import 'package:memora/shared/providers/auth_provider.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
@@ -57,7 +58,7 @@ void main() {
       );
       expect(tile.value, isFalse);
       expect(tile.onChanged, isNull);
-      expect(find.text('Sign in to enable Memora hosted AI.'), findsOneWidget);
+      expect(find.text('Sign in to use Memora AI.'), findsOneWidget);
       expect(find.text('AI Chat'), findsOneWidget);
       expect(find.text('AI Memory'), findsOneWidget);
       expect(find.text('Image Understanding'), findsOneWidget);
@@ -92,7 +93,7 @@ void main() {
     expect(find.byKey(const ValueKey('hosted-chat-card')), findsOneWidget);
     expect(find.byKey(const ValueKey('hosted-summary-card')), findsOneWidget);
     expect(find.byKey(const ValueKey('hosted-vision-card')), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(3));
+    expect(find.byType(AnimatedDropdownButton<String>), findsNWidgets(3));
     expect(find.text('Web Search (Tavily)'), findsNothing);
   });
 }

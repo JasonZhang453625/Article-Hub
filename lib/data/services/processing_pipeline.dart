@@ -211,7 +211,11 @@ class ProcessingPipeline {
     );
     await _articles.update(current);
 
-    current = await _stageTags(current);
+    // Tags come with the AI summary; only full-text/legacy memories need the
+    // standalone classifier.
+    if (current.memory?.kind != MemoryKind.aiMemory) {
+      current = await _stageTags(current);
+    }
     current = await _stageFolderSuggestion(current);
 
     current = current.copyWith(
@@ -455,8 +459,11 @@ class ProcessingPipeline {
       }
     }
 
-    // Stage 4: Tags
-    current = await _stageTags(current);
+    // Tags come with the AI summary; only full-text/legacy memories need the
+    // standalone classifier.
+    if (current.memory?.kind != MemoryKind.aiMemory) {
+      current = await _stageTags(current);
+    }
 
     // Stage 5: Folder suggestion
     current = await _stageFolderSuggestion(current);

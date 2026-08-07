@@ -25,6 +25,13 @@ class AuthService {
   static const String _boxName = 'auth_session';
   static const String _sessionKey = 'session';
 
+  // Refresh-token rotation makes a refresh token single-use on many
+  // backends. Keep concurrent callers on the same refresh operation so a
+  // cold-start validation and an automatic sync cannot invalidate each
+  // other's token.
+  Future<AuthSession>? _refreshInFlight;
+  String? _refreshTokenInFlight;
+
   Box<dynamic>? _box;
 
   Future<Box<dynamic>> _sessionBox() async {
@@ -39,11 +46,42 @@ class AuthService {
   bool get isAvailable => BackendConfig.isConfigured;
 
   static bool isSessionRejected(AuthApiException error) {
-    return error.statusCode == 400 ||
-        error.statusCode == 401 ||
-        error.statusCode == 403 ||
-        error.message == 'Invalid server session response.';
+    final code = error.code?.trim().toUpperCase();
+    if (code != null && _terminalSessionErrorCodes.contains(code)) {
+      return true;
+    }
+
+    // Older backend versions may not return a structured error code. Accept
+    // only an explicitly token/session-related terminal message in that case;
+    // never treat an unrelated 400/403 as a logout instruction.
+    final message = error.message.toLowerCase();
+    final mentionsAuth =
+        message.contains('token') || message.contains('session');
+    final mentionsTerminalState = RegExp(
+      r'\b(expired|invalid|revoked|revocation|not found)\b',
+    ).hasMatch(message);
+    if (mentionsAuth &&
+        mentionsTerminalState &&
+        message != 'invalid server session response.') {
+      return true;
+    }
+
+    // A refresh request that receives 401 has been rejected by the auth
+    // server. Other 4xx responses are deliberately kept retryable: a generic
+    // 400/403 can be caused by a deploy, proxy, or device-policy issue and
+    // must not silently log the user out.
+    return error.statusCode == 401;
   }
+
+  static const Set<String> _terminalSessionErrorCodes = {
+    'DEVICE_REVOKED',
+    'INVALID_REFRESH_TOKEN',
+    'INVALID_SESSION',
+    'REFRESH_TOKEN_EXPIRED',
+    'REFRESH_TOKEN_REVOKED',
+    'SESSION_EXPIRED',
+    'SESSION_REVOKED',
+  };
 
   Future<AuthSession?> loadSession() async {
     final box = await _sessionBox();
@@ -104,7 +142,26 @@ class AuthService {
     return session;
   }
 
-  Future<AuthSession> refresh(AuthSession session) async {
+  Future<AuthSession> refresh(AuthSession session) {
+    final refreshToken = session.refreshToken;
+    final inFlight = _refreshInFlight;
+    if (inFlight != null && _refreshTokenInFlight == refreshToken) {
+      return inFlight;
+    }
+
+    late final Future<AuthSession> tracked;
+    tracked = _refreshOnce(session).whenComplete(() {
+      if (identical(_refreshInFlight, tracked)) {
+        _refreshInFlight = null;
+        _refreshTokenInFlight = null;
+      }
+    });
+    _refreshInFlight = tracked;
+    _refreshTokenInFlight = refreshToken;
+    return tracked;
+  }
+
+  Future<AuthSession> _refreshOnce(AuthSession session) async {
     final response = await http
         .post(
           BackendConfig.uri('/auth/refresh'),
@@ -208,16 +265,28 @@ class AuthService {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
 
     var message = 'Request failed with status ${response.statusCode}.';
+    String? code;
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is Map) {
         message = (decoded['message'] ?? decoded['error'] ?? message)
             .toString();
+        final rawCode =
+            decoded['code'] ??
+            decoded['errorCode'] ??
+            (decoded['error'] is String ? decoded['error'] : null);
+        if (rawCode is String && rawCode.trim().isNotEmpty) {
+          code = rawCode.trim();
+        }
       }
     } catch (_) {
       if (response.body.isNotEmpty) message = response.body;
     }
-    throw AuthApiException(message, statusCode: response.statusCode);
+    throw AuthApiException(
+      message,
+      statusCode: response.statusCode,
+      code: code,
+    );
   }
 
   void _ensureUsableSession(AuthSession session) {
@@ -428,8 +497,9 @@ class AuthDevice {
 class AuthApiException implements Exception {
   final String message;
   final int? statusCode;
+  final String? code;
 
-  const AuthApiException(this.message, {this.statusCode});
+  const AuthApiException(this.message, {this.statusCode, this.code});
 
   @override
   String toString() => message;

@@ -81,22 +81,26 @@ class _AutoSyncHostState extends ConsumerState<AutoSyncHost>
   Future<void> _triggerIfReady() async {
     if (!mounted || _running) return;
 
-    final session = ref.read(currentSessionProvider);
-    if (session == null) return;
-
-    final online = ref.read(connectivityProvider).valueOrNull ?? true;
-    if (!online) return;
-
-    final now = DateTime.now();
-    final lastAttemptAt = _lastAttemptAt;
-    if (lastAttemptAt != null && now.difference(lastAttemptAt) < _minInterval) {
-      _scheduleSync(_minInterval - now.difference(lastAttemptAt));
-      return;
-    }
-
     _running = true;
-    _lastAttemptAt = now;
     try {
+      await ref.read(authControllerProvider.notifier).initialLoad;
+      if (!mounted) return;
+
+      final session = ref.read(currentSessionProvider);
+      if (session == null) return;
+
+      final online = ref.read(connectivityProvider).valueOrNull ?? true;
+      if (!online) return;
+
+      final now = DateTime.now();
+      final lastAttemptAt = _lastAttemptAt;
+      if (lastAttemptAt != null &&
+          now.difference(lastAttemptAt) < _minInterval) {
+        _scheduleSync(_minInterval - now.difference(lastAttemptAt));
+        return;
+      }
+
+      _lastAttemptAt = now;
       ref.invalidate(syncNowProvider);
       await ref.read(syncNowProvider.future);
     } catch (_) {

@@ -58,6 +58,40 @@ void main() {
     );
     expect(
       AuthService.isSessionRejected(
+        const AuthApiException('Bad request', statusCode: 400),
+      ),
+      isFalse,
+    );
+    expect(
+      AuthService.isSessionRejected(
+        const AuthApiException(
+          'Invalid or expired refresh token',
+          statusCode: 400,
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      AuthService.isSessionRejected(
+        const AuthApiException(
+          'Device policy rejected request',
+          statusCode: 403,
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      AuthService.isSessionRejected(
+        const AuthApiException(
+          'The device was revoked',
+          statusCode: 403,
+          code: 'DEVICE_REVOKED',
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      AuthService.isSessionRejected(
         const AuthApiException('Internal server error', statusCode: 500),
       ),
       isFalse,
@@ -79,12 +113,48 @@ void main() {
 
       await fake.getMeCalled.future;
       await fake.clearCalled.future;
+      await controller.initialLoad;
       await Future<void>.delayed(Duration.zero);
 
       expect(controller.state.valueOrNull, isNull);
       expect(fake.localSessionCleared, isTrue);
     },
   );
+
+  test('coalesces concurrent refresh calls in the auth controller', () async {
+    final session = AuthSession.fromJson(
+      _sessionJson(
+        _jwt(
+          sessionId: '11111111-1111-1111-1111-111111111111',
+          deviceId: '22222222-2222-2222-2222-222222222222',
+        ),
+      ),
+    );
+    final refreshed = AuthSession.fromJson(
+      _sessionJson(
+        _jwt(
+          sessionId: '33333333-3333-3333-3333-333333333333',
+          deviceId: '44444444-4444-4444-4444-444444444444',
+        ),
+      ),
+    );
+    final fake = _FakeAuthService(loadedSession: null);
+    final refreshGate = Completer<AuthSession>();
+    fake.refreshGate = refreshGate;
+    final controller = AuthController(fake);
+    addTearDown(controller.dispose);
+    await controller.initialLoad;
+    controller.state = AsyncValue.data(session);
+
+    final first = controller.refresh();
+    final second = controller.refresh();
+    expect(fake.refreshCalls, 1);
+
+    refreshGate.complete(refreshed);
+    expect(await first, same(refreshed));
+    expect(await second, same(refreshed));
+    expect(controller.state.valueOrNull, same(refreshed));
+  });
 }
 
 Map<String, dynamic> _sessionJson(String accessToken) {
@@ -122,6 +192,8 @@ class _FakeAuthService extends AuthService {
   final Object? getMeError;
   final getMeCalled = Completer<void>();
   final clearCalled = Completer<void>();
+  Completer<AuthSession>? refreshGate;
+  int refreshCalls = 0;
   bool localSessionCleared = false;
 
   _FakeAuthService({this.loadedSession, this.getMeError});
@@ -134,6 +206,12 @@ class _FakeAuthService extends AuthService {
     if (!getMeCalled.isCompleted) getMeCalled.complete();
     if (getMeError != null) throw getMeError!;
     return session;
+  }
+
+  @override
+  Future<AuthSession> refresh(AuthSession session) async {
+    refreshCalls += 1;
+    return refreshGate?.future ?? session;
   }
 
   @override

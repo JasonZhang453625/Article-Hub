@@ -83,7 +83,7 @@ enum SourcePlatform {
       case SourcePlatform.reddit:
         return Icons.chat_bubble_rounded;
       case SourcePlatform.local:
-        return Icons.description_outlined;
+        return Icons.image_rounded;
     }
   }
 
@@ -108,7 +108,7 @@ enum SourcePlatform {
       case SourcePlatform.reddit:
         return const Color(0xFFFF5700);
       case SourcePlatform.local:
-        return const Color(0xFF00AEEF);
+        return const Color(0xFF7C4DFF);
     }
   }
 

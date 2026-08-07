@@ -6,6 +6,7 @@ import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/snackbar_helpers.dart';
+import '../../shared/widgets/animated_dropdown.dart';
 import '../../shared/widgets/delayed_reveal.dart';
 import 'settings_widgets.dart';
 
@@ -432,6 +433,18 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
               ],
               const SizedBox(height: 14),
               SectionLabel(label: s.embeddingSection, theme: theme),
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  settings?.hasCustomEmbeddingConfig == true
+                      ? s.usingCustom
+                      : s.usingBuiltIn,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
               const SizedBox(height: 8),
               _ApiCard(
                 icon: Icons.dataset_rounded,
@@ -641,23 +654,12 @@ class _HostedModelCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          DropdownButtonFormField<String>(
+          AnimatedDropdownButton<String>(
             key: ValueKey('hosted-model-$title-$value'),
-            initialValue: value,
-            decoration: InputDecoration(
-              labelText: label,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 12,
-              ),
-            ),
-            items: [
-              for (final model in options)
-                DropdownMenuItem(value: model, child: Text(model)),
-            ],
+            value: value,
+            options: options,
+            hint: label,
+            labelOf: (v) => v,
             onChanged: onChanged,
           ),
         ],

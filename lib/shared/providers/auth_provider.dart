@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/services/auth_service.dart';
@@ -11,10 +13,17 @@ final authControllerProvider =
 
 class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   final AuthService _auth;
+  final Completer<void> _initialLoad = Completer<void>();
+  Future<AuthSession?>? _refreshInFlight;
 
   AuthController(this._auth) : super(const AsyncValue.loading()) {
     _load();
   }
+
+  /// Completes after the persisted session has been loaded and validated.
+  /// Startup jobs must await this before using the session so they cannot race
+  /// the first refresh after an app update.
+  Future<void> get initialLoad => _initialLoad.future;
 
   Future<void> _load() async {
     try {
@@ -24,9 +33,11 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
         return;
       }
       state = AsyncValue.data(session);
-      _validateLoadedSession(session);
+      await _validateLoadedSession(session);
     } catch (e, st) {
       state = AsyncValue.error(e, st);
+    } finally {
+      if (!_initialLoad.isCompleted) _initialLoad.complete();
     }
   }
 
@@ -49,7 +60,19 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
     state = const AsyncValue.data(null);
   }
 
-  Future<AuthSession?> refresh() async {
+  Future<AuthSession?> refresh() {
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<AuthSession?> tracked;
+    tracked = _refreshOnce().whenComplete(() {
+      if (identical(_refreshInFlight, tracked)) _refreshInFlight = null;
+    });
+    _refreshInFlight = tracked;
+    return tracked;
+  }
+
+  Future<AuthSession?> _refreshOnce() async {
     final session = state.valueOrNull;
     if (session == null) return null;
     try {
