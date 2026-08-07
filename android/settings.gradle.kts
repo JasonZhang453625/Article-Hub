@@ -11,10 +11,17 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        // China mirrors only — official repos hang on this network.
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        if (System.getenv("CI").equals("true", ignoreCase = true)) {
+            // GitHub-hosted runners have reliable access to the canonical repos.
+            google()
+            mavenCentral()
+            gradlePluginPortal()
+        } else {
+            // Local development in China uses mirrors to avoid stalled downloads.
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        }
     }
 }
 

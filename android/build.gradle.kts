@@ -1,8 +1,13 @@
 allprojects {
     repositories {
-        // China mirrors only — official repos hang on this network.
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        if (System.getenv("CI").equals("true", ignoreCase = true)) {
+            google()
+            mavenCentral()
+        } else {
+            // Local development in China uses mirrors to avoid stalled downloads.
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+        }
     }
 }
 
