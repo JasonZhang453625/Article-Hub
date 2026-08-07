@@ -207,7 +207,9 @@ The GitHub Actions workflow (`.github/workflows/release.yml`) listens for tag pu
 
 ### Phase 9: Update Landing Page
 
-The landing page is a separate Astro project in `landing-page/` deployed via GitHub Actions (`landing-page/.github/workflows/deploy.yml`) + a server-side script (`deploy/memora-deploy-landing`). **Pushing to the landing repo's `master` branch automatically triggers the server-side deploy** (SSH → git pull → npm ci/build → rsync `dist/` to `/opt/memora-landing`). No manual server steps needed.
+The landing page is a separate Astro project in `landing-page/`. **Pushing to the landing repo's `master` branch automatically triggers the deploy workflow** (`landing-page/.github/workflows/deploy.yml`): it builds the site on the Actions runner (`npm ci` + `astro build`), then rsyncs `dist/` over SSH to the server's site root (`/opt/memora-landing`). No manual server steps needed.
+
+> **Why build on the runner:** the server's network resets HTTPS connections to GitHub, so server-side `git pull`/`npm` is unreliable. Building on GitHub's runner and pushing only the built `dist/` avoids that entirely.
 
 The page has a fallback version constant that must be updated to match the current release (the live version is otherwise driven by `api.memora.wang/downloads/android/latest.json` at runtime).
 
@@ -328,8 +330,8 @@ After the skill runs end-to-end, confirm:
 4. The APK file exists at `build\app\outputs\flutter-apk\app-release.apk`.
 5. The code is pushed to the remote repository.
 6. The version tag `v<version>` is pushed to the remote.
-7. Landing page `index.astro` download URL and display version both match the current `<VERSION>`.
-8. Landing page changes are pushed to `https://github.com/JasonZhang453625/Memora-Landing-Page`.
+7. Landing page `index.astro` `fallbackVersion` matches the current `<VERSION>` (the live version shown on the page is fetched from `latest.json` at runtime).
+8. Landing page changes are pushed to `https://github.com/JasonZhang453625/Memora-Landing-Page` and its deploy workflow completed (page shows the new version).
 9. GitHub Actions `release.yml` workflow is triggered and completes successfully (check at `https://github.com/JasonZhang453625/Article-Hub/actions`).
 
 ## Red Flags
