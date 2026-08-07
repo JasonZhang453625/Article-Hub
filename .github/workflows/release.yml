@@ -218,8 +218,9 @@ jobs:
             -o /dev/null
           # Verify the GitHub Release via the API instead of downloading the
           # asset: right after publish, the CDN asset URL can briefly 404
-          # while the API is already consistent.
-          gh release view "$VERSION" \
+          # while the API is already consistent. Note: the release tag is
+          # prefixed with "v" (v$VERSION).
+          gh release view "v$VERSION" \
             --repo "${GITHUB_REPOSITORY}" \
             --json isDraft,assets \
             --jq "select(.isDraft == false) | .assets[] | select(.name == \"app-release.apk\") | select(.state == \"uploaded\")" \
