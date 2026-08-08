@@ -300,11 +300,17 @@ jobs:
     needs: build-and-release
     environment: production-download
     steps:
-      - name: Checkout with submodules
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - name: Checkout landing repo
+        uses: actions/checkout@v4
+        with:
+          repository: JasonZhang453625/Memora-Landing-Page
+          path: landing-page
+          fetch-depth: 0
 
       - name: Set fallbackVersion for this release
         env:
