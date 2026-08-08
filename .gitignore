@@ -34,6 +34,8 @@ migrate_working_dir/
 /coverage/
 /tools/*
 !/tools/bump_version.dart
+!/tools/release.dart
+!/tools/verify_release.dart
 
 # Symbolication related
 app.*.symbols

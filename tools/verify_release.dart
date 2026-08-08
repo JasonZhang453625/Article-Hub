@@ -137,22 +137,54 @@ Future<void> main(List<String> args) async {
   }
 
   await check('GitHub Release v$version public with assets', () async {
-    // Public API — no auth required for public repos.
-    final client = HttpClient();
-    final response = await client
-        .getUrl(Uri.parse(
-            'https://api.github.com/repos/$_githubRepo/releases/tags/v$version'))
-        .then((req) => req.close());
-    if (response.statusCode != 200) return false;
-    final body = await response.transform(utf8.decoder).join();
-    final release = jsonDecode(body) as Map<String, dynamic>;
-    if (release['draft'] != false) return false;
-    final assets = release['assets'] as List<dynamic>;
-    final names = assets
-        .map((a) => (a as Map<String, dynamic>)['name'] as String?)
-        .whereType<String>()
-        .toSet();
-    return names.containsAll({'app-release.apk', 'app-release.apk.sha256', 'latest.json'});
+    // Prefer the public API, but fall back to the release page when the
+    // unauthenticated API is rate-limited (403) so the verifier stays usable
+    // without a token.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+      try {
+        final request = await client
+            .getUrl(Uri.parse(
+                'https://api.github.com/repos/$_githubRepo/releases/tags/v$version'))
+            .timeout(const Duration(seconds: 15));
+        final response = await request.close();
+        if (response.statusCode == 403) {
+          // Rate-limited — fall back to the release page.
+          await response.drain<void>();
+          client.close();
+          final pageClient = HttpClient()
+            ..connectionTimeout = const Duration(seconds: 10);
+          final pageRequest = await pageClient
+              .getUrl(Uri.parse(
+                  'https://github.com/$_githubRepo/releases/tag/v$version'))
+              .timeout(const Duration(seconds: 15));
+          final pageResponse = await pageRequest.close();
+          final ok = pageResponse.statusCode == 200;
+          await pageResponse.drain<void>();
+          pageClient.close();
+          return ok;
+        }
+        if (response.statusCode != 200) {
+          await response.drain<void>();
+          client.close();
+          continue; // transient — retry
+        }
+        final body = await response.transform(utf8.decoder).join();
+        client.close();
+        final release = jsonDecode(body) as Map<String, dynamic>;
+        if (release['draft'] != false) return false;
+        final assets = release['assets'] as List<dynamic>;
+        final names = assets
+            .map((a) => (a as Map<String, dynamic>)['name'] as String?)
+            .whereType<String>()
+            .toSet();
+        return names.containsAll(
+            {'app-release.apk', 'app-release.apk.sha256', 'latest.json'});
+      } catch (_) {
+        client.close();
+      }
+    }
+    return false;
   });
 
   stdout.writeln('');
