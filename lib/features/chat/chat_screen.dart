@@ -13,6 +13,7 @@ import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/ai_error_messages.dart';
+import '../../shared/widgets/delayed_reveal.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
@@ -422,8 +423,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         webSearchEnabled: ref.read(chatWebSearchEnabledProvider),
         webSearchAvailable: ref.read(webSearchConfiguredProvider),
         onToggleWebSearch: () =>
-            ref.read(chatWebSearchEnabledProvider.notifier).state = !ref
-                .read(chatWebSearchEnabledProvider),
+            ref.read(chatWebSearchEnabledProvider.notifier).state = !ref.read(
+              chatWebSearchEnabledProvider,
+            ),
       ),
     );
   }
@@ -577,21 +579,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     ),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
-                      return ChatBubble(
-                        message: messages[index],
-                        articles: articles,
-                        onFeedback: (feedback) => _onFeedback(
-                          messages[index].id,
-                          messages[index].logId,
-                          feedback,
+                      final message = messages[index];
+                      final revealDelayMs = index > 7 ? 210 : index * 30;
+                      return DelayedReveal(
+                        key: ValueKey('chat-message-reveal-${message.id}'),
+                        delayMs: revealDelayMs,
+                        duration: const Duration(milliseconds: 380),
+                        beginOffset: const Offset(0, 0.025),
+                        child: ChatBubble(
+                          key: ValueKey('chat-bubble-${message.id}'),
+                          message: message,
+                          articles: articles,
+                          onFeedback: (feedback) =>
+                              _onFeedback(message.id, message.logId, feedback),
+                          onCitationClick: (articleId) =>
+                              _onCitationClick(message.logId, articleId),
+                          onSuggestionTap: _send,
+                          onRetry: _retry,
+                          onBrowseKnowledge: () {
+                            context.go(AppRoutes.knowledge);
+                          },
                         ),
-                        onCitationClick: (articleId) =>
-                            _onCitationClick(messages[index].logId, articleId),
-                        onSuggestionTap: _send,
-                        onRetry: _retry,
-                        onBrowseKnowledge: () {
-                          context.go(AppRoutes.knowledge);
-                        },
                       );
                     },
                   ),

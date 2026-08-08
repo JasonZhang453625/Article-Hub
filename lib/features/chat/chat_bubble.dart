@@ -42,7 +42,7 @@ class ChatBubble extends ConsumerWidget {
       return const ChatTypingIndicator();
     }
 
-    if (message.isInterrupted) {
+    if (message.isInterrupted && message.text.trim().isEmpty) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Center(
@@ -116,120 +116,187 @@ class ChatBubble extends ConsumerWidget {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              MarkdownBody(
-                data: message.text,
-                selectable: true,
-                styleSheet: MarkdownStyleSheet(
-                  p: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 17,
-                    height: 1.5,
-                  ),
-                  strong: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 17,
-                    height: 1.5,
-                  ),
-                  em: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontStyle: FontStyle.italic,
-                    fontSize: 17,
-                    height: 1.5,
-                  ),
-                  code: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                    fontFamily: 'monospace',
-                    fontSize: 14,
-                  ),
-                  codeblockDecoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.2),
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                MarkdownBody(
+                  data: message.text,
+                  selectable: true,
+                  styleSheet: MarkdownStyleSheet(
+                    p: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontSize: 17,
+                      height: 1.5,
                     ),
-                  ),
-                  blockquote: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                    fontSize: 17,
-                    height: 1.5,
-                  ),
-                  blockquoteDecoration: BoxDecoration(
-                    border: Border(
-                      left: BorderSide(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.4),
-                        width: 3,
+                    strong: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 17,
+                      height: 1.5,
+                    ),
+                    em: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontStyle: FontStyle.italic,
+                      fontSize: 17,
+                      height: 1.5,
+                    ),
+                    code: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      backgroundColor:
+                          theme.colorScheme.surfaceContainerHighest,
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                    ),
+                    codeblockDecoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
                       ),
                     ),
-                  ),
-                  listBullet: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 17,
-                  ),
-                  h1: theme.textTheme.titleLarge?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  h2: theme.textTheme.titleMedium?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 19,
-                    height: 1.4,
-                  ),
-                  h3: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 17,
-                    height: 1.4,
-                  ),
-                  a: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.primary,
-                    decoration: TextDecoration.underline,
-                    fontSize: 17,
-                    height: 1.5,
+                    blockquote: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                      fontSize: 17,
+                      height: 1.5,
+                    ),
+                    blockquoteDecoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: theme.colorScheme.primary.withValues(
+                            alpha: 0.4,
+                          ),
+                          width: 3,
+                        ),
+                      ),
+                    ),
+                    listBullet: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontSize: 17,
+                    ),
+                    h1: theme.textTheme.titleLarge?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                    h2: theme.textTheme.titleMedium?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontSize: 19,
+                      height: 1.4,
+                    ),
+                    h3: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontSize: 17,
+                      height: 1.4,
+                    ),
+                    a: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                      fontSize: 17,
+                      height: 1.5,
+                    ),
                   ),
                 ),
-              ),
-              if (message.articleIds.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                CitationChips(
-                  articleIds: message.articleIds,
-                  articles: articles,
-                  onCitationClick: onCitationClick,
-                ),
+                if (message.isInterrupted) ...[
+                  const SizedBox(height: 12),
+                  _InterruptedAnswerNotice(
+                    message: message,
+                    onRetry: onRetry,
+                    label: s.answerInterrupted,
+                    retryLabel: s.retry,
+                  ),
+                ],
+                if (message.articleIds.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  CitationChips(
+                    articleIds: message.articleIds,
+                    articles: articles,
+                    onCitationClick: onCitationClick,
+                  ),
+                ],
+                if (message.webUrls.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  WebCitationChips(urls: message.webUrls),
+                ],
+                if (message.isNoResult) ...[
+                  const SizedBox(height: 12),
+                  ChatNoResultActions(
+                    query: message.query ?? '',
+                    weakArticleIds: message.weakArticleIds,
+                    articles: articles,
+                    onSuggestionTap: onSuggestionTap,
+                    onBrowseKnowledge: onBrowseKnowledge,
+                    onCitationClick: onCitationClick,
+                  ),
+                ],
+                if (message.isPending) ...[
+                  const SizedBox(height: 6),
+                  const ChatTypingIndicator(),
+                ] else if (!message.isNoResult &&
+                    !message.isInterrupted &&
+                    message.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  ChatFeedbackRow(
+                    message: message,
+                    onFeedback: onFeedback,
+                    onRetry: onRetry,
+                    retryLabel: s.retry,
+                  ),
+                ],
               ],
-              if (message.webUrls.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                WebCitationChips(urls: message.webUrls),
-              ],
-              if (message.isNoResult) ...[
-                const SizedBox(height: 12),
-                ChatNoResultActions(
-                  query: message.query ?? '',
-                  weakArticleIds: message.weakArticleIds,
-                  articles: articles,
-                  onSuggestionTap: onSuggestionTap,
-                  onBrowseKnowledge: onBrowseKnowledge,
-                  onCitationClick: onCitationClick,
-                ),
-              ],
-              if (message.isPending) ...[
-                const SizedBox(height: 6),
-                const ChatTypingIndicator(),
-              ] else if (!message.isNoResult &&
-                  message.text.trim().isNotEmpty) ...[
-                const SizedBox(height: 10),
-                ChatFeedbackRow(
-                  message: message,
-                  onFeedback: onFeedback,
-                  onRetry: onRetry,
-                  retryLabel: s.retry,
-                ),
-              ],
-            ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _InterruptedAnswerNotice extends StatelessWidget {
+  final ChatMessage message;
+  final ValueChanged<ChatMessage> onRetry;
+  final String label;
+  final String retryLabel;
+
+  const _InterruptedAnswerNotice({
+    required this.message,
+    required this.onRetry,
+    required this.label,
+    required this.retryLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.info_outline_rounded,
+            size: 18,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => onRetry(message),
+            icon: const Icon(Icons.refresh_rounded, size: 17),
+            label: Text(retryLabel),
+          ),
+        ],
       ),
     );
   }

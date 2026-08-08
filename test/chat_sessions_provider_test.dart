@@ -46,56 +46,61 @@ void main() {
     expect(repository.getMessages(first.threadId), isEmpty);
   });
 
-  test('recovers in-flight generations as interrupted on load', () async {
-    final repository = _MemoryChatRepository();
-    final now = DateTime.utc(2026, 7, 30);
-    final thread = ChatThread(
-      id: 't1',
-      title: 'Interrupted',
-      createdAt: now,
-      updatedAt: now,
-    );
-    await repository.putThread(thread);
-    await repository.putMessage(
-      ChatMessageRecord(
-        id: 'u1',
-        threadId: 't1',
-        role: ChatMessageRole.user,
-        content: 'Question',
+  test(
+    'recovers in-flight generations without losing partial output',
+    () async {
+      final repository = _MemoryChatRepository();
+      final now = DateTime.utc(2026, 7, 30);
+      final thread = ChatThread(
+        id: 't1',
+        title: 'Interrupted',
         createdAt: now,
-      ),
-    );
-    await repository.putMessage(
-      ChatMessageRecord(
-        id: 'a1',
-        threadId: 't1',
-        role: ChatMessageRole.assistant,
-        content: '',
-        createdAt: now.add(const Duration(seconds: 1)),
-        query: 'Question',
-        status: ChatMessageStatus.sending,
-      ),
-    );
+        updatedAt: now,
+      );
+      await repository.putThread(thread);
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'u1',
+          threadId: 't1',
+          role: ChatMessageRole.user,
+          content: 'Question',
+          createdAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'a1',
+          threadId: 't1',
+          role: ChatMessageRole.assistant,
+          content: 'Partial answer already saved',
+          createdAt: now.add(const Duration(seconds: 1)),
+          query: 'Question',
+          status: ChatMessageStatus.sending,
+        ),
+      );
 
-    final container = ProviderContainer(
-      overrides: [
-        chatRepositoryProvider.overrideWith((ref) async => repository),
-      ],
-    );
-    addTearDown(container.dispose);
+      final container = ProviderContainer(
+        overrides: [
+          chatRepositoryProvider.overrideWith((ref) async => repository),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    container.read(chatSessionsProvider.notifier);
-    while (container.read(chatSessionsProvider).isLoading) {
-      await Future<void>.delayed(const Duration(milliseconds: 1));
-    }
-    final state = container.read(chatSessionsProvider).requireValue;
-    expect(state.messages.last.id, 'a1');
-    expect(state.messages.last.status, ChatMessageStatus.interrupted);
-    expect(
-      repository.getMessage('a1')!.status,
-      ChatMessageStatus.interrupted,
-    );
-  });
+      container.read(chatSessionsProvider.notifier);
+      while (container.read(chatSessionsProvider).isLoading) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+      final state = container.read(chatSessionsProvider).requireValue;
+      expect(state.messages.last.id, 'a1');
+      expect(state.messages.last.status, ChatMessageStatus.interrupted);
+      expect(state.messages.last.content, 'Partial answer already saved');
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        repository.getMessage('a1')!.status,
+        ChatMessageStatus.interrupted,
+      );
+    },
+  );
 }
 
 class _MemoryChatRepository implements ChatRepository {

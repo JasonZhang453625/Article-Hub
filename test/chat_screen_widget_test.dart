@@ -423,6 +423,53 @@ void main() {
     expect(find.byIcon(Icons.add_comment_outlined), findsNothing);
   });
 
+  testWidgets(
+    'restores a partial killed answer and animates the loaded message',
+    (tester) async {
+      final now = DateTime.utc(2026, 7, 30);
+      final thread = ChatThread(
+        id: 'thread-interrupted',
+        title: 'Interrupted chat',
+        createdAt: now,
+        updatedAt: now,
+      );
+      await pumpChat(
+        tester,
+        articles: [],
+        threads: [thread],
+        messages: [
+          ChatMessageRecord(
+            id: 'interrupted-question',
+            threadId: thread.id,
+            role: ChatMessageRole.user,
+            content: 'Continue this answer',
+            createdAt: now,
+          ),
+          ChatMessageRecord(
+            id: 'interrupted-answer',
+            threadId: thread.id,
+            role: ChatMessageRole.assistant,
+            content: 'This part was saved before the app was killed.',
+            createdAt: now.add(const Duration(seconds: 1)),
+            query: 'Continue this answer',
+            status: ChatMessageStatus.interrupted,
+          ),
+        ],
+      );
+
+      expect(
+        find.text('This part was saved before the app was killed.'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-message-reveal-interrupted-answer')),
+        findsOneWidget,
+      );
+      expect(find.byType(AnimatedSize), findsOneWidget);
+    },
+  );
+
   testWidgets('left sidebar creates a new chat and lists saved chats', (
     tester,
   ) async {

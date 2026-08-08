@@ -218,7 +218,8 @@ bool _isUnrelatedPath(String path) {
       path.startsWith('node_modules/') ||
       path.startsWith('.dart_tool/') ||
       path.startsWith('build/') ||
-      path.startsWith('.git') ||
+      path == '.git' ||
+      path.startsWith('.git/') ||
       path == 'skills-lock.json' ||
       path.endsWith('.lock');
 }

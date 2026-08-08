@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -63,16 +65,16 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
       final repository = await _ref.read(chatRepositoryProvider.future);
       _repository = repository;
       final threads = repository.getThreads();
-      // A generation that was in flight when the app was killed is persisted
-      // with status=sending. Mark those as interrupted so the UI can offer a
-      // one-tap resume instead of a stuck conversation.
-      for (final thread in threads) {
-        await _recoverInterrupted(thread.id);
-      }
       final activeThreadId = threads.isEmpty ? null : threads.first.id;
-      final messages = activeThreadId == null
+      final persistedMessages = activeThreadId == null
           ? const <ChatMessageRecord>[]
           : repository.getMessages(activeThreadId);
+
+      // Hydrate the visible conversation before waiting for recovery writes.
+      // This keeps local chat history responsive after an app restart, while
+      // still converting an orphaned in-flight generation to a retryable
+      // state in the background.
+      final messages = _recoverMessagesInMemory(persistedMessages);
       state = AsyncValue.data(
         ChatSessionState(
           threads: List.unmodifiable(threads),
@@ -80,8 +82,42 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
           messages: List.unmodifiable(messages),
         ),
       );
+
+      // Persist recovery for every thread without delaying the first frame of
+      // the active conversation. The in-memory state above is authoritative
+      // for the immediate UI; this write makes the recovery durable for the
+      // next process restart.
+      unawaited(_persistInterruptedMessages(threads));
     } catch (error, stackTrace) {
       state = AsyncValue.error(error, stackTrace);
+    }
+  }
+
+  List<ChatMessageRecord> _recoverMessagesInMemory(
+    List<ChatMessageRecord> messages,
+  ) {
+    return messages
+        .map(
+          (message) => message.status == ChatMessageStatus.sending
+              ? message.copyWith(status: ChatMessageStatus.interrupted)
+              : message,
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> _persistInterruptedMessages(List<ChatThread> threads) async {
+    try {
+      for (final thread in threads) {
+        for (final message in _repo.getMessages(thread.id)) {
+          if (message.status != ChatMessageStatus.sending) continue;
+          await _repo.putMessage(
+            message.copyWith(status: ChatMessageStatus.interrupted),
+          );
+        }
+      }
+    } catch (_) {
+      // The recovered in-memory state is already visible. A later load will
+      // retry this best-effort status write if Hive was temporarily busy.
     }
   }
 
@@ -89,19 +125,10 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   /// interrupted (persisting the change) and returns the recovered list.
   Future<List<ChatMessageRecord>> _recoverInterrupted(String threadId) async {
     final messages = _repo.getMessages(threadId);
-    var changed = false;
-    final recovered = messages
-        .map((message) {
-          if (message.status != ChatMessageStatus.sending) return message;
-          changed = true;
-          return message.copyWith(status: ChatMessageStatus.interrupted);
-        })
-        .toList(growable: false);
-    if (changed) {
-      for (final message in recovered) {
-        if (message.status == ChatMessageStatus.interrupted) {
-          await _repo.putMessage(message);
-        }
+    final recovered = _recoverMessagesInMemory(messages);
+    for (var index = 0; index < messages.length; index++) {
+      if (messages[index].status == ChatMessageStatus.sending) {
+        await _repo.putMessage(recovered[index]);
       }
     }
     return recovered;
