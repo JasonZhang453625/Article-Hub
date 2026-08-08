@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/connectivity_provider.dart';
+import '../providers/settings_providers.dart';
 import '../providers/sync_providers.dart';
 
 class AutoSyncHost extends ConsumerStatefulWidget {
@@ -64,16 +65,24 @@ class _AutoSyncHostState extends ConsumerState<AutoSyncHost>
     });
     ref.listen(syncOutboxCountProvider, (previous, next) {
       next.whenData((count) {
-        if (count > 0 && !_running) {
+        if (count > 0 && !_running && ref.read(cloudSyncEnabledProvider)) {
           _scheduleSync(_changeDebounce);
         }
       });
+    });
+    ref.listen(cloudSyncEnabledProvider, (previous, next) {
+      if (previous == false && next == true) {
+        _scheduleSync(Duration.zero);
+      } else if (previous == true && next == false) {
+        _scheduledSync?.cancel();
+        _scheduledSync = null;
+      }
     });
     return widget.child;
   }
 
   void _scheduleSync(Duration delay) {
-    if (!mounted) return;
+    if (!mounted || !ref.read(cloudSyncEnabledProvider)) return;
     _scheduledSync?.cancel();
     _scheduledSync = Timer(delay, _triggerIfReady);
   }
@@ -88,6 +97,8 @@ class _AutoSyncHostState extends ConsumerState<AutoSyncHost>
 
       final session = ref.read(currentSessionProvider);
       if (session == null) return;
+
+      if (!ref.read(cloudSyncEnabledProvider)) return;
 
       final online = ref.read(connectivityProvider).valueOrNull ?? true;
       if (!online) return;
@@ -108,7 +119,7 @@ class _AutoSyncHostState extends ConsumerState<AutoSyncHost>
       // sync errors where the user can act on them.
     } finally {
       _running = false;
-      if (mounted) {
+      if (mounted && ref.read(cloudSyncEnabledProvider)) {
         final accountId = ref.read(currentSessionProvider)?.user.id;
         if (accountId != null) {
           final pending = await ref

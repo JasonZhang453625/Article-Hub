@@ -15,6 +15,7 @@ import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
 import 'package:memora/data/services/retrieval_service.dart';
 import 'package:memora/features/chat/chat_screen.dart';
+import 'package:memora/features/chat/chat_typing_indicator.dart';
 import 'package:memora/shared/providers/chat_providers.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
@@ -157,6 +158,63 @@ void main() {
     },
   );
 
+  testWidgets('renders streamed answer text before the stream completes', (
+    tester,
+  ) async {
+    final streamController = StreamController<String>();
+    final conversation = RagConversationService(
+      retrieve: (query, articles) async => const RetrievalResult(
+        articles: [],
+        method: RetrievalMethod.none,
+        duration: Duration.zero,
+      ),
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async => fail('stream completion should be used'),
+      completeStream:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) => streamController.stream,
+      saveLog: (_) async {},
+      promptService: _TestChatPromptService(),
+    );
+    await pumpChat(
+      tester,
+      articles: [],
+      settings: AppSettings(
+        chatAiBaseUrl: 'https://example.com/v1',
+        chatAiApiKey: 'test-key',
+        chatKnowledgeSourceIndex: 1,
+      ),
+      conversation: conversation,
+    );
+
+    await tester.enterText(find.byType(TextField), 'stream me');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pump();
+
+    streamController.add('First');
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining('First'), findsOneWidget);
+    expect(find.byType(ChatTypingIndicator), findsOneWidget);
+
+    streamController.add(' second');
+    streamController.close();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('First second'), findsOneWidget);
+    expect(find.byType(ChatTypingIndicator), findsNothing);
+  });
+
   testWidgets(
     'empty local knowledge completes the placeholder instead of leaving dots',
     (tester) async {
@@ -199,6 +257,75 @@ void main() {
         findsOneWidget,
       );
       expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'retry regenerates the existing answer without duplicating the question',
+    (tester) async {
+      final article = Article(
+        id: 'k1',
+        url: 'https://example.com',
+        title: 'AI Basics',
+        source: SourcePlatform.web,
+        summary: 'An intro to AI.',
+        processingStatus: ProcessingStatus.completed,
+      );
+      var completionCalls = 0;
+      final completionHistories = <List<Map<String, String>>>[];
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => RetrievalResult(
+          articles: [article],
+          method: RetrievalMethod.keyword,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async {
+              completionCalls++;
+              completionHistories.add(history);
+              if (completionCalls == 1) return 'First answer [1].';
+              return 'Second answer [1].';
+            },
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+
+      await pumpChat(
+        tester,
+        articles: [article],
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+        ),
+        conversation: conversation,
+      );
+
+      await tester.enterText(find.byType(TextField), 'What is AI?');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
+
+      expect(find.text('First answer [1].'), findsOneWidget);
+      expect(find.byIcon(Icons.refresh_outlined), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.refresh_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Second answer [1].'), findsOneWidget);
+      expect(find.text('First answer [1].'), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is SelectableText && widget.data == 'What is AI?',
+        ),
+        findsOneWidget,
+      );
+      expect(completionCalls, 2);
+      expect(completionHistories.last, isEmpty);
     },
   );
 
@@ -246,7 +373,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.textContaining('assistant update failed'), findsWidgets);
+    expect(find.textContaining('could not finish this answer'), findsWidgets);
     expect(find.byIcon(Icons.send_rounded), findsOneWidget);
   });
 

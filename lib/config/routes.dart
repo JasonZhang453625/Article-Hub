@@ -19,6 +19,7 @@ import '../features/settings/developer_screen.dart';
 import '../features/settings/source_platforms_screen.dart';
 import '../features/settings/account_screen.dart';
 import '../features/settings/login_screen.dart';
+import '../features/settings/sync_conflicts_screen.dart';
 import '../features/shell/app_shell.dart';
 
 class AppRoutes {
@@ -34,6 +35,7 @@ class AppRoutes {
   static const String sourcePlatforms = '/settings/source-platforms';
   static const String settingsAccount = '/settings/account';
   static const String settingsLogin = '/settings/login';
+  static const String settingsSyncConflicts = '/settings/sync-conflicts';
   static const String addArticle = '/add';
   static const String summary = '/summary';
   static const String reader = '/reader';
@@ -258,6 +260,11 @@ final appRouter = GoRouter(
       path: AppRoutes.settingsLogin,
       pageBuilder: (context, state) =>
           _buildPage(state: state, child: const LoginScreen()),
+    ),
+    GoRoute(
+      path: AppRoutes.settingsSyncConflicts,
+      pageBuilder: (context, state) =>
+          _buildPage(state: state, child: const SyncConflictsScreen()),
     ),
   ],
 );

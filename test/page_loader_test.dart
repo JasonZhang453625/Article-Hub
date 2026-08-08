@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -52,6 +52,83 @@ void main() {
       expect(result?.source, PageLoadSource.webView);
       expect(fallback.fetchCount, 1);
     });
+
+    test('X long-article preview is rejected and falls back', () async {
+      final primary = _FakeLoader(
+        page: _xLongArticlePreview(PageLoadSource.http),
+      );
+      final fallback = _FakeLoader(
+        page: _xCompleteLongArticle(PageLoadSource.webView),
+      );
+      final loader = ResilientPageLoader(
+        primary: primary,
+        fallback: fallback,
+        ownsLoaders: false,
+      );
+
+      final result = await loader.fetch(
+        'https://x.com/i/status/2048757569775378858',
+      );
+
+      expect(result?.source, PageLoadSource.webView);
+      expect(fallback.fetchCount, 1);
+    });
+
+    test('X login shell without the target post falls back', () async {
+      final primary = _FakeLoader(page: _xLoginShell(PageLoadSource.http));
+      final fallback = _FakeLoader(
+        page: _xCompleteLongArticle(PageLoadSource.webView),
+      );
+      final loader = ResilientPageLoader(
+        primary: primary,
+        fallback: fallback,
+        ownsLoaders: false,
+      );
+
+      final result = await loader.fetch(
+        'https://x.com/i/status/2048757569775378858',
+      );
+
+      expect(result?.source, PageLoadSource.webView);
+      expect(fallback.fetchCount, 1);
+    });
+
+    test('complete X long article does not start fallback', () async {
+      final primary = _FakeLoader(
+        page: _xCompleteLongArticle(PageLoadSource.http),
+      );
+      final fallback = _FakeLoader(page: _usablePage(PageLoadSource.webView));
+      final loader = ResilientPageLoader(
+        primary: primary,
+        fallback: fallback,
+        ownsLoaders: false,
+      );
+
+      final result = await loader.fetch(
+        'https://x.com/i/status/2048757569775378858',
+      );
+
+      expect(result?.source, PageLoadSource.http);
+      expect(fallback.fetchCount, 0);
+    });
+
+    test(
+      'incomplete X long article remains a failure after fallback',
+      () async {
+        final loader = ResilientPageLoader(
+          primary: _FakeLoader(page: _xLongArticlePreview(PageLoadSource.http)),
+          fallback: _FakeLoader(
+            page: _xLongArticlePreview(PageLoadSource.webView),
+          ),
+          ownsLoaders: false,
+        );
+
+        expect(
+          await loader.fetch('https://x.com/i/status/2048757569775378858'),
+          isNull,
+        );
+      },
+    );
 
     test('WebView verification or short page returns failure', () async {
       final verificationFallback = ResilientPageLoader(
@@ -159,6 +236,62 @@ FetchedPage _verificationPage() {
         '<body>请输入验证码后继续访问</body></html>',
     finalUrl: 'https://example.com/verify',
     source: PageLoadSource.http,
+  );
+}
+
+FetchedPage _xLongArticlePreview(PageLoadSource source) {
+  final noise = List.filled(
+    12,
+    'Log in recommendations trending navigation account controls.',
+  ).join(' ');
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body:
+        '<html><body><article>'
+        '<a href="/author/status/2048757569775378858">Permalink</a>'
+        '<img alt="Article cover image" src="cover.jpg">'
+        '<h1>Long article title</h1>'
+        '<p>Only the logged-out preview is available.</p>'
+        '</article><aside>$noise</aside></body></html>',
+    finalUrl: 'https://x.com/author/status/2048757569775378858',
+    source: source,
+  );
+}
+
+FetchedPage _xLoginShell(PageLoadSource source) {
+  final noise = List.filled(
+    12,
+    'Log in recommendations trending navigation account controls.',
+  ).join(' ');
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body: '<html><body><main>$noise</main></body></html>',
+    finalUrl: 'https://x.com/i/status/2048757569775378858',
+    source: source,
+  );
+}
+
+FetchedPage _xCompleteLongArticle(PageLoadSource source) {
+  final paragraph = List.filled(
+    4,
+    'Complete long-form article paragraph with meaningful source content.',
+  ).join(' ');
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body:
+        '<html><body><article>'
+        '<a href="/author/status/2048757569775378858">Permalink</a>'
+        '<h1>Long article title</h1>'
+        '<div class="x-article-body">'
+        '<p>Opening $paragraph</p>'
+        '<p>Middle $paragraph</p>'
+        '<p>Closing $paragraph</p>'
+        '</div></article></body></html>',
+    finalUrl: 'https://x.com/author/status/2048757569775378858',
+    source: source,
   );
 }
 

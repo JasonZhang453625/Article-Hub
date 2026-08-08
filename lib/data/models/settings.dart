@@ -115,6 +115,11 @@ class AppSettings {
   /// Cumulative tokens consumed across all AI API calls.
   int totalTokensUsed;
 
+  /// When true, the app automatically syncs changes to the cloud when logged
+  /// in (on launch, app resume, or connectivity regain). When false, only
+  /// manual sync via the account screen runs.
+  bool cloudSyncEnabled;
+
   AppSettings({
     this.fontSize = 14.0,
     this.webZoomPercent = 100,
@@ -147,6 +152,7 @@ class AppSettings {
     this.memorySortNewestFirst = true,
     this.firstLaunchMs,
     this.totalTokensUsed = 0,
+    this.cloudSyncEnabled = false,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) : sourcePlatformOrder = normalizeSourcePlatformOrder(
@@ -291,6 +297,7 @@ class AppSettings {
     bool? memorySortNewestFirst,
     int? firstLaunchMs,
     int? totalTokensUsed,
+    bool? cloudSyncEnabled,
     List<String>? sourcePlatformOrder,
     List<String>? hiddenSourcePlatforms,
   }) {
@@ -331,6 +338,7 @@ class AppSettings {
           memorySortNewestFirst ?? this.memorySortNewestFirst,
       firstLaunchMs: firstLaunchMs ?? this.firstLaunchMs,
       totalTokensUsed: totalTokensUsed ?? this.totalTokensUsed,
+      cloudSyncEnabled: cloudSyncEnabled ?? this.cloudSyncEnabled,
       sourcePlatformOrder: sourcePlatformOrder ?? this.sourcePlatformOrder,
       hiddenSourcePlatforms:
           hiddenSourcePlatforms ?? this.hiddenSourcePlatforms,
@@ -369,6 +377,7 @@ class AppSettings {
       'memorySortNewestFirst': memorySortNewestFirst,
       'firstLaunchMs': firstLaunchMs,
       'totalTokensUsed': totalTokensUsed,
+      'cloudSyncEnabled': cloudSyncEnabled,
       'sourcePlatformOrder': sourcePlatformOrder,
       'hiddenSourcePlatforms': hiddenSourcePlatforms,
     };
@@ -468,6 +477,9 @@ class AppSettings {
           : true,
       firstLaunchMs: json['firstLaunchMs'] as int?,
       totalTokensUsed: (json['totalTokensUsed'] as num?)?.toInt() ?? 0,
+      cloudSyncEnabled: json['cloudSyncEnabled'] is bool
+          ? json['cloudSyncEnabled'] as bool
+          : false,
       sourcePlatformOrder: (json['sourcePlatformOrder'] as List?)
           ?.whereType<String>()
           .toList(),
@@ -529,13 +541,14 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
           AppSettings.defaultHostedTextModel,
       hostedVisionModel:
           (fields[32] as String?) ?? AppSettings.defaultHostedVisionModel,
+      cloudSyncEnabled: (fields[33] as bool?) ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, AppSettings obj) {
     writer
-      ..writeByte(33)
+      ..writeByte(34)
       ..writeByte(0)
       ..write(obj.fontSize)
       ..writeByte(1)
@@ -601,6 +614,8 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       ..writeByte(31)
       ..write(obj.hostedChatModel)
       ..writeByte(32)
-      ..write(obj.hostedVisionModel);
+      ..write(obj.hostedVisionModel)
+      ..writeByte(33)
+      ..write(obj.cloudSyncEnabled);
   }
 }

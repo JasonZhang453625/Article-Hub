@@ -90,6 +90,56 @@ void main() {
     },
   );
 
+  test(
+    'askWithProgress forwards streamed answer deltas before completion',
+    () async {
+      final article = agentArticle();
+      final deltas = <String>[];
+      final service = RagConversationService(
+        retrieve: (query, articles) async => RetrievalResult(
+          articles: [article],
+          method: RetrievalMethod.keyword,
+          duration: Duration.zero,
+          candidateIds: [article.id],
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('stream completion should be used'),
+        completeStream:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) => Stream<String>.fromIterable(['Handoff ', 'works [1].']),
+        saveLog: (_) async {},
+        promptService: _FakePromptService(),
+      );
+
+      final result = await service.askWithProgress(
+        RagConversationRequest(
+          question: 'Explain handoff',
+          articles: [article],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+        ),
+        onDelta: deltas.add,
+      );
+
+      expect(deltas, ['Handoff ', 'works [1].']);
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(result.answer, 'Handoff works [1].');
+      expect(result.citedIds, [article.id]);
+    },
+  );
+
   test('an uncited answer does not expose every retrieved candidate', () async {
     final article = agentArticle();
     final service = RagConversationService(

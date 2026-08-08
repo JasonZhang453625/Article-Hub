@@ -66,13 +66,11 @@ class FilterGroupsNotifier
       final box = await _ensureBox();
       await box.delete(id);
       await _ref
-          .read(syncOutboxProvider)
-          .enqueue(
-            SyncOutboxRecord.create(
-              collection: SyncCollections.filterGroups,
-              itemId: id,
-              operation: SyncOperation.delete,
-            ),
+          .read(syncMutationProvider)
+          .delete(
+            accountId: readInitializedSyncAccountId(_ref),
+            collection: SyncCollections.filterGroups,
+            itemId: id,
           );
       state = AsyncValue.data(box.values.toList());
     } catch (e, st) {
@@ -103,14 +101,12 @@ class FilterGroupsNotifier
 
   Future<void> _enqueueGroup(FilterGroup group) {
     return _ref
-        .read(syncOutboxProvider)
-        .enqueue(
-          SyncOutboxRecord.create(
-            collection: SyncCollections.filterGroups,
-            itemId: group.id,
-            operation: SyncOperation.upsert,
-            payload: group.toJson(),
-          ),
+        .read(syncMutationProvider)
+        .upsert(
+          accountId: readInitializedSyncAccountId(_ref),
+          collection: SyncCollections.filterGroups,
+          itemId: group.id,
+          payload: group.toJson(),
         );
   }
 }

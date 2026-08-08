@@ -123,6 +123,53 @@ void main() {
     },
   );
 
+  test('hosted chatStream refreshes before the first SSE delta', () async {
+    var calls = 0;
+    var refreshes = 0;
+    final old = _session(_jwt('old'));
+    final fresh = _session(_jwt('fresh'));
+    final client = MockClient.streaming((request, _) async {
+      calls++;
+      if (calls == 1) {
+        return http.StreamedResponse(
+          Stream<List<int>>.fromIterable([
+            utf8.encode('{"error":{"code":"invalid_token"}}'),
+          ]),
+          401,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      expect(request.headers['authorization'], 'Bearer ${fresh.accessToken}');
+      return http.StreamedResponse(
+        Stream<List<int>>.fromIterable([
+          utf8.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'),
+          utf8.encode('data: [DONE]\n\n'),
+        ]),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final service = HostedAiService(
+      getSession: () => old,
+      refreshSession: () async {
+        refreshes++;
+        return fresh;
+      },
+      model: 'mimo-v2.5',
+      purpose: HostedAiPurpose.chat,
+    );
+
+    final chunks = await http.runWithClient(
+      () => service.chatStream(systemPrompt: 'S', userMessage: 'Q').toList(),
+      () => client,
+    );
+
+    expect(chunks, ['ok']);
+    expect(calls, 2);
+    expect(refreshes, 1);
+    expect(service.lastError, isNull);
+  });
+
   test('daily quota 429 is preserved and is not retried', () async {
     var calls = 0;
     final client = MockClient((_) async {

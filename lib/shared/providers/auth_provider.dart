@@ -15,6 +15,9 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   final AuthService _auth;
   final Completer<void> _initialLoad = Completer<void>();
   Future<AuthSession?>? _refreshInFlight;
+  String? _refreshTokenInFlight;
+  int? _refreshGenerationInFlight;
+  int _sessionGeneration = 0;
 
   AuthController(this._auth) : super(const AsyncValue.loading()) {
     _load();
@@ -26,16 +29,20 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   Future<void> get initialLoad => _initialLoad.future;
 
   Future<void> _load() async {
+    final generation = _sessionGeneration;
     try {
       final session = await _auth.loadSession();
+      if (!mounted || generation != _sessionGeneration) return;
       if (session == null) {
         state = const AsyncValue.data(null);
         return;
       }
       state = AsyncValue.data(session);
-      await _validateLoadedSession(session);
+      await _validateLoadedSession(session, generation);
     } catch (e, st) {
-      state = AsyncValue.error(e, st);
+      if (mounted && generation == _sessionGeneration) {
+        state = AsyncValue.error(e, st);
+      }
     } finally {
       if (!_initialLoad.isCompleted) _initialLoad.complete();
     }
@@ -44,61 +51,89 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   Future<void> sendOtp(String email) => _auth.sendOtp(email);
 
   Future<void> verifyOtp(String email, String token) async {
+    final generation = _beginSessionChange();
     state = const AsyncValue.loading();
     try {
       final session = await _auth.verifyOtp(email, token);
-      state = AsyncValue.data(session);
+      if (mounted && generation == _sessionGeneration) {
+        state = AsyncValue.data(session);
+      }
     } catch (e, st) {
-      state = AsyncValue.error(e, st);
+      if (mounted && generation == _sessionGeneration) {
+        state = AsyncValue.error(e, st);
+      }
       rethrow;
     }
   }
 
   Future<void> signOut() async {
     final session = state.valueOrNull;
-    await _auth.signOut(session);
+    _beginSessionChange();
     state = const AsyncValue.data(null);
+    await _auth.signOut(session);
   }
 
   Future<AuthSession?> refresh() {
+    final session = state.valueOrNull;
+    if (session == null) return Future<AuthSession?>.value(null);
+    final generation = _sessionGeneration;
     final inFlight = _refreshInFlight;
-    if (inFlight != null) return inFlight;
+    if (inFlight != null &&
+        _refreshGenerationInFlight == generation &&
+        _refreshTokenInFlight == session.refreshToken) {
+      return inFlight;
+    }
 
     late final Future<AuthSession?> tracked;
-    tracked = _refreshOnce().whenComplete(() {
-      if (identical(_refreshInFlight, tracked)) _refreshInFlight = null;
+    tracked = _refreshOnce(session, generation).whenComplete(() {
+      if (identical(_refreshInFlight, tracked)) {
+        _refreshInFlight = null;
+        _refreshTokenInFlight = null;
+        _refreshGenerationInFlight = null;
+      }
     });
     _refreshInFlight = tracked;
+    _refreshTokenInFlight = session.refreshToken;
+    _refreshGenerationInFlight = generation;
     return tracked;
   }
 
-  Future<AuthSession?> _refreshOnce() async {
-    final session = state.valueOrNull;
-    if (session == null) return null;
+  Future<AuthSession?> _refreshOnce(AuthSession session, int generation) async {
     try {
       final refreshed = await _auth.refresh(session);
-      if (mounted && _isCurrentSession(session)) {
-        state = AsyncValue.data(refreshed);
+      if (!mounted ||
+          generation != _sessionGeneration ||
+          !_isCurrentSession(session)) {
+        return null;
       }
+      state = AsyncValue.data(refreshed);
       return refreshed;
+    } on AuthSessionChangedException {
+      return null;
     } on AuthApiException catch (error) {
       if (AuthService.isSessionRejected(error)) {
-        await _clearInvalidSession(session);
+        await _clearInvalidSession(session, generation);
         return null;
       }
       rethrow;
     }
   }
 
-  Future<void> _validateLoadedSession(AuthSession session) async {
+  Future<void> _validateLoadedSession(
+    AuthSession session,
+    int generation,
+  ) async {
     try {
       final fresh = await _auth.getMe(session);
-      if (fresh != null && mounted && _isCurrentSession(session)) {
+      if (fresh != null &&
+          mounted &&
+          generation == _sessionGeneration &&
+          _isCurrentSession(session)) {
         state = AsyncValue.data(fresh);
       }
     } on AuthApiException catch (error) {
       if (AuthService.isSessionRejected(error)) {
-        await _clearInvalidSession(session);
+        await _clearInvalidSession(session, generation);
       }
       // Network errors and unrelated server errors keep the session for
       // offline use; a later API call can retry when connectivity returns.
@@ -113,12 +148,26 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
         current?.refreshToken == expected.refreshToken;
   }
 
-  Future<void> _clearInvalidSession(AuthSession expected) async {
-    if (!mounted || !_isCurrentSession(expected)) return;
-    await _auth.clearLocalSession();
-    if (mounted && _isCurrentSession(expected)) {
-      state = const AsyncValue.data(null);
+  int _beginSessionChange() {
+    _sessionGeneration += 1;
+    _refreshInFlight = null;
+    _refreshTokenInFlight = null;
+    _refreshGenerationInFlight = null;
+    return _sessionGeneration;
+  }
+
+  Future<void> _clearInvalidSession(
+    AuthSession expected,
+    int generation,
+  ) async {
+    if (!mounted ||
+        generation != _sessionGeneration ||
+        !_isCurrentSession(expected)) {
+      return;
     }
+    _beginSessionChange();
+    state = const AsyncValue.data(null);
+    await _auth.clearLocalSession();
   }
 }
 

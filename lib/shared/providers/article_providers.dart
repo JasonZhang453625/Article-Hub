@@ -173,13 +173,11 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     await repo.delete(id);
     await AttachmentStore().deleteForArticle(id);
     await _ref
-        .read(syncOutboxProvider)
-        .enqueue(
-          SyncOutboxRecord.create(
-            collection: SyncCollections.articles,
-            itemId: id,
-            operation: SyncOperation.delete,
-          ),
+        .read(syncMutationProvider)
+        .delete(
+          accountId: readInitializedSyncAccountId(_ref),
+          collection: SyncCollections.articles,
+          itemId: id,
         );
     _ref.read(indexServiceProvider).delete(id).catchError((_) {});
     _cached.removeWhere((a) => a.id == id);
@@ -206,14 +204,12 @@ class ArticlesNotifier extends StateNotifier<AsyncValue<List<Article>>> {
 
   Future<void> _enqueueArticle(Article article) {
     return _ref
-        .read(syncOutboxProvider)
-        .enqueue(
-          SyncOutboxRecord.create(
-            collection: SyncCollections.articles,
-            itemId: article.id,
-            operation: SyncOperation.upsert,
-            payload: article.toJson(),
-          ),
+        .read(syncMutationProvider)
+        .upsert(
+          accountId: readInitializedSyncAccountId(_ref),
+          collection: SyncCollections.articles,
+          itemId: article.id,
+          payload: article.toJson(),
         );
   }
 

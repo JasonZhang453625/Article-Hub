@@ -5,6 +5,8 @@ import 'package:uuid/uuid.dart';
 
 enum SyncOperation { upsert, delete }
 
+enum SyncOutboxStatus { pending, failed, conflict }
+
 class SyncCollections {
   static const String articles = 'articles';
   static const String folders = 'folders';
@@ -24,6 +26,11 @@ class SyncOutboxRecord {
   final Map<String, dynamic>? payload;
   final int revision;
   final String clientUpdatedAt;
+  final int baseEntityRevision;
+  final Map<String, dynamic>? basePayload;
+  final List<String> changedPaths;
+  final SyncOutboxStatus status;
+  final String? conflictId;
   final int attempts;
   final String? lastError;
 
@@ -36,6 +43,11 @@ class SyncOutboxRecord {
     required this.payload,
     required this.revision,
     required this.clientUpdatedAt,
+    this.baseEntityRevision = 0,
+    this.basePayload,
+    this.changedPaths = const [],
+    this.status = SyncOutboxStatus.pending,
+    this.conflictId,
     this.attempts = 0,
     this.lastError,
   });
@@ -46,6 +58,9 @@ class SyncOutboxRecord {
     required String itemId,
     required SyncOperation operation,
     Map<String, dynamic>? payload,
+    int baseEntityRevision = 0,
+    Map<String, dynamic>? basePayload,
+    List<String> changedPaths = const [],
   }) {
     final now = DateTime.now().toUtc();
     return SyncOutboxRecord(
@@ -57,6 +72,9 @@ class SyncOutboxRecord {
       payload: payload,
       revision: now.microsecondsSinceEpoch,
       clientUpdatedAt: now.toIso8601String(),
+      baseEntityRevision: baseEntityRevision,
+      basePayload: basePayload,
+      changedPaths: changedPaths,
     );
   }
 
@@ -74,6 +92,18 @@ class SyncOutboxRecord {
           : null,
       revision: (json['revision'] as num).toInt(),
       clientUpdatedAt: json['clientUpdatedAt'] as String,
+      baseEntityRevision: (json['baseEntityRevision'] as num?)?.toInt() ?? 0,
+      basePayload: json['basePayload'] is Map
+          ? Map<String, dynamic>.from(json['basePayload'] as Map)
+          : null,
+      changedPaths:
+          (json['changedPaths'] as List?)?.whereType<String>().toList() ??
+          const [],
+      status: SyncOutboxStatus.values.firstWhere(
+        (value) => value.name == json['status'],
+        orElse: () => SyncOutboxStatus.pending,
+      ),
+      conflictId: json['conflictId'] as String?,
       attempts: (json['attempts'] as num?)?.toInt() ?? 0,
       lastError: json['lastError'] as String?,
     );
@@ -89,12 +119,63 @@ class SyncOutboxRecord {
       'payload': payload,
       'revision': revision,
       'clientUpdatedAt': clientUpdatedAt,
+      'baseEntityRevision': baseEntityRevision,
+      'basePayload': basePayload,
+      'changedPaths': changedPaths,
+      'status': status.name,
+      'conflictId': conflictId,
       'attempts': attempts,
       'lastError': lastError,
     };
   }
 
   SyncOutboxRecord markFailed(Object error) {
+    return copyWith(
+      attempts: attempts + 1,
+      status: SyncOutboxStatus.failed,
+      lastError: error.toString(),
+    );
+  }
+
+  SyncOutboxRecord markAttempted() {
+    return copyWith(
+      attempts: attempts + 1,
+      status: SyncOutboxStatus.pending,
+      clearLastError: true,
+    );
+  }
+
+  SyncOutboxRecord markConflict(String id) {
+    return copyWith(status: SyncOutboxStatus.conflict, conflictId: id);
+  }
+
+  SyncOutboxRecord withLatestPayload(SyncOutboxRecord incoming) {
+    return SyncOutboxRecord(
+      id: id,
+      accountId: incoming.accountId ?? accountId,
+      collection: incoming.collection,
+      itemId: incoming.itemId,
+      operation: incoming.operation,
+      payload: incoming.payload,
+      revision: incoming.revision,
+      clientUpdatedAt: incoming.clientUpdatedAt,
+      baseEntityRevision: baseEntityRevision,
+      basePayload: basePayload ?? incoming.basePayload,
+      changedPaths: {...changedPaths, ...incoming.changedPaths}.toList(),
+      status: SyncOutboxStatus.pending,
+      conflictId: null,
+      attempts: attempts,
+      lastError: null,
+    );
+  }
+
+  SyncOutboxRecord copyWith({
+    int? attempts,
+    SyncOutboxStatus? status,
+    String? conflictId,
+    String? lastError,
+    bool clearLastError = false,
+  }) {
     return SyncOutboxRecord(
       id: id,
       accountId: accountId,
@@ -104,8 +185,13 @@ class SyncOutboxRecord {
       payload: payload,
       revision: revision,
       clientUpdatedAt: clientUpdatedAt,
-      attempts: attempts + 1,
-      lastError: error.toString(),
+      baseEntityRevision: baseEntityRevision,
+      basePayload: basePayload,
+      changedPaths: changedPaths,
+      status: status ?? this.status,
+      conflictId: conflictId ?? this.conflictId,
+      attempts: attempts ?? this.attempts,
+      lastError: clearLastError ? null : (lastError ?? this.lastError),
     );
   }
 }
@@ -144,29 +230,39 @@ class SyncOutboxService {
   Future<void> enqueue(SyncOutboxRecord record) async {
     final box = await _openBox();
     if (box == null) {
-      final superseded = _memoryRecords.entries
-          .where((entry) => _isSuperseded(entry.value, record))
-          .map((entry) => entry.key)
+      final mergeable = _memoryRecords.entries
+          .where((entry) => _isMergeable(entry.value, record))
           .toList(growable: false);
-      for (final id in superseded) {
-        _memoryRecords.remove(id);
+      for (final entry in mergeable) {
+        _memoryRecords.remove(entry.key);
       }
-      _memoryRecords[record.id] = record.toJson();
+      final merged = mergeable.isEmpty
+          ? record
+          : SyncOutboxRecord.fromJson(
+              Map<String, dynamic>.from(mergeable.first.value),
+            ).withLatestPayload(record);
+      _memoryRecords[merged.id] = merged.toJson();
       _notify();
       return;
     }
-    final superseded = box
+    final mergeable = box
         .toMap()
         .entries
         .where(
           (entry) =>
               entry.value is Map &&
-              _isSuperseded(entry.value as Map<dynamic, dynamic>, record),
+              _isMergeable(entry.value as Map<dynamic, dynamic>, record),
         )
-        .map((entry) => entry.key)
         .toList(growable: false);
-    if (superseded.isNotEmpty) await box.deleteAll(superseded);
-    await box.put(record.id, record.toJson());
+    for (final entry in mergeable) {
+      await box.delete(entry.key);
+    }
+    final merged = mergeable.isEmpty
+        ? record
+        : SyncOutboxRecord.fromJson(
+            Map<String, dynamic>.from(mergeable.first.value as Map),
+          ).withLatestPayload(record);
+    await box.put(merged.id, merged.toJson());
     _notify();
   }
 
@@ -180,6 +276,7 @@ class SyncOutboxService {
           _memoryRecords.values
               .map((raw) => SyncOutboxRecord.fromJson(raw))
               .where((record) => _belongsTo(record, accountId))
+              .where((record) => record.status != SyncOutboxStatus.conflict)
               .toList()
             ..sort((a, b) => a.clientUpdatedAt.compareTo(b.clientUpdatedAt));
       return records.take(limit).toList(growable: false);
@@ -192,6 +289,7 @@ class SyncOutboxService {
                   SyncOutboxRecord.fromJson(Map<String, dynamic>.from(raw)),
             )
             .where((record) => _belongsTo(record, accountId))
+            .where((record) => record.status != SyncOutboxStatus.conflict)
             .toList()
           ..sort((a, b) => a.clientUpdatedAt.compareTo(b.clientUpdatedAt));
     return records.take(limit).toList(growable: false);
@@ -206,7 +304,8 @@ class SyncOutboxService {
       final recordAccountId = raw['accountId'] as String?;
       return (recordAccountId == null || recordAccountId == accountId) &&
           raw['collection'] == collection &&
-          raw['itemId'] == itemId;
+          raw['itemId'] == itemId &&
+          raw['status'] != SyncOutboxStatus.conflict.name;
     }
 
     final box = await _openBox();
@@ -214,6 +313,51 @@ class SyncOutboxService {
       return _memoryRecords.values.any(matches);
     }
     return box.values.whereType<Map>().any(matches);
+  }
+
+  Future<List<SyncOutboxRecord>> forEntity({
+    required String accountId,
+    required String collection,
+    required String itemId,
+  }) async {
+    final box = await _openBox();
+    final rawRecords = box == null
+        ? _memoryRecords.values
+        : box.values.whereType<Map>();
+    return rawRecords
+        .map((raw) => SyncOutboxRecord.fromJson(Map<String, dynamic>.from(raw)))
+        .where(
+          (record) =>
+              _belongsTo(record, accountId) &&
+              record.collection == collection &&
+              record.itemId == itemId,
+        )
+        .toList()
+      ..sort((a, b) => a.clientUpdatedAt.compareTo(b.clientUpdatedAt));
+  }
+
+  Future<void> markAttempted(Iterable<SyncOutboxRecord> records) async {
+    final box = await _openBox();
+    for (final record in records) {
+      final updated = record.markAttempted().toJson();
+      if (box == null) {
+        _memoryRecords[record.id] = updated;
+      } else {
+        await box.put(record.id, updated);
+      }
+    }
+    _notify();
+  }
+
+  Future<void> markConflict(SyncOutboxRecord record, String conflictId) async {
+    final box = await _openBox();
+    final updated = record.markConflict(conflictId).toJson();
+    if (box == null) {
+      _memoryRecords[record.id] = updated;
+    } else {
+      await box.put(record.id, updated);
+    }
+    _notify();
   }
 
   Future<void> removeAll(Iterable<String> ids) async {
@@ -270,7 +414,7 @@ class SyncOutboxService {
     return record.accountId == null || record.accountId == accountId;
   }
 
-  bool _isSuperseded(Map<dynamic, dynamic> raw, SyncOutboxRecord incoming) {
+  bool _isMergeable(Map<dynamic, dynamic> raw, SyncOutboxRecord incoming) {
     final existingAccountId = raw['accountId'] as String?;
     final sameAccount =
         existingAccountId == incoming.accountId ||
@@ -278,7 +422,9 @@ class SyncOutboxService {
         incoming.accountId == null;
     return sameAccount &&
         raw['collection'] == incoming.collection &&
-        raw['itemId'] == incoming.itemId;
+        raw['itemId'] == incoming.itemId &&
+        raw['status'] != SyncOutboxStatus.conflict.name &&
+        ((raw['attempts'] as num?)?.toInt() ?? 0) == 0;
   }
 
   void _notify() {

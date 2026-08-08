@@ -96,6 +96,12 @@ void main() {
       ),
       isFalse,
     );
+    expect(
+      AuthService.isSessionRejected(
+        const AuthApiException('Invalid session storage', statusCode: 500),
+      ),
+      isFalse,
+    );
   });
 
   test(
@@ -155,6 +161,89 @@ void main() {
     expect(await second, same(refreshed));
     expect(controller.state.valueOrNull, same(refreshed));
   });
+
+  test('discards an in-flight refresh after sign out', () async {
+    final session = AuthSession.fromJson(
+      _sessionJson(
+        _jwt(
+          sessionId: '11111111-1111-1111-1111-111111111111',
+          deviceId: '22222222-2222-2222-2222-222222222222',
+        ),
+      ),
+    );
+    final refreshed = AuthSession.fromJson(
+      _sessionJson(
+        _jwt(
+          sessionId: '33333333-3333-3333-3333-333333333333',
+          deviceId: '44444444-4444-4444-4444-444444444444',
+        ),
+      ),
+    );
+    final fake = _FakeAuthService(loadedSession: null);
+    final refreshGate = Completer<AuthSession>();
+    fake.refreshGate = refreshGate;
+    final controller = AuthController(fake);
+    addTearDown(controller.dispose);
+    await controller.initialLoad;
+    controller.state = AsyncValue.data(session);
+
+    final pendingRefresh = controller.refresh();
+    await controller.signOut();
+    expect(controller.state.valueOrNull, isNull);
+
+    refreshGate.complete(refreshed);
+    expect(await pendingRefresh, isNull);
+    expect(controller.state.valueOrNull, isNull);
+    expect(fake.signOutCalls, 1);
+  });
+
+  test('does not reuse an old account refresh after account switch', () async {
+    AuthSession session(String sessionId, String deviceId) =>
+        AuthSession.fromJson(
+          _sessionJson(_jwt(sessionId: sessionId, deviceId: deviceId)),
+        );
+
+    final oldSession = session(
+      '11111111-1111-1111-1111-111111111111',
+      '22222222-2222-2222-2222-222222222222',
+    );
+    final oldRefreshed = session(
+      '33333333-3333-3333-3333-333333333333',
+      '44444444-4444-4444-4444-444444444444',
+    );
+    final newSession = session(
+      '55555555-5555-5555-5555-555555555555',
+      '66666666-6666-6666-6666-666666666666',
+    );
+    final newRefreshed = session(
+      '77777777-7777-7777-7777-777777777777',
+      '88888888-8888-8888-8888-888888888888',
+    );
+    final oldRefresh = Completer<AuthSession>();
+    final newRefresh = Completer<AuthSession>();
+    final fake = _FakeAuthService(loadedSession: null)
+      ..refreshHandler = (current) =>
+          current.accessToken == oldSession.accessToken
+          ? oldRefresh.future
+          : newRefresh.future;
+    final controller = AuthController(fake);
+    addTearDown(controller.dispose);
+    await controller.initialLoad;
+
+    controller.state = AsyncValue.data(oldSession);
+    final pendingOldRefresh = controller.refresh();
+    await controller.signOut();
+    controller.state = AsyncValue.data(newSession);
+    final pendingNewRefresh = controller.refresh();
+
+    expect(fake.refreshCalls, 2);
+    newRefresh.complete(newRefreshed);
+    expect(await pendingNewRefresh, same(newRefreshed));
+
+    oldRefresh.complete(oldRefreshed);
+    expect(await pendingOldRefresh, isNull);
+    expect(controller.state.valueOrNull, same(newRefreshed));
+  });
 }
 
 Map<String, dynamic> _sessionJson(String accessToken) {
@@ -193,7 +282,9 @@ class _FakeAuthService extends AuthService {
   final getMeCalled = Completer<void>();
   final clearCalled = Completer<void>();
   Completer<AuthSession>? refreshGate;
+  Future<AuthSession> Function(AuthSession session)? refreshHandler;
   int refreshCalls = 0;
+  int signOutCalls = 0;
   bool localSessionCleared = false;
 
   _FakeAuthService({this.loadedSession, this.getMeError});
@@ -211,7 +302,14 @@ class _FakeAuthService extends AuthService {
   @override
   Future<AuthSession> refresh(AuthSession session) async {
     refreshCalls += 1;
+    final handler = refreshHandler;
+    if (handler != null) return handler(session);
     return refreshGate?.future ?? session;
+  }
+
+  @override
+  Future<void> signOut(AuthSession? session) async {
+    signOutCalls += 1;
   }
 
   @override

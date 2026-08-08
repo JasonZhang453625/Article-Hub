@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/sync_apply_service.dart';
 import 'package:memora/data/services/sync_outbox_service.dart';
@@ -131,6 +132,109 @@ void main() {
     expect(result.cursor, 3);
     expect(pullCalls, 2);
   });
+
+  test(
+    'auto-merged push is rebased and drained in the same sync job',
+    () async {
+      final accountId = _session().user.id;
+      final base = AppSettings(fontSize: 14.0).toSyncJson();
+      final local = AppSettings(fontSize: 18.0).toSyncJson();
+      final remote = AppSettings(
+        aiBaseUrl: 'https://remote.example',
+      ).toSyncJson();
+      await outbox.enqueue(
+        SyncOutboxRecord.create(
+          accountId: accountId,
+          collection: SyncCollections.appSettings,
+          itemId: 'settings',
+          operation: SyncOperation.upsert,
+          payload: local,
+          baseEntityRevision: 1,
+          basePayload: base,
+        ),
+      );
+
+      var pushCalls = 0;
+      final client = MockClient((request) async {
+        if (request.url.path == '/sync/push') {
+          pushCalls++;
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final event = (body['events'] as List).single as Map<String, dynamic>;
+          if (pushCalls == 1) {
+            return http.Response(
+              jsonEncode({
+                'accepted': 0,
+                'conflicts': 1,
+                'latestCursor': '1',
+                'results': [
+                  {
+                    'clientEventId': event['clientEventId'],
+                    'status': 'conflict',
+                    'entityRevision': '2',
+                    'serverSeq': '1',
+                    'current': {
+                      'serverSeq': '1',
+                      'entityRevision': '2',
+                      'deviceId': 'remote-device',
+                      'collection': SyncCollections.appSettings,
+                      'itemId': 'settings',
+                      'op': SyncOperation.upsert.name,
+                      'payload': SyncProtocol.wrapPayload(
+                        accountId: accountId,
+                        collection: SyncCollections.appSettings,
+                        itemId: 'settings',
+                        data: remote,
+                      ),
+                    },
+                  },
+                ],
+              }),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          expect(event['baseEntityRevision'], 2);
+          return http.Response(
+            jsonEncode({
+              'accepted': 1,
+              'conflicts': 0,
+              'latestCursor': '2',
+              'results': [
+                {
+                  'clientEventId': event['clientEventId'],
+                  'status': 'applied',
+                  'entityRevision': '3',
+                  'serverSeq': '2',
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path == '/sync/pull') {
+          return http.Response(
+            jsonEncode({'events': <Object>[], 'nextCursor': 2}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      final service = SyncService(
+        outbox: outbox,
+        state: state,
+        applier: applier,
+        client: client,
+      );
+      final result = await service.sync(_session());
+
+      expect(result.pushed, 1);
+      expect(pushCalls, 2);
+      expect(await outbox.pending(accountId: accountId), isEmpty);
+    },
+  );
 }
 
 AuthSession _session() {

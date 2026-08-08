@@ -12,6 +12,7 @@ import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
+import '../../shared/utils/ai_error_messages.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
@@ -33,16 +34,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _loading = false;
   bool _keyboardWasOpen = false;
 
-  /// Monotonic token identifying the current answer run. Bumped on every
-  /// send/retry and on resume-recovery so a stale in-flight run (whose HTTP
-  /// request the OS killed while the app was backgrounded) can never write
-  /// its result or reset the loading flag for a newer run.
+  /// Monotonic token identifying the current answer run. A late result from an
+  /// older run must never overwrite a newer retry.
   int _answerRunId = 0;
-
-  /// True when the app went to the background while an answer was loading.
-  /// Used by [didChangeAppLifecycleState] to detect a dead in-flight request
-  /// on resume.
-  bool _backgroundedWhileLoading = false;
 
   @override
   void initState() {
@@ -72,50 +66,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
-      // Remember that the answer was still generating when the app left the
-      // foreground. Mobile OSes suspend/kill in-flight network requests, so
-      // the pending completion can never finish on its own.
-      _backgroundedWhileLoading = _loading;
-    } else if (state == AppLifecycleState.resumed &&
-        _backgroundedWhileLoading) {
-      _backgroundedWhileLoading = false;
-      _recoverIfStuckOnResume();
+    if (state == AppLifecycleState.resumed && _loading) {
+      // Do not mark the answer as interrupted here. When the activity is
+      // merely covered by another app, the Dart future may still complete in
+      // the background. If Android kills the process instead, the persisted
+      // `sending` record is recovered by ChatSessionsNotifier on the next
+      // launch. Transport failures are handled by AiService's retry path.
+      _scrollToBottom();
     }
-  }
-
-  /// On resume, an answer that was still generating when the app was
-  /// backgrounded is guaranteed dead (the OS suspended the process and
-  /// killed the socket). Free the UI: mark the stuck placeholder as
-  /// interrupted (one-tap retry) and reset the loading flag so the user can
-  /// act instead of staring at an infinite typing indicator.
-  void _recoverIfStuckOnResume() {
-    final chatState = ref.read(chatSessionsProvider).valueOrNull;
-    if (chatState == null) return;
-    final stuck = chatState.messages
-        .where((m) => m.status == ChatMessageStatus.sending)
-        .toList(growable: false);
-    if (stuck.isEmpty) {
-      // Nothing stuck in storage; just make sure a dangling local flag can't
-      // block the input bar.
-      if (_loading && mounted) setState(() => _loading = false);
-      return;
-    }
-    // Invalidate the dead in-flight run: its late result / late failure must
-    // be discarded instead of clobbering the recovered state.
-    _answerRunId++;
-    if (mounted) setState(() => _loading = false);
-    for (final record in stuck) {
-      unawaited(
-        ref
-            .read(chatSessionsProvider.notifier)
-            .updateMessage(
-              record.copyWith(status: ChatMessageStatus.interrupted),
-            ),
-      );
-    }
-    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -168,8 +126,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  /// Re-runs a previously interrupted answer on its original message,
-  /// without duplicating the user question or creating a new placeholder.
+  /// Re-runs an answer on its original message, without duplicating the user
+  /// question or creating a second assistant bubble.
   Future<void> _retry(ChatMessage message) async {
     final query = message.query ?? '';
     if (query.isEmpty || _loading) return;
@@ -177,13 +135,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (chatState == null) return;
     final record = _findMessage(chatState.messages, message.id);
     if (record == null || record.role != ChatMessageRole.assistant) return;
-    final history = _completedHistory(chatState.messages);
+    final retryHistoryMessages = chatState.messages
+        .where((item) => item.id != record.id)
+        .toList();
+    // The user question immediately before this assistant record is passed
+    // separately as [pending.query], so it must not be duplicated in history.
+    if (retryHistoryMessages.isNotEmpty &&
+        retryHistoryMessages.last.role == ChatMessageRole.user &&
+        retryHistoryMessages.last.content == query) {
+      retryHistoryMessages.removeLast();
+    }
+    final history = _completedHistory(retryHistoryMessages);
 
     setState(() {
       _loading = true;
     });
     final runId = ++_answerRunId;
-    final retried = record.copyWith(status: ChatMessageStatus.sending);
+    final retried = record.retrying();
     try {
       await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
       _scrollToBottom();
@@ -203,8 +171,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// Runs the RAG pipeline and writes the outcome back onto [pending].
   ///
   /// [runId] identifies this specific answer run. If the widget started a
-  /// newer run (retry) or recovered an interrupted answer in the meantime,
-  /// this run's result and loading-flag reset are discarded.
+  /// newer run (retry) in the meantime, this run's result and loading-flag
+  /// reset are discarded.
   Future<void> _runAnswer({
     required ChatMessageRecord pending,
     required List<RagConversationTurn> history,
@@ -264,8 +232,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       return;
     }
 
+    final streamedAnswer = StringBuffer();
+    var lastPartialPersist = DateTime.fromMillisecondsSinceEpoch(0);
+    var partialPersistChain = Future<void>.value();
+
+    void publishDelta(String delta) {
+      if (!mounted || runId != _answerRunId || delta.isEmpty) return;
+      streamedAnswer.write(delta);
+      final partial = pending.copyWith(
+        content: streamedAnswer.toString(),
+        status: ChatMessageStatus.sending,
+      );
+      // Update the visible bubble for every delta, but throttle durable writes
+      // so a long answer does not turn Hive into a per-token queue.
+      sessions.replaceMessageInMemory(partial);
+      _scrollToBottom();
+
+      final now = DateTime.now();
+      if (now.difference(lastPartialPersist) <
+          const Duration(milliseconds: 250)) {
+        return;
+      }
+      lastPartialPersist = now;
+      partialPersistChain = partialPersistChain.then((_) async {
+        try {
+          await sessions.updateMessage(partial);
+        } catch (_) {
+          // The final write below is authoritative. A transient partial-write
+          // failure should not stop the current stream from reaching the UI.
+        }
+      });
+    }
+
     try {
-      final result = await conversation.ask(
+      final result = await conversation.askWithProgress(
         RagConversationRequest(
           question: pending.query ?? '',
           history: history,
@@ -275,9 +275,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           languageHint: aiLanguagePrompt(activeSettings.languageIndex),
           webSearch: ref.read(chatWebSearchEnabledProvider),
         ),
+        onDelta: publishDelta,
       );
+      await partialPersistChain;
       if (runId != _answerRunId) {
-        // This run was superseded (interrupted on resume / retried) while
+        // This run was superseded by a newer retry while
         // the request was in flight — discard its outcome.
         return;
       }
@@ -285,7 +287,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         case RagConversationOutcome.answer:
           await finish(
             pending.copyWith(
-              content: result.answer ?? '',
+              content: result.answer ?? streamedAnswer.toString(),
               articleIds: result.citedIds,
               webUrls: result.webUrls,
               method: result.method,
@@ -308,9 +310,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           );
           break;
         case RagConversationOutcome.error:
+          final answer = (result.answer ?? streamedAnswer.toString()).trim();
+          final friendlyError = localizedAiErrorMessage(s, result.error);
           await finish(
             pending.copyWith(
-              content: '${s.aiError}: ${result.error ?? 'unknown error'}',
+              content: answer.isEmpty
+                  ? friendlyError
+                  : '$answer\n\n$friendlyError',
               method: result.method,
               logId: result.logId,
               status: ChatMessageStatus.failed,
@@ -320,10 +326,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           break;
       }
     } catch (error) {
+      await partialPersistChain;
       if (runId != _answerRunId) return;
+      final friendlyError = localizedAiErrorMessage(s, error);
+      final answer = streamedAnswer.toString().trim();
       await finish(
         pending.copyWith(
-          content: '${s.aiError}: $error',
+          content: answer.isEmpty ? friendlyError : '$answer\n\n$friendlyError',
           status: ChatMessageStatus.failed,
           errorCode: 'unexpected_error',
         ),
@@ -370,14 +379,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       error: error,
       stackTrace: stackTrace,
     );
-    final message = error.toString();
+    final s = ref.read(stringsProvider);
+    final friendlyMessage = localizedAiErrorMessage(s, error);
     if (pending != null) {
-      final s = ref.read(stringsProvider);
       ref
           .read(chatSessionsProvider.notifier)
           .replaceMessageInMemory(
             pending.copyWith(
-              content: '${s.aiError}: $message',
+              content: friendlyMessage,
               status: ChatMessageStatus.failed,
               errorCode: 'local_persistence_error',
             ),
@@ -386,7 +395,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (mounted) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
     }
   }
 
@@ -404,20 +413,41 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final settings = ref.read(settingsProvider).valueOrNull;
     if (settings == null) return;
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => ChatSettingsSheet(
-        s: ref.read(stringsProvider),
-        answerLength: settings.chatAnswerLengthIndex,
-        knowledgeSource: settings.chatKnowledgeSourceIndex,
-        onChanged: (answerLength, knowledgeSource) => ref
-            .read(settingsProvider.notifier)
-            .setChatPreferences(
-              answerLength: answerLength,
-              knowledgeSource: knowledgeSource,
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black54,
+        barrierDismissible: true,
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 240),
+        pageBuilder: (_, _, _) => ChatSettingsSheet(
+          s: ref.read(stringsProvider),
+          answerLength: settings.chatAnswerLengthIndex,
+          knowledgeSource: settings.chatKnowledgeSourceIndex,
+          onChanged: (answerLength, knowledgeSource) => ref
+              .read(settingsProvider.notifier)
+              .setChatPreferences(
+                answerLength: answerLength,
+                knowledgeSource: knowledgeSource,
+              ),
+        ),
+        transitionsBuilder: (_, animation, _, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return AnimatedBuilder(
+            animation: curved,
+            builder: (context, _) => Align(
+              alignment: Alignment.bottomCenter,
+              child: FractionalTranslation(
+                translation: Offset(0, 1 - curved.value),
+                child: child,
+              ),
             ),
+          );
+        },
       ),
     );
   }

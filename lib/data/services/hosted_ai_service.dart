@@ -154,4 +154,50 @@ class HostedAiService implements AiGateway {
     _capture(ai);
     return result;
   }
+
+  @override
+  Stream<String> chatStream({
+    required String systemPrompt,
+    required String userMessage,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  }) async* {
+    lastError = null;
+    lastStatusCode = null;
+    final session = await _freshSession();
+    if (session == null) return;
+
+    var ai = _aiFor(session);
+    var emitted = false;
+    await for (final chunk in ai.chatStream(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+    )) {
+      emitted = true;
+      yield chunk;
+    }
+
+    // A 401 can arrive before the first SSE delta. Refresh once and replay the
+    // request in that case. Never replay after content has reached the UI,
+    // otherwise the answer would be duplicated.
+    final retry = await _retryAfterUnauthorized(ai);
+    if (retry != null && !emitted) {
+      ai = retry;
+      await for (final chunk in ai.chatStream(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+      )) {
+        emitted = true;
+        yield chunk;
+      }
+    }
+    _capture(ai);
+  }
 }

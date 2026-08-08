@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/settings.dart';
+import '../../data/services/hosted_ai_capabilities.dart';
+import '../../shared/providers/ai_providers.dart';
 import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/settings_providers.dart';
@@ -200,6 +202,25 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     if (settings != null) _initializeControllers(settings);
     final isLoggedIn = ref.watch(currentSessionProvider) != null;
     final hostedEnabled = isLoggedIn && settings?.aiProviderMode == 1;
+    final capabilities =
+        ref.watch(hostedAiCapabilitiesProvider).valueOrNull ??
+            const HostedAiCapabilities(
+              chatModels: [],
+              summaryModels: [],
+              visionModels: [],
+            );
+    final chatModelOptions = hostedTextModelOptions(
+      serverModels: capabilities.chatModels,
+      builtInModels: AppSettings.hostedTextModels,
+    );
+    final summaryModelOptions = hostedTextModelOptions(
+      serverModels: capabilities.summaryModels,
+      builtInModels: AppSettings.hostedTextModels,
+    );
+    final visionModelOptions = hostedTextModelOptions(
+      serverModels: capabilities.visionModels,
+      builtInModels: AppSettings.hostedVisionModels,
+    );
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final cardColor = theme.colorScheme.surface;
@@ -265,8 +286,11 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                   icon: Icons.chat_bubble_rounded,
                   title: s.chatAiSection,
                   label: s.hostedModelLabel,
-                  value: _hostedTextValue(settings.hostedChatModel),
-                  options: AppSettings.hostedTextModels,
+                  value: _hostedTextValue(
+                    settings.hostedChatModel,
+                    chatModelOptions,
+                  ),
+                  options: chatModelOptions,
                   onChanged: (value) {
                     if (value != null) {
                       ref
@@ -284,8 +308,11 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                   icon: Icons.auto_awesome_rounded,
                   title: s.aiSummarySection,
                   label: s.hostedModelLabel,
-                  value: _hostedTextValue(settings.hostedAiModel),
-                  options: AppSettings.hostedTextModels,
+                  value: _hostedTextValue(
+                    settings.hostedAiModel,
+                    summaryModelOptions,
+                  ),
+                  options: summaryModelOptions,
                   onChanged: (value) {
                     if (value != null) {
                       ref
@@ -303,8 +330,11 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                   icon: Icons.image_search_rounded,
                   title: s.imageAiSection,
                   label: s.hostedModelLabel,
-                  value: _hostedVisionValue(settings.hostedVisionModel),
-                  options: AppSettings.hostedVisionModels,
+                  value: _hostedVisionValue(
+                    settings.hostedVisionModel,
+                    visionModelOptions,
+                  ),
+                  options: visionModelOptions,
                   onChanged: (value) {
                     if (value != null) {
                       ref
@@ -489,14 +519,12 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     bool obscured = false,
   }) => _Field(label: label, controller: ctrl, hint: hint, obscured: obscured);
 
-  String _hostedTextValue(String value) {
-    return AppSettings.hostedTextModels.contains(value)
-        ? value
-        : AppSettings.defaultHostedTextModel;
+  String _hostedTextValue(String value, List<String> options) {
+    return options.contains(value) ? value : AppSettings.defaultHostedTextModel;
   }
 
-  String _hostedVisionValue(String value) {
-    return AppSettings.hostedVisionModels.contains(value)
+  String _hostedVisionValue(String value, List<String> options) {
+    return options.contains(value)
         ? value
         : AppSettings.defaultHostedVisionModel;
   }

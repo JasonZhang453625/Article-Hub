@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -31,6 +30,7 @@ class AuthService {
   // other's token.
   Future<AuthSession>? _refreshInFlight;
   String? _refreshTokenInFlight;
+  int _sessionGeneration = 0;
 
   Box<dynamic>? _box;
 
@@ -60,7 +60,9 @@ class AuthService {
     final mentionsTerminalState = RegExp(
       r'\b(expired|invalid|revoked|revocation|not found)\b',
     ).hasMatch(message);
-    if (mentionsAuth &&
+    final statusCode = error.statusCode;
+    if ((statusCode == 400 || statusCode == 403) &&
+        mentionsAuth &&
         mentionsTerminalState &&
         message != 'invalid server session response.') {
       return true;
@@ -92,7 +94,7 @@ class AuthService {
     } catch (_) {
       // A session written by an older build must not poison every future
       // startup. The user's articles remain in their other Hive boxes.
-      await box.delete(_sessionKey);
+      await clearLocalSession();
       return null;
     }
   }
@@ -119,6 +121,7 @@ class AuthService {
 
   Future<AuthSession> verifyOtp(String email, String token) async {
     if (!BackendConfig.isConfigured) throw BackendNotConfiguredException();
+    final generation = _beginSessionChange();
 
     final device = await _deviceInfo();
     final response = await http
@@ -138,11 +141,12 @@ class AuthService {
 
     final session = AuthSession.fromJson(_decodeObject(response));
     _ensureUsableSession(session);
-    await _saveSession(session);
+    await _saveSession(session, expectedGeneration: generation);
     return session;
   }
 
   Future<AuthSession> refresh(AuthSession session) {
+    final generation = _sessionGeneration;
     final refreshToken = session.refreshToken;
     final inFlight = _refreshInFlight;
     if (inFlight != null && _refreshTokenInFlight == refreshToken) {
@@ -150,7 +154,7 @@ class AuthService {
     }
 
     late final Future<AuthSession> tracked;
-    tracked = _refreshOnce(session).whenComplete(() {
+    tracked = _refreshOnce(session, generation).whenComplete(() {
       if (identical(_refreshInFlight, tracked)) {
         _refreshInFlight = null;
         _refreshTokenInFlight = null;
@@ -161,7 +165,7 @@ class AuthService {
     return tracked;
   }
 
-  Future<AuthSession> _refreshOnce(AuthSession session) async {
+  Future<AuthSession> _refreshOnce(AuthSession session, int generation) async {
     final response = await http
         .post(
           BackendConfig.uri('/auth/refresh'),
@@ -178,35 +182,51 @@ class AuthService {
       refreshTokenExpiresAt: json['refreshTokenExpiresAt'] as String?,
     );
     _ensureUsableSession(refreshed);
-    await _saveSession(refreshed);
+    await _replaceSession(refreshed, expectedGeneration: generation);
     return refreshed;
   }
 
   Future<AuthSession?> getMe(AuthSession session) async {
+    var generation = _sessionGeneration;
     var current = session;
     // Avoid sending an obviously stale token from an older client build. A
     // valid refresh token can still recover the session without a full login.
     if (!current.hasValidAccessToken) {
       current = await refresh(current);
+      generation += 1;
     }
 
     final response = await _authorizedGet('/me', current);
     if (response.statusCode == 401) {
       final refreshed = await refresh(current);
+      generation += 1;
       final retry = await _authorizedGet('/me', refreshed);
       _throwIfFailed(retry);
-      return _mergeMe(refreshed, _decodeObject(retry));
+      return _mergeMe(
+        refreshed,
+        _decodeObject(retry),
+        expectedGeneration: generation,
+      );
     }
     _throwIfFailed(response);
-    return _mergeMe(current, _decodeObject(response));
+    return _mergeMe(
+      current,
+      _decodeObject(response),
+      expectedGeneration: generation,
+    );
   }
 
   Future<void> clearLocalSession() async {
+    _beginSessionChange();
     final box = await _sessionBox();
     await box.delete(_sessionKey);
   }
 
   Future<void> signOut(AuthSession? session) async {
+    // Invalidate local credentials before the network request. Any refresh or
+    // /me request that finishes later observes a stale generation and cannot
+    // write its session back to Hive.
+    await clearLocalSession();
     if (session != null) {
       try {
         await http
@@ -223,11 +243,40 @@ class AuthService {
         // Local sign-out should still succeed when the network is unavailable.
       }
     }
-    await clearLocalSession();
   }
 
-  Future<void> _saveSession(AuthSession session) async {
+  int _beginSessionChange() {
+    _sessionGeneration += 1;
+    _refreshInFlight = null;
+    _refreshTokenInFlight = null;
+    return _sessionGeneration;
+  }
+
+  Future<void> _saveSession(
+    AuthSession session, {
+    int? expectedGeneration,
+  }) async {
     final box = await _sessionBox();
+    if (expectedGeneration != null &&
+        expectedGeneration != _sessionGeneration) {
+      throw const AuthSessionChangedException();
+    }
+    await box.put(_sessionKey, session.toJson());
+  }
+
+  Future<void> _replaceSession(
+    AuthSession session, {
+    required int expectedGeneration,
+  }) async {
+    final box = await _sessionBox();
+    if (expectedGeneration != _sessionGeneration) {
+      throw const AuthSessionChangedException();
+    }
+
+    // Token rotation creates a new session generation. Older /me responses
+    // can still update the UI if left unchecked, so invalidate them before the
+    // replacement reaches persistent storage.
+    _sessionGeneration += 1;
     await box.put(_sessionKey, session.toJson());
   }
 
@@ -240,7 +289,11 @@ class AuthService {
         .timeout(const Duration(seconds: 20));
   }
 
-  AuthSession _mergeMe(AuthSession session, Map<String, dynamic> json) {
+  Future<AuthSession> _mergeMe(
+    AuthSession session,
+    Map<String, dynamic> json, {
+    required int expectedGeneration,
+  }) async {
     final userJson = json['user'];
     final deviceJson = json['device'];
     final merged = session.copyWith(
@@ -251,7 +304,7 @@ class AuthService {
           ? AuthDevice.fromJson(Map<String, dynamic>.from(deviceJson))
           : session.device,
     );
-    unawaited(_saveSession(merged));
+    await _saveSession(merged, expectedGeneration: expectedGeneration);
     return merged;
   }
 
@@ -503,6 +556,13 @@ class AuthApiException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class AuthSessionChangedException implements Exception {
+  const AuthSessionChangedException();
+
+  @override
+  String toString() => 'The active auth session changed.';
 }
 
 class BackendNotConfiguredException implements Exception {

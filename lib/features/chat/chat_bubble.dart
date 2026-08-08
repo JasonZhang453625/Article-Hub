@@ -33,26 +33,23 @@ class ChatBubble extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final s = ref.watch(stringsProvider);
     final isUser = message.role == MessageRole.user;
 
-    if (message.isPending) {
+    if (message.isPending && message.text.trim().isEmpty) {
       // The in-flight answer is a real (persisted) message now — render the
       // typing animation on it so an app restart can still recover it.
       return const ChatTypingIndicator();
     }
 
     if (message.isInterrupted) {
-      final s = ref.watch(stringsProvider);
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
@@ -97,9 +94,9 @@ class ChatBubble extends ConsumerWidget {
           ),
           decoration: BoxDecoration(
             color: theme.colorScheme.primary,
-            borderRadius: BorderRadius.circular(18).copyWith(
-              bottomRight: const Radius.circular(4),
-            ),
+            borderRadius: BorderRadius.circular(
+              18,
+            ).copyWith(bottomRight: const Radius.circular(4)),
           ),
           child: SelectableText(
             message.text,
@@ -145,8 +142,7 @@ class ChatBubble extends ConsumerWidget {
                   ),
                   code: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurface,
-                    backgroundColor:
-                        theme.colorScheme.surfaceContainerHighest,
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
                     fontFamily: 'monospace',
                     fontSize: 14,
                   ),
@@ -218,11 +214,17 @@ class ChatBubble extends ConsumerWidget {
                   onCitationClick: onCitationClick,
                 ),
               ],
-              if (!message.isNoResult && message.logId != null) ...[
+              if (message.isPending) ...[
+                const SizedBox(height: 6),
+                const ChatTypingIndicator(),
+              ] else if (!message.isNoResult &&
+                  message.text.trim().isNotEmpty) ...[
                 const SizedBox(height: 10),
                 ChatFeedbackRow(
                   message: message,
                   onFeedback: onFeedback,
+                  onRetry: onRetry,
+                  retryLabel: s.retry,
                 ),
               ],
             ],

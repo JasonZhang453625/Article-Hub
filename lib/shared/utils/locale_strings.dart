@@ -95,6 +95,13 @@ class LocaleStrings {
   final String notEnoughInfo;
   final String emptyAiResponse;
   final String aiError;
+  final String aiNetworkError;
+  final String aiTimeoutError;
+  final String aiServerError;
+  final String aiAuthError;
+  final String aiRateLimitError;
+  final String aiRequestError;
+  final String aiGenericError;
   final String answerInterrupted;
   final String askKnowledgeBase;
   final String tryExamples;
@@ -420,6 +427,13 @@ class LocaleStrings {
     required this.notEnoughInfo,
     required this.emptyAiResponse,
     required this.aiError,
+    required this.aiNetworkError,
+    required this.aiTimeoutError,
+    required this.aiServerError,
+    required this.aiAuthError,
+    required this.aiRateLimitError,
+    required this.aiRequestError,
+    required this.aiGenericError,
     required this.answerInterrupted,
     required this.askKnowledgeBase,
     required this.tryExamples,
@@ -771,6 +785,20 @@ class LocaleStrings {
     emptyAiResponse:
         'The AI service returned an empty response. Please try again.',
     aiError: 'Error communicating with AI service',
+    aiNetworkError:
+        'The network connection was interrupted while generating this answer. Check your connection and tap “Retry”.',
+    aiTimeoutError:
+        'The AI service took too long to respond. Please tap “Retry” in a moment.',
+    aiServerError:
+        'The AI service is temporarily unavailable. Please try again in a moment.',
+    aiAuthError:
+        'The AI service could not authenticate this request. Check your AI settings or sign in again.',
+    aiRateLimitError:
+        'The AI service request limit has been reached. Please try again later.',
+    aiRequestError:
+        'The AI service could not process this request. Check your model settings and try again.',
+    aiGenericError:
+        'The AI service could not finish this answer. Please tap “Retry”.',
     answerInterrupted: 'The previous answer was interrupted while generating.',
     askKnowledgeBase: 'Explore your Memora',
     tryExamples:
@@ -1120,6 +1148,13 @@ class LocaleStrings {
     notEnoughInfo: '在记忆海中找不到足够的相关信息来回答此问题。',
     emptyAiResponse: 'AI 服务返回了空响应，请重试。',
     aiError: '与 AI 服务通信出错',
+    aiNetworkError: '生成回答时网络连接中断，请检查网络后点击“重试”重新生成。',
+    aiTimeoutError: 'AI 服务响应时间过长，请稍后点击“重试”重新生成。',
+    aiServerError: 'AI 服务暂时繁忙或不可用，请稍后点击“重试”。',
+    aiAuthError: 'AI 服务认证失败，请检查 AI 配置或重新登录。',
+    aiRateLimitError: 'AI 服务请求次数已达限制，请稍后再试。',
+    aiRequestError: 'AI 服务无法处理这次请求，请检查模型配置后重试。',
+    aiGenericError: 'AI 暂时没有完成这个回答，请点击“重试”重新生成。',
     answerInterrupted: '上次回答在生成中被中断。',
     askKnowledgeBase: '探索我的记忆海',
     tryExamples: '试试：「关于 AI 的核心观点是什么？」或「总结我保存的 Flutter 记忆」',

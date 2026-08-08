@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/embedding_service.dart';
+import '../../data/services/hosted_ai_capabilities.dart';
 import '../../data/services/hosted_ai_service.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/prompt_service.dart';
@@ -59,6 +61,37 @@ final hostedAiEnabledProvider = Provider<bool>((ref) {
   final session = ref.watch(currentSessionProvider);
   return settings?.aiProviderMode == 1 && session != null;
 });
+
+/// Hosted-AI capabilities fetched from the backend (`/ai/capabilities`).
+///
+/// The result is cached in memory (see [HostedAiCapabilitiesCache]) so the
+/// settings screen does not hit the network on every rebuild. On failure the
+/// value falls back to the built-in model list so the UI stays usable.
+final hostedAiCapabilitiesProvider = FutureProvider<HostedAiCapabilities?>((
+  ref,
+) async {
+  final session = ref.watch(currentSessionProvider);
+  if (session == null) return null;
+  final cache = HostedAiCapabilitiesCache.instance;
+  if (cache.isFresh) return cache.value ?? _builtInCapabilities();
+  try {
+    final capabilities = await HostedAiCapabilitiesService(
+      getSession: () => ref.read(currentSessionProvider),
+    ).fetch();
+    cache.store(capabilities);
+    return capabilities;
+  } catch (_) {
+    return _builtInCapabilities();
+  }
+});
+
+HostedAiCapabilities _builtInCapabilities() {
+  return HostedAiCapabilities(
+    chatModels: AppSettings.hostedTextModels,
+    summaryModels: AppSettings.hostedTextModels,
+    visionModels: AppSettings.hostedVisionModels,
+  );
+}
 
 final webSearchServiceProvider = Provider<WebSearchGateway?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
@@ -178,6 +211,22 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
           int maxTokens = 800,
         }) {
           return ai.chat(
+            systemPrompt: systemPrompt,
+            userMessage: userMessage,
+            history: history,
+            temperature: temperature,
+            maxTokens: maxTokens,
+          );
+        },
+    completeStream:
+        ({
+          required String systemPrompt,
+          required String userMessage,
+          List<Map<String, String>> history = const [],
+          double temperature = 0.3,
+          int maxTokens = 800,
+        }) {
+          return ai.chatStream(
             systemPrompt: systemPrompt,
             userMessage: userMessage,
             history: history,

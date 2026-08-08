@@ -1,9 +1,10 @@
-﻿import 'dart:developer' as developer;
+import 'dart:developer' as developer;
 import 'package:html/parser.dart' as html_parser;
 
 import 'default_page_loader.dart';
 import 'http_client.dart';
 import 'page_loader.dart';
+import 'x_page_support.dart';
 
 class ContentExtractor {
   final PageLoader _loader;
@@ -13,9 +14,9 @@ class ContentExtractor {
     PageLoader? loader,
     AppHttpClient? http,
     bool ownsLoader = true,
-  })  : assert(loader == null || http == null),
-        _loader = loader ?? http ?? createDefaultPageLoader(),
-        _ownsLoader = ownsLoader;
+  }) : assert(loader == null || http == null),
+       _loader = loader ?? http ?? createDefaultPageLoader(),
+       _ownsLoader = ownsLoader;
 
   Future<String?> extract(String url) async {
     final page = await _loader.fetch(url);
@@ -24,13 +25,11 @@ class ContentExtractor {
       'finalUrl: ${page?.finalUrl ?? url}',
       name: 'memora.extractor',
     );
-    if (page == null ||
-        !page.isHtml ||
-        fetchedPageLooksBlocked(page)) {
+    if (page == null || !page.isHtml || fetchedPageLooksBlocked(page)) {
       return null;
     }
 
-    final text = _extractText(page.body);
+    final text = _extractText(page.body, pageUrl: page.finalUrl);
     developer.log(
       'extracted text length: ${text?.length ?? 0}',
       name: 'memora.extractor',
@@ -41,14 +40,30 @@ class ContentExtractor {
   /// Extract content from an already-fetched page (avoids a second HTTP call).
   String? fromFetchedPage(FetchedPage page) {
     if (!page.isHtml || fetchedPageLooksBlocked(page)) return null;
-    return _extractText(page.body);
+    return _extractText(page.body, pageUrl: page.finalUrl);
   }
 
-  String? _extractText(String htmlBody) {
+  String? _extractText(String htmlBody, {required String pageUrl}) {
+    final xAssessment = assessXPage(htmlBody, pageUrl);
+    if (xAssessment.isXStatusPage) {
+      if (!xAssessment.hasTargetArticle) return null;
+      if (xAssessment.looksLikeLongArticle) {
+        return xAssessment.hasCompleteArticleBody ? xAssessment.content : null;
+      }
+    }
+
     final document = html_parser.parse(htmlBody);
 
     // Remove non-content elements
-    for (final tag in ['script', 'style', 'nav', 'header', 'footer', 'aside', 'noscript']) {
+    for (final tag in [
+      'script',
+      'style',
+      'nav',
+      'header',
+      'footer',
+      'aside',
+      'noscript',
+    ]) {
       for (final el in document.querySelectorAll(tag)) {
         el.remove();
       }
@@ -75,7 +90,10 @@ class ContentExtractor {
     // Fallback: extract all paragraph text
     final paragraphs = document.querySelectorAll('p');
     if (paragraphs.isNotEmpty) {
-      final text = paragraphs.map((p) => p.text.trim()).where((t) => t.isNotEmpty).join('\n\n');
+      final text = paragraphs
+          .map((p) => p.text.trim())
+          .where((t) => t.isNotEmpty)
+          .join('\n\n');
       if (text.length > 100) return _cleanText(text);
     }
 

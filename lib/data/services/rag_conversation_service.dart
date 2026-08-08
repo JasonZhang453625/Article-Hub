@@ -25,6 +25,15 @@ typedef RagCompletion =
       int maxTokens,
     });
 
+typedef RagCompletionStream =
+    Stream<String> Function({
+      required String systemPrompt,
+      required String userMessage,
+      List<Map<String, String>> history,
+      double temperature,
+      int maxTokens,
+    });
+
 typedef RagCompletionError = String? Function();
 
 typedef RagSaveLog = Future<void> Function(RetrievalLog log);
@@ -138,6 +147,7 @@ class HistoryAwareQueryRewriter {
 class RagConversationService {
   final RagRetrieve _retrieve;
   final RagCompletion _complete;
+  final RagCompletionStream? _completeStream;
   final RagCompletionError? _completionError;
   final RagSaveLog _saveLog;
   final PromptService _prompts;
@@ -150,6 +160,7 @@ class RagConversationService {
   RagConversationService({
     required RagRetrieve retrieve,
     required RagCompletion complete,
+    RagCompletionStream? completeStream,
     RagCompletionError? completionError,
     required RagSaveLog saveLog,
     required PromptService promptService,
@@ -160,6 +171,7 @@ class RagConversationService {
     int webTopK = 5,
   }) : _retrieve = retrieve,
        _complete = complete,
+       _completeStream = completeStream,
        _completionError = completionError,
        _saveLog = saveLog,
        _prompts = promptService,
@@ -175,7 +187,19 @@ class RagConversationService {
              contextWindow: contextWindow,
            );
 
-  Future<RagConversationResult> ask(RagConversationRequest request) async {
+  Future<RagConversationResult> ask(RagConversationRequest request) {
+    return askWithProgress(request);
+  }
+
+  /// Runs one RAG answer and reports model deltas as they arrive.
+  ///
+  /// Retrieval, prompt construction, citation validation, and logging remain
+  /// exactly-once operations around the streamed completion. Callers that do
+  /// not need live text can keep using [ask], which simply omits [onDelta].
+  Future<RagConversationResult> askWithProgress(
+    RagConversationRequest request, {
+    void Function(String delta)? onDelta,
+  }) async {
     final question = request.question.trim();
     final logId = const Uuid().v4();
     final rewrittenQuery = await _queryRewriter.rewrite(
@@ -371,16 +395,19 @@ class RagConversationService {
         maxOutputTokens: maxTokens,
         contextWindowTokens: request.contextWindowTokens,
       );
-      final response = await _complete(
+      final response = await _completeWithProgress(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
         history: history.map((turn) => turn.toMessage()).toList(),
         maxTokens: maxTokens,
         temperature: 0.3,
+        onDelta: onDelta,
       );
 
-      if (response == null || response.trim().isEmpty) {
-        final completionError = _completionError?.call()?.trim();
+      final completionError = _completionError?.call()?.trim();
+      if (response == null ||
+          response.trim().isEmpty ||
+          completionError != null && completionError.isNotEmpty) {
         await _writeLog(
           logId: logId,
           question: question,
@@ -394,6 +421,7 @@ class RagConversationService {
         );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
+          answer: response == null || response.trim().isEmpty ? null : response,
           error: completionError == null || completionError.isEmpty
               ? 'empty response'
               : completionError,
@@ -452,6 +480,41 @@ class RagConversationService {
         logId: logId,
       );
     }
+  }
+
+  Future<String?> _completeWithProgress({
+    required String systemPrompt,
+    required String userMessage,
+    required List<Map<String, String>> history,
+    required double temperature,
+    required int maxTokens,
+    void Function(String delta)? onDelta,
+  }) async {
+    final stream = _completeStream;
+    if (stream == null) {
+      return _complete(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+      );
+    }
+
+    final buffer = StringBuffer();
+    await for (final delta in stream(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+    )) {
+      if (delta.isEmpty) continue;
+      buffer.write(delta);
+      onDelta?.call(delta);
+    }
+    final response = buffer.toString();
+    return response.trim().isEmpty ? null : response;
   }
 
   Future<({Object? error, RetrievalResult? result})> _attemptRetrieval(

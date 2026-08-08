@@ -6,9 +6,13 @@ import '../../data/models/folder.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/auth_service.dart';
 import '../../data/services/sync_apply_service.dart';
+import '../../data/services/sync_conflict_service.dart';
+import '../../data/services/sync_conflict_resolver.dart';
+import '../../data/services/sync_mutation_service.dart';
 import '../../data/services/sync_outbox_service.dart';
 import '../../data/services/sync_protocol.dart';
 import '../../data/services/sync_service.dart';
+import '../../data/services/sync_shadow_service.dart';
 import '../../data/services/sync_state_service.dart';
 import 'article_providers.dart';
 import 'auth_provider.dart';
@@ -24,8 +28,36 @@ final syncStateProvider = Provider<SyncStateService>((ref) {
   return SyncStateService();
 });
 
+final syncShadowProvider = Provider<SyncShadowService>((ref) {
+  return SyncShadowService();
+});
+
+final syncConflictProvider = Provider<SyncConflictService>((ref) {
+  return SyncConflictService();
+});
+
+final syncMutationProvider = Provider<SyncMutationService>((ref) {
+  return SyncMutationService(
+    outbox: ref.watch(syncOutboxProvider),
+    shadow: ref.watch(syncShadowProvider),
+  );
+});
+
+final syncConflictResolverProvider = Provider<SyncConflictResolver>((ref) {
+  return SyncConflictResolver(
+    applier: ref.watch(syncApplyProvider),
+    conflicts: ref.watch(syncConflictProvider),
+    mutations: ref.watch(syncMutationProvider),
+    outbox: ref.watch(syncOutboxProvider),
+  );
+});
+
 final syncApplyProvider = Provider<SyncApplyService>((ref) {
-  return SyncApplyService(outbox: ref.watch(syncOutboxProvider));
+  return SyncApplyService(
+    outbox: ref.watch(syncOutboxProvider),
+    shadow: ref.watch(syncShadowProvider),
+    conflicts: ref.watch(syncConflictProvider),
+  );
 });
 
 final syncServiceProvider = Provider<SyncService>((ref) {
@@ -33,6 +65,8 @@ final syncServiceProvider = Provider<SyncService>((ref) {
     outbox: ref.watch(syncOutboxProvider),
     state: ref.watch(syncStateProvider),
     applier: ref.watch(syncApplyProvider),
+    shadow: ref.watch(syncShadowProvider),
+    conflicts: ref.watch(syncConflictProvider),
   );
 });
 
@@ -77,6 +111,32 @@ final syncOutboxCountProvider = StreamProvider<int>((ref) async* {
   yield* ref.watch(syncOutboxProvider).watchCount(accountId: accountId);
 });
 
+final syncConflictCountProvider = StreamProvider<int>((ref) async* {
+  final accountId = ref.watch(currentSessionProvider)?.user.id;
+  if (accountId == null) {
+    yield 0;
+    return;
+  }
+  yield* ref.watch(syncConflictProvider).watchCount(accountId: accountId);
+});
+
+final syncConflictsProvider = FutureProvider<List<SyncConflictRecord>>((ref) {
+  final accountId = ref.watch(currentSessionProvider)?.user.id;
+  return ref.watch(syncConflictProvider).pending(accountId: accountId);
+});
+
+/// Reads the account only when auth has already been initialized. Local-first
+/// feature tests and signed-out writes must not force AuthService to open its
+/// Hive session box just to enqueue a local mutation.
+String? readInitializedSyncAccountId(Ref ref) {
+  try {
+    if (!ref.exists(currentSessionProvider)) return null;
+    return ref.read(currentSessionProvider)?.user.id;
+  } catch (_) {
+    return null;
+  }
+}
+
 final syncLastSyncAtProvider = FutureProvider<String?>((ref) async {
   final accountId = ref.watch(currentSessionProvider)?.user.id;
   if (accountId == null) return null;
@@ -95,11 +155,9 @@ Future<SyncResult> _runAccountSync(Ref ref, AuthSession session) async {
     return service.sync(session);
   }
 
-  // Protect local-first entities before the first cloud bootstrap. Remote
-  // records with different IDs merge in; equal IDs keep the pending local
-  // version. Settings are deliberately seeded after bootstrap so a fresh
-  // device's defaults never overwrite the account's existing AI config.
-  await _enqueueLocalSnapshot(ref, accountId, includeSettings: false);
+  // Bootstrap first so the server snapshot becomes the three-way merge base.
+  // Local records are then enqueued as mutations; equal IDs are either merged
+  // safely or surfaced in the conflict inbox instead of being overwritten.
   final bootstrap = await service.bootstrapAndApply(session);
   await _enqueueLocalSnapshot(ref, accountId, includeSettings: true);
   final incremental = await service.sync(session);
@@ -117,44 +175,37 @@ Future<void> _enqueueLocalSnapshot(
   required bool includeSettings,
 }) async {
   await ref.read(hiveInitProvider.future);
-  final outbox = ref.read(syncOutboxProvider);
   final repository = await ref.read(articleRepositoryProvider.future);
 
   for (final article in repository.getAll()) {
-    await outbox.enqueue(
-      SyncOutboxRecord.create(
-        accountId: accountId,
-        collection: SyncCollections.articles,
-        itemId: article.id,
-        operation: SyncOperation.upsert,
-        payload: article.toJson(),
-      ),
+    await _enqueueSnapshotMutation(
+      ref,
+      accountId: accountId,
+      collection: SyncCollections.articles,
+      itemId: article.id,
+      payload: article.toJson(),
     );
   }
 
   final folders = await Hive.openBox<Folder>('folders');
   for (final folder in folders.values) {
-    await outbox.enqueue(
-      SyncOutboxRecord.create(
-        accountId: accountId,
-        collection: SyncCollections.folders,
-        itemId: folder.id,
-        operation: SyncOperation.upsert,
-        payload: folder.toJson(),
-      ),
+    await _enqueueSnapshotMutation(
+      ref,
+      accountId: accountId,
+      collection: SyncCollections.folders,
+      itemId: folder.id,
+      payload: folder.toJson(),
     );
   }
 
   final filterGroups = await Hive.openBox<FilterGroup>('filter_groups');
   for (final group in filterGroups.values) {
-    await outbox.enqueue(
-      SyncOutboxRecord.create(
-        accountId: accountId,
-        collection: SyncCollections.filterGroups,
-        itemId: group.id,
-        operation: SyncOperation.upsert,
-        payload: group.toJson(),
-      ),
+    await _enqueueSnapshotMutation(
+      ref,
+      accountId: accountId,
+      collection: SyncCollections.filterGroups,
+      itemId: group.id,
+      payload: group.toJson(),
     );
   }
 
@@ -162,15 +213,41 @@ Future<void> _enqueueLocalSnapshot(
   final settings = await Hive.openBox<AppSettings>('app_settings');
   final current = settings.get('settings');
   if (current == null) return;
-  await outbox.enqueue(
-    SyncOutboxRecord.create(
-      accountId: accountId,
-      collection: SyncCollections.appSettings,
-      itemId: 'settings',
-      operation: SyncOperation.upsert,
-      payload: current.toSyncJson(),
-    ),
+  await _enqueueSnapshotMutation(
+    ref,
+    accountId: accountId,
+    collection: SyncCollections.appSettings,
+    itemId: 'settings',
+    payload: current.toSyncJson(),
   );
+}
+
+Future<void> _enqueueSnapshotMutation(
+  Ref ref, {
+  required String accountId,
+  required String collection,
+  required String itemId,
+  required Map<String, dynamic> payload,
+}) async {
+  final base = await ref
+      .read(syncShadowProvider)
+      .get(accountId: accountId, collection: collection, itemId: itemId);
+  final changedPaths = jsonChangedPaths(base?.payload, payload);
+  if (base != null && !base.deleted && changedPaths.isEmpty) return;
+  await ref
+      .read(syncOutboxProvider)
+      .enqueue(
+        SyncOutboxRecord.create(
+          accountId: accountId,
+          collection: collection,
+          itemId: itemId,
+          operation: SyncOperation.upsert,
+          payload: payload,
+          baseEntityRevision: base?.entityRevision ?? 0,
+          basePayload: base?.payload,
+          changedPaths: changedPaths,
+        ),
+      );
 }
 
 class _SyncCoordinator {

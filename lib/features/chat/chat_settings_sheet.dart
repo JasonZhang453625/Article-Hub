@@ -38,86 +38,114 @@ class _ChatSettingsSheetState extends State<ChatSettingsSheet> {
     final s = widget.s;
 
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: EdgeInsets.fromLTRB(24, 24, 24, 24 + bottom),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(s.chatSettings, style: theme.textTheme.titleMedium),
-          const SizedBox(height: 20),
-          Text(s.chatAnswerLength, style: theme.textTheme.labelLarge),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-              child: _SettingsChip(
-                icon: Icons.short_text_rounded, label: s.chatShort,
-                selected: _answerLength == 0,
-                onTap: () => setState(() => _answerLength = 0),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _SettingsChip(
-                icon: Icons.notes_rounded, label: s.chatDetailed,
-                selected: _answerLength == 1,
-                onTap: () => setState(() => _answerLength = 1),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 20),
-          Text(s.chatKnowledgeSource, style: theme.textTheme.labelLarge),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-              child: _SettingsChip(
-                icon: Icons.library_books_rounded, label: s.chatKnowledgeBaseOnly,
-                selected: _knowledgeSource == 0,
-                onTap: () => setState(() => _knowledgeSource = 0),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _SettingsChip(
-                icon: Icons.public_rounded, label: s.chatKbPlusGeneral,
-                selected: _knowledgeSource == 1,
-                onTap: () => setState(() => _knowledgeSource = 1),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _applying
-                  ? null
-                  : () async {
-                      setState(() => _applying = true);
-                      try {
-                        await widget.onChanged(_answerLength, _knowledgeSource);
-                        if (!context.mounted) return;
-                        Navigator.pop(context);
-                      } finally {
-                        if (mounted) setState(() => _applying = false);
-                      }
-                    },
-              child: _applying
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Text(s.chatApply),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(24, 12, 24, 24 + bottom),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurfaceVariant.withValues(
+                      alpha: 0.4,
                     ),
-            ),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Text(s.chatSettings, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 20),
+              Text(s.chatAnswerLength, style: theme.textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _SettingsChip(
+                      icon: Icons.short_text_rounded,
+                      label: s.chatShort,
+                      selected: _answerLength == 0,
+                      onTap: () => setState(() => _answerLength = 0),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _SettingsChip(
+                      icon: Icons.notes_rounded,
+                      label: s.chatDetailed,
+                      selected: _answerLength == 1,
+                      onTap: () => setState(() => _answerLength = 1),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Text(s.chatKnowledgeSource, style: theme.textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _SettingsChip(
+                      icon: Icons.library_books_rounded,
+                      label: s.chatKnowledgeBaseOnly,
+                      selected: _knowledgeSource == 0,
+                      onTap: () => setState(() => _knowledgeSource = 0),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _SettingsChip(
+                      icon: Icons.public_rounded,
+                      label: s.chatKbPlusGeneral,
+                      selected: _knowledgeSource == 1,
+                      onTap: () => setState(() => _knowledgeSource = 1),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _applying
+                      ? null
+                      : () async {
+                          setState(() => _applying = true);
+                          try {
+                            await widget.onChanged(
+                              _answerLength,
+                              _knowledgeSource,
+                            );
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                          } finally {
+                            if (mounted) setState(() => _applying = false);
+                          }
+                        },
+                  child: _applying
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(s.chatApply),
+                        ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -159,14 +187,21 @@ class _SettingsChip extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 18,
-                color: selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant),
+            Icon(
+              icon,
+              size: 18,
+              color: selected
+                  ? colorScheme.onPrimaryContainer
+                  : colorScheme.onSurfaceVariant,
+            ),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
                 label,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+                  color: selected
+                      ? colorScheme.onPrimaryContainer
+                      : colorScheme.onSurfaceVariant,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                 ),
                 overflow: TextOverflow.ellipsis,

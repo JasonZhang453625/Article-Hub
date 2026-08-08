@@ -343,7 +343,9 @@ class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
   @override
   Widget build(BuildContext context) {
     final pending = ref.watch(syncOutboxCountProvider);
+    final conflicts = ref.watch(syncConflictCountProvider);
     final lastSync = ref.watch(syncLastSyncAtProvider);
+    final cloudSyncEnabled = ref.watch(cloudSyncEnabledProvider);
 
     final pendingText = pending.when(
       data: (count) => widget.localize('$count 项待上传', '$count pending'),
@@ -355,6 +357,7 @@ class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
       loading: () => widget.localize('检查中', 'Checking'),
       error: (error, stackTrace) => widget.localize('读取失败', 'Unavailable'),
     );
+    final conflictCount = conflicts.valueOrNull ?? 0;
 
     return Container(
       width: double.infinity,
@@ -410,6 +413,44 @@ class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
             ],
           ),
           const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.localize('自动同步', 'Auto sync'),
+                      style: widget.theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.localize(
+                        cloudSyncEnabled ? '已开启，后台自动同步' : '已关闭，仅手动同步',
+                        cloudSyncEnabled
+                            ? 'On — syncs in the background'
+                            : 'Off — manual sync only',
+                      ),
+                      style: widget.theme.textTheme.bodySmall?.copyWith(
+                        color: widget.isDark
+                            ? Colors.white54
+                            : const Color(0xFF6C8594),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: cloudSyncEnabled,
+                onChanged: (value) => ref
+                    .read(settingsProvider.notifier)
+                    .setCloudSyncEnabled(value),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           _SyncMetaRow(
             icon: Icons.schedule_rounded,
             label: widget.localize('上次同步', 'Last sync'),
@@ -417,6 +458,41 @@ class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
             theme: widget.theme,
             isDark: widget.isDark,
           ),
+          if (conflictCount > 0) ...[
+            const SizedBox(height: 12),
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => context.push(AppRoutes.settingsSyncConflicts),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: widget.theme.colorScheme.errorContainer.withValues(
+                    alpha: widget.isDark ? 0.35 : 0.7,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: widget.theme.colorScheme.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.localize(
+                          '$conflictCount 项同步冲突待处理',
+                          '$conflictCount sync conflicts need review',
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -447,14 +523,16 @@ class _SyncStatusCardState extends ConsumerState<_SyncStatusCard> {
       ref.invalidate(syncNowProvider);
       final result = await ref.read(syncNowProvider.future);
       ref.invalidate(syncOutboxCountProvider);
+      ref.invalidate(syncConflictCountProvider);
+      ref.invalidate(syncConflictsProvider);
       ref.invalidate(syncLastSyncAtProvider);
       if (!mounted) return;
 
       final message = result == null
           ? widget.localize('请先登录账号', 'Sign in first')
           : widget.localize(
-              '同步完成：上传 ${result.pushed}，接收 ${result.applied}/${result.pulled}',
-              'Synced: pushed ${result.pushed}, applied ${result.applied}/${result.pulled}',
+              '同步完成：上传 ${result.pushed}，接收 ${result.applied}/${result.pulled}，冲突 ${result.conflicts}',
+              'Synced: pushed ${result.pushed}, applied ${result.applied}/${result.pulled}, conflicts ${result.conflicts}',
             );
       showAppSnackBar(context, message: message);
     } catch (error) {

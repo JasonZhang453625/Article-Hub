@@ -46,6 +46,20 @@ abstract interface class AiGateway {
     double temperature = 0.3,
     int maxTokens = 800,
   });
+
+  /// Streams assistant text as soon as the provider sends each SSE delta.
+  ///
+  /// Implementations should keep [lastError] and [lastStatusCode] updated when
+  /// the stream cannot be completed. A caller may still receive a few chunks
+  /// before a transport error, so partial text must be treated as usable UI
+  /// state rather than discarded automatically.
+  Stream<String> chatStream({
+    required String systemPrompt,
+    required String userMessage,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  });
 }
 
 class AiService implements AiGateway {
@@ -415,27 +429,246 @@ class AiService implements AiGateway {
     double temperature = 0.3,
     int maxTokens = 800,
   }) async {
-    if (!isConfigured) return null;
+    if (!isConfigured) {
+      lastError = 'AI service is not configured';
+      return null;
+    }
+    final buffer = StringBuffer();
+    await for (final chunk in chatStream(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+    )) {
+      buffer.write(chunk);
+    }
+    final text = buffer.toString().trim();
+    if (text.isEmpty) {
+      lastError ??= 'AI response content was empty';
+      return null;
+    }
+    return text;
+  }
+
+  @override
+  Stream<String> chatStream({
+    required String systemPrompt,
+    required String userMessage,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  }) async* {
+    if (!isConfigured) {
+      lastError = 'AI service is not configured';
+      return;
+    }
+
     final uri = _chatUri();
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': systemPrompt},
       ...history,
       {'role': 'user', 'content': userMessage},
     ];
-
-    developer.log(
-      'chat() usesMaxCompletionTokens=$_usesMaxCompletionTokens '
-      'model="$model" baseUrl="$baseUrl"',
-      name: 'memora.ai',
-    );
     final payload = <String, dynamic>{
       'model': model,
       'messages': messages,
       'temperature': temperature,
+      'stream': true,
     };
     payload.addAll(_outputTokenOptions(maxTokens));
 
-    return _postChat(uri, jsonEncode(payload));
+    developer.log(
+      'chatStream() usesMaxCompletionTokens=$_usesMaxCompletionTokens '
+      'model="$model" baseUrl="$baseUrl"',
+      name: 'memora.ai',
+    );
+
+    lastError = null;
+    lastStatusCode = null;
+    final body = jsonEncode(payload);
+
+    for (var attempt = 0; attempt <= _maxTransientRetries; attempt++) {
+      var emitted = false;
+      final client = http.Client();
+      try {
+        final request = http.Request('POST', uri)
+          ..headers.addAll({
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+            'Authorization': 'Bearer $apiKey',
+          })
+          ..body = body;
+        final response = await client.send(request).timeout(timeout);
+        lastStatusCode = response.statusCode;
+        developer.log(
+          'Streaming API response status: ${response.statusCode}, url: $uri',
+          name: 'memora.ai',
+        );
+
+        if (response.statusCode != 200) {
+          final responseBody = await response.stream.bytesToString().timeout(
+            timeout,
+          );
+          final error =
+              'HTTP ${response.statusCode}: ${_responseError(responseBody)}';
+          developer.log(
+            'Streaming AI request failed with HTTP ${response.statusCode}',
+            name: 'memora.ai',
+          );
+          if (_isTransientStatus(response.statusCode, responseBody) &&
+              attempt < _maxTransientRetries) {
+            await _waitBeforeRetry(attempt, error);
+            continue;
+          }
+          lastError = error;
+          return;
+        }
+
+        await for (final chunk in _decodeChatStream(response)) {
+          if (chunk.isEmpty) continue;
+          emitted = true;
+          yield chunk;
+        }
+        if (!emitted) {
+          lastError = 'AI response content was empty';
+        }
+        return;
+      } on TimeoutException {
+        final error = 'AI request timed out after ${timeout.inSeconds} seconds';
+        if (!emitted && attempt < _maxTransientRetries) {
+          await _waitBeforeRetry(attempt, error);
+          continue;
+        }
+        lastError = error;
+        developer.log(
+          'Streaming AI API timeout ($timeout), url: $uri',
+          name: 'memora.ai',
+        );
+        return;
+      } catch (e, st) {
+        final error = 'AI request failed: $e';
+        if (!emitted &&
+            _isTransientException(e) &&
+            attempt < _maxTransientRetries) {
+          await _waitBeforeRetry(attempt, error);
+          continue;
+        }
+        lastError = error;
+        developer.log(
+          'Streaming API call error',
+          name: 'memora.ai',
+          error: e,
+          stackTrace: st,
+        );
+        return;
+      } finally {
+        client.close();
+      }
+    }
+  }
+
+  /// Decodes both the normal OpenAI-compatible SSE response and a JSON
+  /// response from older providers that ignore `stream: true`. The latter is
+  /// a compatibility fallback; normal chat requests always ask for SSE.
+  Stream<String> _decodeChatStream(http.StreamedResponse response) async* {
+    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+    if (!contentType.contains('text/event-stream')) {
+      final body = await response.stream.bytesToString().timeout(timeout);
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic>) return;
+      _recordUsage(decoded);
+      final text = _chatTextFromJson(decoded);
+      if (text != null && text.isNotEmpty) yield text;
+      return;
+    }
+
+    final eventData = StringBuffer();
+    var done = false;
+    await for (final line
+        in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .timeout(timeout)) {
+      if (line.startsWith(':')) continue;
+      if (line.startsWith('data:')) {
+        eventData.write(line.substring(5).trimLeft());
+        eventData.write('\n');
+        continue;
+      }
+      if (line.trim().isEmpty && eventData.length > 0) {
+        final data = eventData.toString().trim();
+        eventData.clear();
+        if (data == '[DONE]') {
+          done = true;
+          break;
+        }
+        final text = _chatTextFromSseData(data);
+        if (text != null && text.isNotEmpty) yield text;
+      }
+    }
+
+    if (!done && eventData.length > 0) {
+      final data = eventData.toString().trim();
+      if (data != '[DONE]') {
+        final text = _chatTextFromSseData(data);
+        if (text != null && text.isNotEmpty) yield text;
+      }
+    }
+    if (!done) {
+      throw http.ClientException(
+        'AI stream ended before [DONE]',
+        response.request?.url,
+      );
+    }
+  }
+
+  String? _chatTextFromSseData(String data) {
+    try {
+      final decoded = jsonDecode(data);
+      if (decoded is! Map<String, dynamic>) return null;
+      _recordUsage(decoded);
+      return _chatTextFromJson(decoded);
+    } catch (_) {
+      // A malformed SSE event is ignored so one provider-side keepalive or
+      // extension event cannot destroy the rest of an otherwise valid stream.
+      return null;
+    }
+  }
+
+  String? _chatTextFromJson(Map<String, dynamic> json) {
+    final choices = json['choices'];
+    if (choices is! List || choices.isEmpty || choices.first is! Map) {
+      return null;
+    }
+    final choice = choices.first as Map;
+    final delta = choice['delta'];
+    final message = choice['message'];
+    final content = delta is Map
+        ? delta['content']
+        : message is Map
+        ? message['content']
+        : choice['text'];
+    if (content is String) return content;
+    if (content is List) {
+      final parts = content
+          .whereType<Map>()
+          .map((part) => part['text'])
+          .whereType<String>()
+          .join();
+      return parts.isEmpty ? null : parts;
+    }
+    return null;
+  }
+
+  void _recordUsage(Map<String, dynamic> json) {
+    if (onTokensUsed == null) return;
+    final usage = json['usage'];
+    if (usage is! Map) return;
+    final totalTokens = (usage['total_tokens'] as num?)?.toInt();
+    if (totalTokens != null && totalTokens > 0) {
+      onTokensUsed!(totalTokens);
+    }
   }
 
   Future<String?> _postChat(Uri uri, String body) async {
@@ -518,7 +751,12 @@ class AiService implements AiGateway {
         );
         return null;
       } catch (e, st) {
-        lastError = 'AI request failed: $e';
+        final error = 'AI request failed: $e';
+        if (_isTransientException(e) && attempt < _maxTransientRetries) {
+          await _waitBeforeRetry(attempt, error);
+          continue;
+        }
+        lastError = error;
         developer.log(
           'API call error',
           name: 'memora.ai',
@@ -547,6 +785,17 @@ class AiService implements AiGateway {
       }
     } catch (_) {}
     return null;
+  }
+
+  bool _isTransientException(Object error) {
+    final message = error.toString().toLowerCase();
+    return error is http.ClientException ||
+        message.contains('connection abort') ||
+        message.contains('connection reset') ||
+        message.contains('connection refused') ||
+        message.contains('broken pipe') ||
+        message.contains('failed host lookup') ||
+        message.contains('network is unreachable');
   }
 
   Future<void> _waitBeforeRetry(int attempt, String reason) async {

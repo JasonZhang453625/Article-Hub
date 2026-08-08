@@ -1,7 +1,9 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:html/parser.dart' as html_parser;
+
+import 'x_page_support.dart';
 
 enum PageLoadSource { http, webView }
 
@@ -71,6 +73,22 @@ bool fetchedPageHasUsableDocument(
       bodyText.length >= minimumTextLength;
 }
 
+bool fetchedPageHasUsableContentForUrl(FetchedPage page, String requestedUrl) {
+  if (!fetchedPageHasUsableDocument(page)) return false;
+
+  final finalUrlTarget = XStatusTarget.tryParse(page.finalUrl);
+  final target = finalUrlTarget ?? XStatusTarget.tryParse(requestedUrl);
+  if (target == null) return true;
+
+  final assessment = assessXPage(
+    page.body,
+    finalUrlTarget == null ? requestedUrl : page.finalUrl,
+  );
+  if (!assessment.hasTargetArticle) return false;
+  if (!assessment.looksLikeLongArticle) return true;
+  return assessment.hasCompleteArticleBody;
+}
+
 class ResilientPageLoader implements PageLoader {
   final PageLoader primary;
   final PageLoader fallback;
@@ -85,7 +103,7 @@ class ResilientPageLoader implements PageLoader {
   @override
   Future<FetchedPage?> fetch(String url) async {
     final direct = await primary.fetch(url);
-    if (direct != null && fetchedPageHasUsableDocument(direct)) {
+    if (direct != null && fetchedPageHasUsableContentForUrl(direct, url)) {
       return direct;
     }
 
@@ -103,7 +121,8 @@ class ResilientPageLoader implements PageLoader {
     }
 
     final recovered = await fallback.fetch(url);
-    if (recovered == null || !fetchedPageHasUsableDocument(recovered)) {
+    if (recovered == null ||
+        !fetchedPageHasUsableContentForUrl(recovered, url)) {
       developer.log(
         'HTTP and background WebView both failed, url: $url',
         name: 'memora.page_loader',

@@ -400,6 +400,35 @@ void main() {
     expect(ai.lastError, isNull);
   });
 
+  test('chat retries a connection abort once and then succeeds', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      if (calls == 1) {
+        throw http.ClientException(
+          'Software caused connection abort',
+          request.url,
+        );
+      }
+      return _chatResponse('recovered after background switch');
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      retryDelay: Duration.zero,
+    );
+
+    final result = await http.runWithClient(
+      () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+      () => client,
+    );
+
+    expect(result, 'recovered after background switch');
+    expect(calls, 2);
+    expect(ai.lastError, isNull);
+  });
+
   test('chat does not retry HTTP 400 and preserves provider details', () async {
     var calls = 0;
     final client = MockClient((request) async {
@@ -426,6 +455,160 @@ void main() {
     expect(result, isNull);
     expect(calls, 1);
     expect(ai.lastError, 'HTTP 400: invalid token parameter');
+  });
+
+  test('chatStream sends SSE mode and yields each assistant delta', () async {
+    late Map<String, dynamic> payload;
+    late Map<String, String> headers;
+    final client = MockClient.streaming((request, bodyStream) async {
+      payload =
+          jsonDecode(await bodyStream.bytesToString()) as Map<String, dynamic>;
+      headers = request.headers;
+      return http.StreamedResponse(
+        Stream<List<int>>.fromIterable([
+          utf8.encode('data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'),
+          utf8.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+          utf8.encode('data: {"choices":[{"delta":{"content":" world"}}]}\n\n'),
+          utf8.encode(
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+            '"usage":{"total_tokens":12}}\n\n',
+          ),
+          utf8.encode('data: [DONE]\n\n'),
+        ]),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+    );
+    var usedTokens = 0;
+    ai.onTokensUsed = (tokens) => usedTokens = tokens;
+
+    final chunks = await http.runWithClient(
+      () => ai
+          .chatStream(systemPrompt: 'system', userMessage: 'question')
+          .toList(),
+      () => client,
+    );
+
+    expect(chunks, ['Hello', ' world']);
+    expect(payload['stream'], isTrue);
+    expect(headers['accept'], 'text/event-stream');
+    expect(usedTokens, 12);
+    expect(ai.lastError, isNull);
+  });
+
+  test('chatStream retries a pre-token transient HTTP response', () async {
+    var calls = 0;
+    final client = MockClient.streaming((request, _) async {
+      calls++;
+      if (calls == 1) {
+        return http.StreamedResponse(
+          Stream<List<int>>.fromIterable([
+            utf8.encode('{"error":{"message":"temporary"}}'),
+          ]),
+          503,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.fromIterable([
+          utf8.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'),
+          utf8.encode('data: [DONE]\n\n'),
+        ]),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      retryDelay: Duration.zero,
+    );
+
+    final chunks = await http.runWithClient(
+      () => ai
+          .chatStream(systemPrompt: 'system', userMessage: 'question')
+          .toList(),
+      () => client,
+    );
+
+    expect(chunks, ['ok']);
+    expect(calls, 2);
+    expect(ai.lastError, isNull);
+  });
+
+  test(
+    'chatStream keeps partial output and does not replay after a stream abort',
+    () async {
+      var calls = 0;
+      Stream<List<int>> brokenBody() async* {
+        yield utf8.encode(
+          'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+        );
+        throw http.ClientException('Software caused connection abort');
+      }
+
+      final client = MockClient.streaming((request, _) async {
+        calls++;
+        return http.StreamedResponse(
+          brokenBody(),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final ai = AiService(
+        baseUrl: 'https://example.com/v1',
+        apiKey: 'test-key',
+        model: 'gpt-4o-mini',
+        retryDelay: Duration.zero,
+      );
+
+      final chunks = await http.runWithClient(
+        () => ai
+            .chatStream(systemPrompt: 'system', userMessage: 'question')
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks, ['partial']);
+      expect(calls, 1);
+      expect(ai.lastError, contains('connection abort'));
+    },
+  );
+
+  test('chatStream rejects a clean EOF without the SSE done marker', () async {
+    final client = MockClient.streaming((request, _) async {
+      return http.StreamedResponse(
+        Stream<List<int>>.fromIterable([
+          utf8.encode(
+            'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+          ),
+        ]),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final ai = AiService(
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      retryDelay: Duration.zero,
+    );
+
+    final chunks = await http.runWithClient(
+      () => ai
+          .chatStream(systemPrompt: 'system', userMessage: 'question')
+          .toList(),
+      () => client,
+    );
+
+    expect(chunks, ['partial']);
+    expect(ai.lastError, contains('ended before [DONE]'));
   });
 }
 

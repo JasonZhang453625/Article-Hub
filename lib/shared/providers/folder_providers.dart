@@ -50,13 +50,11 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
     final newParentId = deleted?.parentId;
     await box.delete(id);
     await _ref
-        .read(syncOutboxProvider)
-        .enqueue(
-          SyncOutboxRecord.create(
-            collection: SyncCollections.folders,
-            itemId: id,
-            operation: SyncOperation.delete,
-          ),
+        .read(syncMutationProvider)
+        .delete(
+          accountId: readInitializedSyncAccountId(_ref),
+          collection: SyncCollections.folders,
+          itemId: id,
         );
     for (final folder in box.values.toList()) {
       if (folder.parentId == id) {
@@ -73,14 +71,12 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
 
   Future<void> _enqueueFolder(Folder folder) {
     return _ref
-        .read(syncOutboxProvider)
-        .enqueue(
-          SyncOutboxRecord.create(
-            collection: SyncCollections.folders,
-            itemId: folder.id,
-            operation: SyncOperation.upsert,
-            payload: folder.toJson(),
-          ),
+        .read(syncMutationProvider)
+        .upsert(
+          accountId: readInitializedSyncAccountId(_ref),
+          collection: SyncCollections.folders,
+          itemId: folder.id,
+          payload: folder.toJson(),
         );
   }
 }

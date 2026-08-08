@@ -74,6 +74,22 @@ class ChatMessageRecord {
       webUrls: webUrls ?? this.webUrls,
     );
   }
+
+  /// Resets only the generated answer while keeping the original message id
+  /// and question. Retrying in place avoids duplicating the user's question
+  /// and prevents stale citations, feedback, or provider metadata from being
+  /// shown while the new answer is being generated.
+  ChatMessageRecord retrying() {
+    return ChatMessageRecord(
+      id: id,
+      threadId: threadId,
+      role: role,
+      content: '',
+      createdAt: createdAt,
+      query: query,
+      status: ChatMessageStatus.sending,
+    );
+  }
 }
 
 class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {

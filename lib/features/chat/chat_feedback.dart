@@ -6,8 +6,16 @@ import 'chat_message.dart';
 class ChatFeedbackRow extends StatefulWidget {
   final ChatMessage message;
   final ValueChanged<int> onFeedback;
+  final ValueChanged<ChatMessage> onRetry;
+  final String retryLabel;
 
-  const ChatFeedbackRow({super.key, required this.message, required this.onFeedback});
+  const ChatFeedbackRow({
+    super.key,
+    required this.message,
+    required this.onFeedback,
+    required this.onRetry,
+    required this.retryLabel,
+  });
 
   @override
   State<ChatFeedbackRow> createState() => _ChatFeedbackRowState();
@@ -50,6 +58,18 @@ class _ChatFeedbackRowState extends State<ChatFeedbackRow> {
           },
         ),
         const SizedBox(width: 4),
+        Tooltip(
+          message: widget.retryLabel,
+          child: _FeedbackButton(
+            key: ValueKey('chat-retry-button-${widget.message.id}'),
+            icon: Icons.refresh_outlined,
+            activeIcon: Icons.refresh_rounded,
+            isActive: false,
+            activeColor: colorScheme.primary,
+            onTap: () => widget.onRetry(widget.message),
+          ),
+        ),
+        const SizedBox(width: 4),
         _FeedbackButton(
           icon: Icons.share_outlined,
           activeIcon: Icons.share_rounded,
@@ -72,6 +92,7 @@ class _FeedbackButton extends StatelessWidget {
   final VoidCallback onTap;
 
   const _FeedbackButton({
+    super.key,
     required this.icon,
     required this.activeIcon,
     required this.isActive,

@@ -1,10 +1,11 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:ui';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'page_loader.dart';
+import 'x_page_support.dart';
 
 const articleHubMobileUserAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) '
@@ -20,12 +21,14 @@ class HeadlessWebViewPageLoader implements PageLoader {
 
   final Duration timeout;
   final Duration domWait;
+  final Duration xDomWait;
   final Duration pollInterval;
   final SerialPageLoadCoordinator coordinator;
 
   HeadlessWebViewPageLoader({
     this.timeout = const Duration(seconds: 20),
     this.domWait = const Duration(seconds: 5),
+    this.xDomWait = const Duration(seconds: 10),
     this.pollInterval = const Duration(milliseconds: 500),
     SerialPageLoadCoordinator? coordinator,
   }) : coordinator = coordinator ?? _headlessWebViewCoordinator;
@@ -124,33 +127,24 @@ class HeadlessWebViewPageLoader implements PageLoader {
         );
         return null;
       }
-      final domDeadline = DateTime.now().add(domWait);
+      final xTarget = XStatusTarget.tryParse(url);
+      final effectiveDomWait = xTarget == null ? domWait : xDomWait;
+      final domStartedAt = DateTime.now();
+      final domDeadline = domStartedAt.add(effectiveDomWait);
       final deadline = domDeadline.isBefore(totalDeadline)
           ? domDeadline
           : totalDeadline;
       int? previousLength;
       var stableReadings = 0;
       Map<String, dynamic>? snapshot;
+      XWebViewReadiness? xReadiness;
 
       while (DateTime.now().isBefore(deadline)) {
         final raw = await beforeDeadline(
-          controller.evaluateJavascript(
-            source: '''
-          (() => {
-            const text = (document.body?.innerText || '').trim();
-            return {
-              title: document.title || '',
-              textLength: text.length,
-              textSample: text.slice(0, 2000),
-              readyState: document.readyState
-            };
-          })()
-        ''',
-          ),
+          controller.evaluateJavascript(source: _pageSnapshotScript(xTarget)),
         );
         if (raw is Map) {
           snapshot = Map<String, dynamic>.from(raw);
-          final length = snapshot['textLength'] as int? ?? 0;
           final title = snapshot['title'] as String? ?? '';
           final sample = snapshot['textSample'] as String? ?? '';
           if (looksLikeBlockedPage(title, sample)) {
@@ -161,20 +155,47 @@ class HeadlessWebViewPageLoader implements PageLoader {
             return null;
           }
 
-          if (length >= 100 &&
+          var length = snapshot['textLength'] as int? ?? 0;
+          var canStabilize = length >= 100;
+          if (xTarget != null) {
+            xReadiness = XWebViewReadiness.fromSnapshot(snapshot);
+            length = xReadiness.observedTextLength;
+            canStabilize = xReadiness.hasUsableTarget;
+
+            // A normal X post can appear before X finishes deciding whether
+            // the target opens into a long-form article. Give X a short grace
+            // period before accepting the normal-post path. Long articles are
+            // accepted as soon as their dedicated body is ready and stable.
+            final normalPostGraceElapsed =
+                DateTime.now().difference(domStartedAt) >=
+                const Duration(seconds: 3);
+            if (!xReadiness.longArticleHint && !normalPostGraceElapsed) {
+              canStabilize = false;
+            }
+          }
+
+          if (canStabilize &&
               previousLength != null &&
               (length - previousLength).abs() <= 20) {
             stableReadings++;
           } else {
             stableReadings = 0;
           }
-          previousLength = length;
+          previousLength = canStabilize ? length : null;
           if (stableReadings >= 2) break;
         }
         await Future<void>.delayed(pollInterval);
       }
 
       final textLength = snapshot?['textLength'] as int? ?? 0;
+      if (xTarget != null &&
+          (xReadiness == null || !xReadiness.hasUsableTarget)) {
+        developer.log(
+          'background WebView X target article did not become ready, url: $url',
+          name: 'memora.webview',
+        );
+        return null;
+      }
       if (textLength < 100) {
         developer.log(
           'background WebView body too short: $textLength chars, url: $url',
@@ -245,4 +266,75 @@ class HeadlessWebViewPageLoader implements PageLoader {
 
   @override
   void dispose() {}
+}
+
+String _pageSnapshotScript(XStatusTarget? xTarget) {
+  if (xTarget == null) {
+    return '''
+      (() => {
+        const text = (document.body?.innerText || '').trim();
+        return {
+          title: document.title || '',
+          textLength: text.length,
+          textSample: text.slice(0, 2000),
+          readyState: document.readyState
+        };
+      })()
+    ''';
+  }
+
+  final statusId = xTarget.statusId;
+  return '''
+    (() => {
+      const statusId = '$statusId';
+      const pageText = (document.body?.innerText || '').trim();
+      const articles = Array.from(document.querySelectorAll('article'));
+      const linksToTarget = (article) =>
+        Array.from(article.querySelectorAll('a[href]')).some((link) => {
+          const href = link.getAttribute('href') || '';
+          try {
+            const path = new URL(href, location.href).pathname;
+            const marker = '/status/' + statusId;
+            return path.endsWith(marker) || path.includes(marker + '/');
+          } catch (_) {
+            return false;
+          }
+        });
+      const target = articles.find(linksToTarget) ||
+        articles.find((article) =>
+          article.querySelector('.x-article-body') ||
+          article.querySelector('h1')) || null;
+      const explicitBody = target?.querySelector('.x-article-body') || null;
+      const heading = (target?.querySelector('h1')?.innerText || '').trim();
+      const hasCover = !!target?.querySelector('img[alt="Article cover image"]');
+      const root = explicitBody || target;
+      const blocks = root
+        ? Array.from(root.querySelectorAll('h2, h3, h4, p, li, blockquote'))
+            .map((element) => (element.innerText || '').trim())
+            .filter(Boolean)
+        : [];
+      const articleText = explicitBody
+        ? (explicitBody.innerText || '').trim()
+        : blocks.join('\\n\\n').trim();
+      const longArticleHint = !!explicitBody || !!heading || hasCover;
+      const explicitReady = !!explicitBody &&
+        articleText.length >= $xLongArticleMinimumTextLength &&
+        (blocks.length >= 2 || articleText.length >= 500);
+      const semanticReady = !explicitBody && !!heading &&
+        blocks.length >= $xLongArticleSemanticFallbackMinimumBlocks &&
+        articleText.length >= $xLongArticleSemanticFallbackMinimumTextLength;
+      return {
+        title: document.title || '',
+        textLength: pageText.length,
+        textSample: pageText.slice(0, 2000),
+        readyState: document.readyState,
+        xTargetFound: !!target,
+        xLongArticleHint: longArticleHint,
+        xArticleReady: explicitReady || semanticReady,
+        xTargetTextLength: (target?.innerText || '').trim().length,
+        xArticleTextLength: articleText.length,
+        xArticleBlockCount: blocks.length
+      };
+    })()
+  ''';
 }

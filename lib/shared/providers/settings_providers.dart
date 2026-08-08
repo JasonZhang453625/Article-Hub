@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../data/models/settings.dart';
 import '../../data/models/source_platform.dart';
+import '../../data/services/hosted_ai_capabilities.dart';
 import '../../data/services/sync_outbox_service.dart';
 import 'article_providers.dart';
 import 'auth_provider.dart';
@@ -58,14 +59,12 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     _box ??= await Hive.openBox<AppSettings>(_boxName);
     await _box!.put(_key, settings);
     await _ref
-        .read(syncOutboxProvider)
-        .enqueue(
-          SyncOutboxRecord.create(
-            collection: SyncCollections.appSettings,
-            itemId: _key,
-            operation: SyncOperation.upsert,
-            payload: settings.toSyncJson(),
-          ),
+        .read(syncMutationProvider)
+        .upsert(
+          accountId: readInitializedSyncAccountId(_ref),
+          collection: SyncCollections.appSettings,
+          itemId: _key,
+          payload: settings.toSyncJson(),
         );
     state = AsyncValue.data(settings);
   }
@@ -187,13 +186,23 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   }
 
   String _hostedTextModel(String value) {
-    return AppSettings.hostedTextModels.contains(value)
+    final capabilities = HostedAiCapabilitiesCache.instance.value;
+    final serverTextModels = <String>{
+      ...?capabilities?.chatModels,
+      ...?capabilities?.summaryModels,
+    };
+    return AppSettings.hostedTextModels.contains(value) ||
+            serverTextModels.contains(value)
         ? value
         : AppSettings.defaultHostedTextModel;
   }
 
   String _hostedVisionModel(String value) {
-    return AppSettings.hostedVisionModels.contains(value)
+    return AppSettings.hostedVisionModels.contains(value) ||
+            HostedAiCapabilitiesCache.instance.value?.visionModels.contains(
+                  value,
+                ) ==
+                true
         ? value
         : AppSettings.defaultHostedVisionModel;
   }
@@ -251,6 +260,11 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   Future<void> setMemorySortNewestFirst(bool newestFirst) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(memorySortNewestFirst: newestFirst));
+  }
+
+  Future<void> setCloudSyncEnabled(bool enabled) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(current.copyWith(cloudSyncEnabled: enabled));
   }
 
   Future<void> setEmbeddingConfig({
@@ -437,6 +451,14 @@ final memorySortNewestFirstProvider = Provider<bool>((ref) {
   return ref
       .watch(settingsProvider)
       .maybeWhen(data: (s) => s.memorySortNewestFirst, orElse: () => true);
+});
+
+/// When false (the default), automatic background cloud sync is paused
+/// (manual sync via the account screen still works).
+final cloudSyncEnabledProvider = Provider<bool>((ref) {
+  return ref
+      .watch(settingsProvider)
+      .maybeWhen(data: (s) => s.cloudSyncEnabled, orElse: () => false);
 });
 
 /// Computed days since first launch.
