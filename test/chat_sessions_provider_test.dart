@@ -101,6 +101,51 @@ void main() {
       );
     },
   );
+
+  test('keeps a hosted run sending so the UI can reconnect after restart', () async {
+    final repository = _MemoryChatRepository();
+    final now = DateTime.utc(2026, 7, 30);
+    final thread = ChatThread(
+      id: 'hosted-thread',
+      title: 'Hosted',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await repository.putThread(thread);
+    await repository.putMessage(
+      ChatMessageRecord(
+        id: 'hosted-answer',
+        threadId: thread.id,
+        role: ChatMessageRole.assistant,
+        content: 'partial',
+        createdAt: now,
+        query: 'Question',
+        status: ChatMessageStatus.sending,
+        aiRunId: 'run-1',
+      ),
+    );
+
+    final container = ProviderContainer(
+      overrides: [
+        chatRepositoryProvider.overrideWith((ref) async => repository),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(chatSessionsProvider.notifier);
+    while (container.read(chatSessionsProvider).isLoading) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    final state = container.read(chatSessionsProvider).requireValue;
+    expect(state.messages.single.status, ChatMessageStatus.sending);
+    expect(state.messages.single.aiRunId, 'run-1');
+    expect(
+      await container
+          .read(chatSessionsProvider.notifier)
+          .pendingServerMessages(),
+      hasLength(1),
+    );
+  });
 }
 
 class _MemoryChatRepository implements ChatRepository {

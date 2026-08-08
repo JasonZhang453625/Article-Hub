@@ -323,7 +323,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         onDelta: publishDelta,
         onAgentEvent: publishAgentEvent,
         onRunCreated: (serverRunId) async {
-          if (!mounted || runId != _answerRunId) return;
+          if (runId != _answerRunId) return;
           activePending = activePending.copyWith(
             aiRunId: serverRunId,
             aiRunEventSeq: 0,

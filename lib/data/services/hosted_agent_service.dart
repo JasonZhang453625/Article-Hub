@@ -167,10 +167,9 @@ class HostedAgentService {
     await onRunCreated?.call(runId);
 
     try {
-      await for (final delta in _watchRun(
+      await for (final delta in _watchRunWithReconnect(
         runId,
         session: session!,
-        afterEventSeq: lastEventSeq,
         onEvent: onEvent,
       )) {
         if (delta.isNotEmpty) yield delta;
@@ -249,10 +248,9 @@ class HostedAgentService {
     if (status == 'failed' || status == 'cancelled') return;
 
     try {
-      await for (final delta in _watchRun(
+      await for (final delta in _watchRunWithReconnect(
         runId,
         session: session,
-        afterEventSeq: lastEventSeq,
         onEvent: onEvent,
       )) {
         if (delta.isNotEmpty) yield delta;
@@ -357,6 +355,35 @@ class HostedAgentService {
     }
   }
 
+  Stream<String> _watchRunWithReconnect(
+    String runId, {
+    required AuthSession session,
+    void Function(HostedAgentEvent event)? onEvent,
+  }) async* {
+    Object? lastFailure;
+    for (var attempt = 0; attempt < 4; attempt++) {
+      try {
+        await for (final delta in _watchRun(
+          runId,
+          session: session,
+          afterEventSeq: lastEventSeq,
+          onEvent: onEvent,
+        )) {
+          if (delta.isNotEmpty) yield delta;
+        }
+        if (_runIsTerminal) return;
+        lastFailure = StateError(
+          'Hosted Agent event stream ended before completion.',
+        );
+      } catch (error) {
+        lastFailure = error;
+      }
+      if (attempt == 3 || _runIsTerminal) break;
+      await Future<void>.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+    }
+    if (lastFailure != null) throw lastFailure;
+  }
+
   Stream<String> _decodeRunEvents(
     http.StreamedResponse response, {
     void Function(HostedAgentEvent event)? onEvent,
@@ -444,13 +471,13 @@ class HostedAgentService {
       type: (decoded['type'] ?? eventName).toString(),
       data: decoded,
     );
-    lastEvents = List.unmodifiable([...lastEvents, event]);
     _captureSources(decoded['sources']);
     if (event.type == 'run.result') {
       _captureSources(decoded['sources']);
       _runIsTerminal = true;
       return (decoded['answer'] ?? '').toString();
     }
+    lastEvents = List.unmodifiable([...lastEvents, event]);
     if (event.type == 'run.failed') {
       lastError = (decoded['error'] ?? 'Hosted Agent failed.').toString();
       _runIsTerminal = true;
@@ -485,7 +512,7 @@ class HostedAgentService {
   }
 
   void _captureSources(dynamic rawSources) {
-    if (rawSources is! List) return;
+    if (rawSources is! List || rawSources.isEmpty) return;
     lastSources = List.unmodifiable(
       rawSources
           .whereType<Map>()

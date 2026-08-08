@@ -99,7 +99,7 @@ void main() {
     expect(chatTitleFromMessage(repeated('记', 40)), endsWith('…'));
   });
 
-  test('round-trips interrupted message status through Hive', () async {
+  test('round-trips interrupted status and durable run metadata through Hive', () async {
     final now = DateTime.utc(2026, 7, 30);
     await repository.putThread(
       ChatThread(id: 't1', title: 'T', createdAt: now, updatedAt: now),
@@ -109,15 +109,19 @@ void main() {
         id: 'm1',
         threadId: 't1',
         role: ChatMessageRole.assistant,
-        content: '',
+        content: 'partial server answer',
         createdAt: now,
         query: 'Question',
-        status: ChatMessageStatus.interrupted,
+        status: ChatMessageStatus.sending,
+        aiRunId: 'run-9',
+        aiRunEventSeq: 4,
       ),
     );
 
     final restored = repository.getMessage('m1');
-    expect(restored!.status, ChatMessageStatus.interrupted);
+    expect(restored!.status, ChatMessageStatus.sending);
     expect(restored.query, 'Question');
+    expect(restored.aiRunId, 'run-9');
+    expect(restored.aiRunEventSeq, 4);
   });
 }

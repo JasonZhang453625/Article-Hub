@@ -203,6 +203,44 @@ void main() {
     expect(payload['thinking'], {'type': 'enabled'});
     expect(payload['reasoning_effort'], 'max');
   });
+
+  test('restores a completed durable run from its snapshot', () async {
+    var requests = 0;
+    final client = MockClient.streaming((request, _) async {
+      requests++;
+      expect(request.method, 'GET');
+      expect(request.url.path, '/ai/runs/run-9');
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            jsonEncode({
+              'id': 'run-9',
+              'status': 'completed',
+              'answer': 'Restored after process death',
+              'lastEventSeq': 6,
+              'sources': [],
+            }),
+          ),
+        ),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('active')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+    );
+
+    final chunks = await http.runWithClient(
+      () => service.resumeStream('run-9').toList(),
+      () => client,
+    );
+
+    expect(chunks, ['Restored after process death']);
+    expect(service.lastEventSeq, 6);
+    expect(requests, 1);
+  });
 }
 
 AuthSession _session(String accessToken) => AuthSession(
