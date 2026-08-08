@@ -201,10 +201,25 @@ Future<String> _sha256Of(File file) async {
 }
 
 /// GET a GitHub API path. Returns the body on 200, null on failure. Uses
-/// `GH_TOKEN` when present (5000 req/h), otherwise the unauthenticated quota
-/// (60 req/h); on 403 (rate limit) falls back to probing the HTML page.
+/// `GH_TOKEN` when present, otherwise falls back to `gh auth token` (the gh
+/// CLI keyring) — both give the authenticated 5000 req/h quota. On 403
+/// (rate limit) falls back to probing the HTML page.
 Future<String?> _githubGet(String path) async {
-  final token = Platform.environment['GH_TOKEN'];
+  var token = Platform.environment['GH_TOKEN']?.trim();
+  if (token == null || token.isEmpty) {
+    try {
+      final gh = await Process.run(
+        'gh',
+        ['auth', 'token'],
+        runInShell: true,
+      );
+      if (gh.exitCode == 0) {
+        token = (gh.stdout as String).trim();
+      }
+    } catch (_) {
+      // gh unavailable — go unauthenticated.
+    }
+  }
   final headers = <String, String>{
     'Accept': 'application/vnd.github+json',
     'User-Agent': 'memora-verify',
