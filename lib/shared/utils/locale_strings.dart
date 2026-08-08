@@ -201,7 +201,6 @@ class LocaleStrings {
   final String aiModeLoginRequired;
   final String chatAiSection;
   final String imageAiSection;
-  final String hostedWebSearchDesc;
   final String hostedModelLabel;
   final String saveAiSettings;
   final String aiSettingsSaved;
@@ -248,19 +247,7 @@ class LocaleStrings {
   final String start;
   final String processedN;
   final String embeddingSection;
-  final String embeddingConfig;
-  final String defaultLabel;
   final String usingBuiltIn;
-  final String usingCustom;
-  final String embeddingBaseUrl;
-  final String embeddingApiKey;
-  final String embeddingModel;
-  final String testConnection;
-  final String testing;
-  final String connectionSuccessful;
-  final String connectionFailed;
-  final String resetToDefaults;
-  final String fillAllFields;
   final String indexManagement;
   final String nArticlesIndexed;
   final String loadingIndexStatus;
@@ -344,9 +331,8 @@ class LocaleStrings {
   final String chatToolCompleted;
   final String chatToolFailed;
   final String chatToolSources;
+  final String chatJumpToBottom;
   final String webSearchSection;
-  final String webSearchConfig;
-  final String webSearchApiKey;
   final String webSearchOn;
   final String webSearchOff;
   final String webSearchNotConfigured;
@@ -552,7 +538,6 @@ class LocaleStrings {
     required this.aiModeLoginRequired,
     required this.chatAiSection,
     required this.imageAiSection,
-    required this.hostedWebSearchDesc,
     required this.hostedModelLabel,
     required this.saveAiSettings,
     required this.aiSettingsSaved,
@@ -599,19 +584,7 @@ class LocaleStrings {
     required this.start,
     required this.processedN,
     required this.embeddingSection,
-    required this.embeddingConfig,
-    required this.defaultLabel,
     required this.usingBuiltIn,
-    required this.usingCustom,
-    required this.embeddingBaseUrl,
-    required this.embeddingApiKey,
-    required this.embeddingModel,
-    required this.testConnection,
-    required this.testing,
-    required this.connectionSuccessful,
-    required this.connectionFailed,
-    required this.resetToDefaults,
-    required this.fillAllFields,
     required this.indexManagement,
     required this.nArticlesIndexed,
     required this.loadingIndexStatus,
@@ -695,9 +668,8 @@ class LocaleStrings {
     required this.chatToolCompleted,
     required this.chatToolFailed,
     required this.chatToolSources,
+    required this.chatJumpToBottom,
     required this.webSearchSection,
-    required this.webSearchConfig,
-    required this.webSearchApiKey,
     required this.webSearchOn,
     required this.webSearchOff,
     required this.webSearchNotConfigured,
@@ -947,7 +919,6 @@ class LocaleStrings {
     aiModeLoginRequired: 'Sign in to use Memora AI.',
     chatAiSection: 'AI Chat',
     imageAiSection: 'Image Understanding',
-    hostedWebSearchDesc: 'Web search is provided by the Memora server.',
     hostedModelLabel: 'Model Selection',
     saveAiSettings: 'Save AI Settings',
     aiSettingsSaved: 'AI settings saved',
@@ -997,20 +968,7 @@ class LocaleStrings {
     start: 'Start',
     processedN: 'Processed',
     embeddingSection: 'Vector Model',
-    embeddingConfig: 'Vector Model Configuration',
-    defaultLabel: 'Default',
-    usingBuiltIn:
-        'Vectorization is provided by Memora. You can also bring your own OpenAI-compatible endpoint.',
-    usingCustom: 'Using your custom OpenAI-compatible vector endpoint.',
-    embeddingBaseUrl: 'Vector Model URL',
-    embeddingApiKey: 'Vector Model API Key',
-    embeddingModel: 'Vector Model',
-    testConnection: 'Test Connection',
-    testing: 'Testing...',
-    connectionSuccessful: 'Connection successful',
-    connectionFailed: 'Connection failed — check config',
-    resetToDefaults: 'Reset to Defaults',
-    fillAllFields: 'Fill in all fields first',
+    usingBuiltIn: 'Vectorization is provided by Memora.',
     indexManagement: 'Index Management',
     nArticlesIndexed: 'memories indexed',
     loadingIndexStatus: 'Loading index status...',
@@ -1101,9 +1059,8 @@ class LocaleStrings {
     chatToolCompleted: 'Tool completed',
     chatToolFailed: 'Tool failed',
     chatToolSources: 'sources',
+    chatJumpToBottom: 'Jump to latest',
     webSearchSection: 'Web Search',
-    webSearchConfig: 'Web Search (Tavily)',
-    webSearchApiKey: 'Tavily API Key',
     webSearchOn: 'Web search on — answers may include live sources',
     webSearchOff: 'Web search off',
     webSearchNotConfigured:
@@ -1312,7 +1269,6 @@ class LocaleStrings {
     aiModeLoginRequired: '登录后才能使用记忆海 AI。',
     chatAiSection: 'AI 对话',
     imageAiSection: '识图模型',
-    hostedWebSearchDesc: '联网搜索由记忆海服务器提供。',
     hostedModelLabel: '模型选择',
     saveAiSettings: '保存 AI 设置',
     aiSettingsSaved: 'AI 设置已保存',
@@ -1359,19 +1315,7 @@ class LocaleStrings {
     start: '开始',
     processedN: '已处理',
     embeddingSection: '向量化模型',
-    embeddingConfig: '向量化模型配置',
-    defaultLabel: '默认',
-    usingBuiltIn: '向量化由记忆海提供。你也可以使用自定义的 OpenAI 兼容端点。',
-    usingCustom: '使用自定义 OpenAI 兼容向量化端点。',
-    embeddingBaseUrl: '向量化模型 URL',
-    embeddingApiKey: '向量化模型 API 密钥',
-    embeddingModel: '向量化模型',
-    testConnection: '测试连接',
-    testing: '测试中…',
-    connectionSuccessful: '连接成功',
-    connectionFailed: '连接失败，请检查配置',
-    resetToDefaults: '恢复默认',
-    fillAllFields: '请先填写所有字段',
+    usingBuiltIn: '向量化模型由记忆海提供。',
     indexManagement: '索引管理',
     nArticlesIndexed: '条记忆已索引',
     loadingIndexStatus: '加载索引状态…',
@@ -1455,9 +1399,8 @@ class LocaleStrings {
     chatToolCompleted: '工具调用完成',
     chatToolFailed: '工具调用失败',
     chatToolSources: '个来源',
+    chatJumpToBottom: '回到最新消息',
     webSearchSection: '联网搜索',
-    webSearchConfig: '联网搜索（Tavily）',
-    webSearchApiKey: 'Tavily API Key',
     webSearchOn: '已开启联网搜索 — 回答可能引用实时来源',
     webSearchOff: '未开启联网搜索',
     webSearchNotConfigured: '请在 设置-API 中配置 Tavily API Key 以启用联网搜索',

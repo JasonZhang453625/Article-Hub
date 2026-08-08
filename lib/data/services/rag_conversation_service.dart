@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:uuid/uuid.dart';
@@ -45,6 +46,19 @@ typedef RagAgentCompletionStream =
       int maxTokens,
       required bool webSearch,
       void Function(HostedAgentEvent event)? onEvent,
+    });
+
+typedef RagAgentCompletionStreamWithRun =
+    Stream<String> Function({
+      required String systemPrompt,
+      required String userMessage,
+      List<Map<String, String>> history,
+      double temperature,
+      int maxTokens,
+      required bool webSearch,
+      void Function(HostedAgentEvent event)? onEvent,
+      FutureOr<void> Function(String runId)? onRunCreated,
+      String? idempotencyKey,
     });
 
 typedef RagCompletionError = String? Function();
@@ -164,6 +178,7 @@ class RagConversationService {
   final RagCompletion _complete;
   final RagCompletionStream? _completeStream;
   final RagAgentCompletionStream? _agentCompleteStream;
+  final RagAgentCompletionStreamWithRun? _agentRunStream;
   final RagCompletionError? _completionError;
   final void Function(AiThinkingLevel level)? _configureThinking;
   final List<String> Function()? _agentWebUrls;
@@ -180,6 +195,7 @@ class RagConversationService {
     required RagCompletion complete,
     RagCompletionStream? completeStream,
     RagAgentCompletionStream? agentCompleteStream,
+    RagAgentCompletionStreamWithRun? agentRunStream,
     RagCompletionError? completionError,
     void Function(AiThinkingLevel level)? configureThinking,
     List<String> Function()? agentWebUrls,
@@ -194,6 +210,7 @@ class RagConversationService {
        _complete = complete,
        _completeStream = completeStream,
        _agentCompleteStream = agentCompleteStream,
+       _agentRunStream = agentRunStream,
        _completionError = completionError,
        _configureThinking = configureThinking,
        _agentWebUrls = agentWebUrls,
@@ -224,6 +241,8 @@ class RagConversationService {
     RagConversationRequest request, {
     void Function(String delta)? onDelta,
     void Function(HostedAgentEvent event)? onAgentEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
   }) async {
     _configureThinking?.call(request.thinkingLevel);
     final question = request.question.trim();
@@ -436,6 +455,8 @@ class RagConversationService {
         webSearch: request.webSearch,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
       );
 
       final agentWebUrls = _agentCompleteStream == null
@@ -448,7 +469,23 @@ class RagConversationService {
         retrievalMethod: retrieval.method,
       );
 
-      final completionError = _completionError?.call()?.trim();
+      final rawCompletionError = _completionError?.call()?.trim();
+      final hasAnswer = response != null && response.trim().isNotEmpty;
+      // Some Agent runs emit all answer deltas and then incorrectly report an
+      // empty-response status. That status contradicts the completed text, so
+      // do not turn a usable answer into a failed chat bubble. Other provider
+      // errors (including a stream interruption after partial output) remain
+      // visible to the user.
+      final completionError = hasAnswer &&
+              _isEmptyResponseError(rawCompletionError)
+          ? null
+          : rawCompletionError;
+      if (hasAnswer && completionError == null && rawCompletionError != null) {
+        developer.log(
+          'Ignoring contradictory empty-response completion error after text',
+          name: 'memora.rag',
+        );
+      }
       if (response == null ||
           response.trim().isEmpty ||
           completionError != null && completionError.isNotEmpty) {
@@ -535,7 +572,31 @@ class RagConversationService {
     required bool webSearch,
     void Function(String delta)? onDelta,
     void Function(HostedAgentEvent event)? onAgentEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
   }) async {
+    final agentRunStream = _agentRunStream;
+    if (agentRunStream != null) {
+      final buffer = StringBuffer();
+      await for (final delta in agentRunStream(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+        webSearch: webSearch,
+        onEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+
     final agentStream = _agentCompleteStream;
     if (agentStream != null) {
       final buffer = StringBuffer();
@@ -729,4 +790,11 @@ List<String> _weakCandidates(String query, List<Article> articles) {
       .take(3)
       .map((item) => item.article.id)
       .toList();
+}
+
+bool _isEmptyResponseError(String? error) {
+  if (error == null) return false;
+  final normalized = error.toLowerCase();
+  return normalized.contains('empty response') ||
+      normalized.contains('content was empty');
 }

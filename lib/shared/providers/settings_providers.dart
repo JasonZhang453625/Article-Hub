@@ -267,26 +267,6 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     await _save(current.copyWith(cloudSyncEnabled: enabled));
   }
 
-  Future<void> setEmbeddingConfig({
-    String? baseUrl,
-    String? apiKey,
-    String? model,
-  }) async {
-    final current = state.valueOrNull ?? AppSettings();
-    await _save(
-      current.copyWith(
-        embeddingBaseUrl: baseUrl,
-        embeddingApiKey: apiKey,
-        embeddingModel: model,
-      ),
-    );
-  }
-
-  Future<void> setTavilyApiKey(String apiKey) async {
-    final current = state.valueOrNull ?? AppSettings();
-    await _save(current.copyWith(tavilyApiKey: apiKey));
-  }
-
   Future<void> updateSourcePlatformOrder(List<String> order) async {
     final current = state.valueOrNull ?? AppSettings();
     await _save(current.copyWith(sourcePlatformOrder: order));

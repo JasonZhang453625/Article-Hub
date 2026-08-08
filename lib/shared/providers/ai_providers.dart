@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
@@ -250,7 +252,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             maxTokens: maxTokens,
           );
         },
-    agentCompleteStream: hostedAgent == null
+    agentRunStream: hostedAgent == null
         ? null
         : ({
             required String systemPrompt,
@@ -260,6 +262,8 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             int maxTokens = 800,
             required bool webSearch,
             void Function(HostedAgentEvent event)? onEvent,
+            FutureOr<void> Function(String runId)? onRunCreated,
+            String? idempotencyKey,
           }) {
             return hostedAgent.chatStream(
               systemPrompt: systemPrompt,
@@ -269,6 +273,8 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               maxTokens: maxTokens,
               webSearch: webSearch,
               onEvent: onEvent,
+              onRunCreated: onRunCreated,
+              idempotencyKey: idempotencyKey,
             );
           },
     completionError: () => hostedAgent?.lastError ?? ai.lastError,

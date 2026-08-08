@@ -41,12 +41,12 @@ class HostedAgentEvent {
   const HostedAgentEvent({required this.type, required this.data});
 }
 
-/// Streaming client for the server-side Memora Agent Runtime.
+/// Client for a durable server-side Agent run.
 ///
-/// Unlike [HostedAiService], this endpoint may run several model/tool steps
-/// before it emits the final answer. `webSearch` is a per-run permission: the
-/// model decides whether and how often the registered `web_search` tool is
-/// actually useful.
+/// A run is created with a short JSON request and then observed through a
+/// separate SSE endpoint. The SSE connection is only a view of the run: if
+/// the app process dies, the server keeps working and a later call to
+/// [resumeStream] reads the persisted run events/result.
 class HostedAgentService {
   final AuthSession? Function() _getSession;
   final Future<AuthSession?> Function() _refreshSession;
@@ -55,6 +55,8 @@ class HostedAgentService {
 
   String? lastError;
   int? lastStatusCode;
+  String? lastRunId;
+  int lastEventSeq = 0;
   List<HostedAgentSource> lastSources = const [];
   List<HostedAgentEvent> lastEvents = const [];
   AiThinkingLevel thinkingLevel;
@@ -94,6 +96,7 @@ class HostedAgentService {
     return session;
   }
 
+  /// Creates a durable hosted run and yields its answer events.
   Stream<String> chatStream({
     required String systemPrompt,
     required String userMessage,
@@ -102,11 +105,10 @@ class HostedAgentService {
     int maxTokens = 800,
     bool webSearch = false,
     void Function(HostedAgentEvent event)? onEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
   }) async* {
-    lastError = null;
-    lastStatusCode = null;
-    lastSources = const [];
-    lastEvents = const [];
+    _resetRunState();
     if (!isConfigured) {
       lastError = 'Hosted Agent is not configured';
       return;
@@ -114,58 +116,37 @@ class HostedAgentService {
 
     var session = await _freshSession();
     if (session == null) return;
-    var emitted = false;
 
+    final requestBody = <String, dynamic>{
+      'model': model,
+      'messages': [
+        {'role': 'system', 'content': systemPrompt},
+        ...history,
+        {'role': 'user', 'content': userMessage},
+      ],
+      'temperature': temperature,
+      'max_completion_tokens': maxTokens,
+      'stream': true,
+      'memora_tools': {'web_search': webSearch},
+      if (supportsDeepSeekThinking(model: model))
+        ...deepSeekThinkingOptions(thinkingLevel),
+    };
+
+    Map<String, dynamic>? created;
     for (var attempt = 0; attempt < 2; attempt++) {
-      final client = http.Client();
       try {
-        final request =
-            http.Request(
-                'POST',
-                BackendConfig.uri('/ai/agent/v1/chat/completions'),
-              )
-              ..headers.addAll({
-                'Authorization': 'Bearer ${session!.accessToken}',
-                'Content-Type': 'application/json',
-                'Accept': 'text/event-stream',
-              })
-              ..body = jsonEncode({
-                'model': model,
-                'messages': [
-                  {'role': 'system', 'content': systemPrompt},
-                  ...history,
-                  {'role': 'user', 'content': userMessage},
-                ],
-                'temperature': temperature,
-                'max_completion_tokens': maxTokens,
-                'stream': true,
-                'memora_tools': {'web_search': webSearch},
-                if (supportsDeepSeekThinking(model: model))
-                  ...deepSeekThinkingOptions(thinkingLevel),
-              });
-        final response = await client.send(request).timeout(timeout);
-        lastStatusCode = response.statusCode;
-        if (response.statusCode != 200) {
-          final body = await response.stream.bytesToString().timeout(timeout);
-          lastError = 'HTTP ${response.statusCode}: ${_responseError(body)}';
-          if (response.statusCode == 401 && !emitted && attempt == 0) {
-            final refreshed = await _refreshSession();
-            if (refreshed != null) {
-              session = refreshed;
-              lastError = null;
-              continue;
-            }
+        created = await _createRun(session!, requestBody, idempotencyKey);
+        break;
+      } on _RunHttpException catch (error) {
+        lastStatusCode = error.statusCode;
+        lastError = 'HTTP ${error.statusCode}: ${_responseError(error.body)}';
+        if (error.statusCode == 401 && attempt == 0) {
+          final refreshed = await _refreshSession();
+          if (refreshed != null) {
+            session = refreshed;
+            lastError = null;
+            continue;
           }
-          return;
-        }
-
-        await for (final delta in _decodeStream(response, onEvent: onEvent)) {
-          if (delta.isEmpty) continue;
-          emitted = true;
-          yield delta;
-        }
-        if (!emitted && (lastError == null || lastError!.trim().isEmpty)) {
-          lastError = 'AI response content was empty';
         }
         return;
       } on TimeoutException {
@@ -174,61 +155,254 @@ class HostedAgentService {
       } catch (error) {
         lastError = 'Hosted Agent request failed: $error';
         return;
-      } finally {
-        client.close();
       }
+    }
+
+    final runId = (created?['id'] ?? created?['runId'] ?? '').toString();
+    if (runId.isEmpty) {
+      lastError = 'Hosted Agent returned no run id.';
+      return;
+    }
+    lastRunId = runId;
+    await onRunCreated?.call(runId);
+
+    try {
+      await for (final delta in _watchRun(
+        runId,
+        session: session!,
+        afterEventSeq: lastEventSeq,
+        onEvent: onEvent,
+      )) {
+        if (delta.isNotEmpty) yield delta;
+      }
+    } on TimeoutException {
+      lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';
+    } on _RunHttpException catch (error) {
+      lastStatusCode = error.statusCode;
+      lastError = 'HTTP ${error.statusCode}: ${_responseError(error.body)}';
+    } catch (error) {
+      lastError = 'Hosted Agent request failed: $error';
     }
   }
 
-  Stream<String> _decodeStream(
-    http.StreamedResponse response, {
+  /// Reconnects to an existing durable run after the app has restarted.
+  ///
+  /// The snapshot is checked first so a completed answer is restored without
+  /// waiting for the event stream. Running jobs then resume from the latest
+  /// persisted event sequence.
+  Stream<String> resumeStream(
+    String runId, {
     void Function(HostedAgentEvent event)? onEvent,
   }) async* {
-    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
-    if (!contentType.contains('text/event-stream')) {
-      final body = await response.stream.bytesToString().timeout(timeout);
-      final decoded = jsonDecode(body);
-      if (decoded is! Map<String, dynamic>) return;
-      _captureResponseMetadata(decoded);
-      final text = _completionText(decoded);
-      if (text != null && text.isNotEmpty) yield text;
+    _resetRunState();
+    lastRunId = runId;
+    if (!isConfigured) {
+      lastError = 'Hosted Agent is not configured';
       return;
     }
 
+    var session = await _freshSession();
+    if (session == null) return;
+
+    Map<String, dynamic> snapshot;
+    try {
+      snapshot = await _fetchRun(session, runId);
+    } on _RunHttpException catch (error) {
+      lastStatusCode = error.statusCode;
+      if (error.statusCode == 401) {
+        final refreshed = await _refreshSession();
+        if (refreshed == null) {
+          lastError = 'Your session has expired. Sign in again.';
+          return;
+        }
+        session = refreshed;
+        try {
+          snapshot = await _fetchRun(session, runId);
+        } on _RunHttpException catch (retryError) {
+          lastStatusCode = retryError.statusCode;
+          lastError =
+              'HTTP ${retryError.statusCode}: ${_responseError(retryError.body)}';
+          return;
+        }
+      } else {
+        lastError = 'HTTP ${error.statusCode}: ${_responseError(error.body)}';
+        return;
+      }
+    } on TimeoutException {
+      lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';
+      return;
+    } catch (error) {
+      lastError = 'Hosted Agent request failed: $error';
+      return;
+    }
+
+    final snapshotSeq = (snapshot['lastEventSeq'] as num?)?.toInt() ?? 0;
+    if (snapshotSeq > lastEventSeq) lastEventSeq = snapshotSeq;
+    _captureRunSnapshot(snapshot, onEvent: onEvent);
+
+    final status = (snapshot['status'] ?? '').toString();
+    final answer = (snapshot['answer'] ?? '').toString();
+    if (status == 'completed') {
+      if (answer.trim().isNotEmpty) yield answer;
+      return;
+    }
+    if (status == 'failed' || status == 'cancelled') return;
+
+    try {
+      await for (final delta in _watchRun(
+        runId,
+        session: session,
+        afterEventSeq: lastEventSeq,
+        onEvent: onEvent,
+      )) {
+        if (delta.isNotEmpty) yield delta;
+      }
+    } on TimeoutException {
+      lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';
+    } on _RunHttpException catch (error) {
+      lastStatusCode = error.statusCode;
+      lastError = 'HTTP ${error.statusCode}: ${_responseError(error.body)}';
+    } catch (error) {
+      lastError = 'Hosted Agent request failed: $error';
+    }
+  }
+
+  Future<Map<String, dynamic>> _createRun(
+    AuthSession session,
+    Map<String, dynamic> body,
+    String? idempotencyKey,
+  ) async {
+    final client = http.Client();
+    try {
+      final request = http.Request('POST', BackendConfig.uri('/ai/runs'))
+        ..headers.addAll({
+          'Authorization': 'Bearer ${session.accessToken}',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
+            'Idempotency-Key': idempotencyKey.trim(),
+        })
+        ..body = jsonEncode(body);
+      final response = await client.send(request).timeout(timeout);
+      lastStatusCode = response.statusCode;
+      final text = await response.stream.bytesToString().timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _RunHttpException(response.statusCode, text);
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Hosted Agent returned invalid run JSON.');
+      }
+      return decoded;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchRun(
+    AuthSession session,
+    String runId,
+  ) async {
+    final client = http.Client();
+    try {
+      final request = http.Request(
+        'GET',
+        BackendConfig.uri('/ai/runs/$runId'),
+      )
+        ..headers.addAll({
+          'Authorization': 'Bearer ${session.accessToken}',
+          'Accept': 'application/json',
+        });
+      final response = await client.send(request).timeout(timeout);
+      final text = await response.stream.bytesToString().timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _RunHttpException(response.statusCode, text);
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Hosted Agent returned invalid run JSON.');
+      }
+      return decoded;
+    } finally {
+      client.close();
+    }
+  }
+
+  Stream<String> _watchRun(
+    String runId, {
+    required AuthSession session,
+    required int afterEventSeq,
+    void Function(HostedAgentEvent event)? onEvent,
+  }) async* {
+    final client = http.Client();
+    try {
+      final uri = BackendConfig.uri('/ai/runs/$runId/events').replace(
+        queryParameters: {'after': '$afterEventSeq'},
+      );
+      final request = http.Request('GET', uri)
+        ..headers.addAll({
+          'Authorization': 'Bearer ${session.accessToken}',
+          'Accept': 'text/event-stream',
+          'Last-Event-ID': '$afterEventSeq',
+        });
+      final response = await client.send(request).timeout(timeout);
+      lastStatusCode = response.statusCode;
+      if (response.statusCode != 200) {
+        final body = await response.stream.bytesToString().timeout(timeout);
+        throw _RunHttpException(response.statusCode, body);
+      }
+      yield* _decodeRunEvents(response, onEvent: onEvent);
+    } finally {
+      client.close();
+    }
+  }
+
+  Stream<String> _decodeRunEvents(
+    http.StreamedResponse response, {
+    void Function(HostedAgentEvent event)? onEvent,
+  }) async* {
     var eventName = 'message';
+    var eventId = 0;
     final eventData = StringBuffer();
-    var done = false;
+    var terminal = false;
 
     Future<List<String>> flush() async {
       if (eventData.isEmpty) return const [];
       final data = eventData.toString().trim();
       eventData.clear();
       final currentEvent = eventName;
+      final currentId = eventId;
       eventName = 'message';
+      eventId = 0;
+      if (currentId > lastEventSeq) lastEventSeq = currentId;
       if (data == '[DONE]') {
-        done = true;
-        return const [];
-      }
-      if (currentEvent == 'agent') {
-        _captureAgentEvent(data, onEvent: onEvent);
+        terminal = true;
         return const [];
       }
       try {
         final decoded = jsonDecode(data);
         if (decoded is! Map<String, dynamic>) return const [];
-        final text = _completionText(decoded);
-        return text == null || text.isEmpty ? const [] : [text];
+        final event = _captureRunEvent(
+          decoded,
+          eventName: currentEvent,
+          onEvent: onEvent,
+        );
+        if (event != null && event.isNotEmpty) return [event];
+        return const [];
       } catch (_) {
         return const [];
       }
     }
 
-    await for (final line
-        in response.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .timeout(timeout)) {
+    await for (final line in response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .timeout(timeout)) {
       if (line.startsWith(':')) continue;
+      if (line.startsWith('id:')) {
+        eventId = int.tryParse(line.substring(3).trim()) ?? 0;
+        continue;
+      }
       if (line.startsWith('event:')) {
         eventName = line.substring(6).trim();
         continue;
@@ -242,59 +416,75 @@ class HostedAgentService {
         for (final text in await flush()) {
           yield text;
         }
-        if (done) break;
+        if (terminal) break;
       }
     }
-    if (!done && eventData.isNotEmpty) {
+    if (eventData.isNotEmpty) {
       for (final text in await flush()) {
         yield text;
       }
     }
-    if (!done && lastError == null) {
-      lastError = 'Hosted Agent stream ended before [DONE]';
+    if (!terminal && !_runIsTerminal) {
+      throw StateError('Hosted Agent event stream ended before completion.');
     }
   }
 
-  void _captureAgentEvent(
-    String data, {
+  bool _runIsTerminal = false;
+
+  String? _captureRunEvent(
+    Map<String, dynamic> decoded, {
+    required String eventName,
     void Function(HostedAgentEvent event)? onEvent,
   }) {
-    try {
-      final decoded = jsonDecode(data);
-      if (decoded is! Map<String, dynamic>) return;
-      final event = HostedAgentEvent(
-        type: (decoded['type'] ?? '').toString(),
-        data: decoded,
-      );
-      lastEvents = List.unmodifiable([...lastEvents, event]);
-      if (event.type == 'sources') {
-        final rawSources = decoded['sources'];
-        if (rawSources is List) {
-          lastSources = List.unmodifiable(
-            rawSources
-                .whereType<Map>()
-                .map(
-                  (source) => HostedAgentSource.fromJson(
-                    Map<String, dynamic>.from(source),
-                  ),
-                )
-                .where((source) => source.url.trim().isNotEmpty),
-          );
-        }
-      } else if (event.type == 'run.failed') {
-        lastError = (decoded['error'] ?? 'Hosted Agent failed.').toString();
-      }
-      onEvent?.call(event);
-    } catch (_) {
-      // Ignore malformed advisory events; the normal completion stream can
-      // still produce a valid answer.
+    if (decoded.containsKey('choices')) {
+      return _completionText(decoded);
     }
+
+    final event = HostedAgentEvent(
+      type: (decoded['type'] ?? eventName).toString(),
+      data: decoded,
+    );
+    lastEvents = List.unmodifiable([...lastEvents, event]);
+    _captureSources(decoded['sources']);
+    if (event.type == 'run.result') {
+      _captureSources(decoded['sources']);
+      _runIsTerminal = true;
+      return (decoded['answer'] ?? '').toString();
+    }
+    if (event.type == 'run.failed') {
+      lastError = (decoded['error'] ?? 'Hosted Agent failed.').toString();
+      _runIsTerminal = true;
+    } else if (event.type == 'run.completed') {
+      // The durable service emits run.result immediately after this event.
+    }
+    onEvent?.call(event);
+    return null;
   }
 
-  void _captureResponseMetadata(Map<String, dynamic> decoded) {
-    final metadata = decoded['memora_agent'];
-    if (metadata is! Map) return;
-    final rawSources = metadata['sources'];
+  void _captureRunSnapshot(
+    Map<String, dynamic> decoded, {
+    void Function(HostedAgentEvent event)? onEvent,
+  }) {
+    _captureSources(decoded['sources']);
+    final status = (decoded['status'] ?? '').toString();
+    if (status == 'failed' || status == 'cancelled') {
+      lastError = (decoded['errorMessage'] ?? 'Hosted Agent failed.').toString();
+      _runIsTerminal = true;
+    } else if (status == 'completed') {
+      _runIsTerminal = true;
+    }
+    final rawError = decoded['error'];
+    if (rawError is Map) {
+      lastError = (rawError['message'] ?? 'Hosted Agent failed.').toString();
+    }
+    final event = HostedAgentEvent(
+      type: 'run.snapshot',
+      data: decoded,
+    );
+    onEvent?.call(event);
+  }
+
+  void _captureSources(dynamic rawSources) {
     if (rawSources is! List) return;
     lastSources = List.unmodifiable(
       rawSources
@@ -305,6 +495,16 @@ class HostedAgentService {
           )
           .where((source) => source.url.trim().isNotEmpty),
     );
+  }
+
+  void _resetRunState() {
+    lastError = null;
+    lastStatusCode = null;
+    lastRunId = null;
+    lastEventSeq = 0;
+    lastSources = const [];
+    lastEvents = const [];
+    _runIsTerminal = false;
   }
 
   static String? _completionText(Map<String, dynamic> decoded) {
@@ -340,4 +540,11 @@ class HostedAgentService {
     final trimmed = body.trim();
     return trimmed.isEmpty ? 'Request failed.' : trimmed;
   }
+}
+
+class _RunHttpException implements Exception {
+  final int statusCode;
+  final String body;
+
+  const _RunHttpException(this.statusCode, this.body);
 }

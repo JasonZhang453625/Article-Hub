@@ -43,6 +43,7 @@ void main() {
     AppSettings? settings,
     RagConversationService? conversation,
     bool failTerminalAssistantWrites = false,
+    Brightness brightness = Brightness.light,
   }) async {
     final chatRepository = _InMemoryChatRepository(
       threads,
@@ -66,7 +67,10 @@ void main() {
           ),
           chatRepositoryProvider.overrideWith((ref) async => chatRepository),
         ],
-        child: const MaterialApp(home: ChatScreen()),
+        child: MaterialApp(
+          theme: ThemeData(brightness: brightness),
+          home: const ChatScreen(),
+        ),
       ),
     );
     // Resolve the repository future and rebuild.
@@ -511,6 +515,68 @@ void main() {
     expect(find.byIcon(Icons.menu_rounded), findsOneWidget);
     expect(find.byIcon(Icons.history_rounded), findsNothing);
     expect(find.byIcon(Icons.add_comment_outlined), findsNothing);
+  });
+
+  testWidgets('top controls float without a session-title app bar', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 8, 9);
+    final thread = ChatThread(
+      id: 'thread-top-chrome',
+      title: 'Hidden session title',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await pumpChat(
+      tester,
+      articles: [],
+      threads: [thread],
+      messages: [
+        ChatMessageRecord(
+          id: 'top-message',
+          threadId: thread.id,
+          role: ChatMessageRole.user,
+          content: 'Message behind the top fade',
+          createdAt: now,
+        ),
+      ],
+    );
+
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.text('Hidden session title'), findsNothing);
+    expect(find.byKey(const ValueKey('chat-sidebar-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-settings-button')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('chat-message-list'))).dy,
+      0,
+    );
+
+    for (final key in const [
+      ValueKey('chat-sidebar-surface'),
+      ValueKey('chat-settings-surface'),
+    ]) {
+      final surface = tester.widget<Material>(find.byKey(key));
+      expect(surface.color, Colors.white);
+      expect(surface.shape, isA<CircleBorder>());
+    }
+
+    final fade = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('chat-top-fade')),
+    );
+    final gradient = (fade.decoration as BoxDecoration).gradient!;
+    expect(gradient.colors.first, Colors.white);
+    expect(gradient.colors.last.a, 0);
+  });
+
+  testWidgets('top fade switches to dark in dark mode', (tester) async {
+    await pumpChat(tester, articles: [], brightness: Brightness.dark);
+
+    final fade = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('chat-top-fade')),
+    );
+    final gradient = (fade.decoration as BoxDecoration).gradient!;
+    expect(gradient.colors.first, Colors.black);
+    expect(gradient.colors.last.a, 0);
   });
 
   testWidgets(

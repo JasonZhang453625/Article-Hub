@@ -8,7 +8,7 @@ import 'chat_citation_chips.dart';
 class ChatNoResultActions extends ConsumerWidget {
   final String query;
   final List<String> weakArticleIds;
-  final List<Article> articles;
+  final Map<String, Article> articlesById;
   final ValueChanged<String> onSuggestionTap;
   final VoidCallback onBrowseKnowledge;
   final ValueChanged<String> onCitationClick;
@@ -17,7 +17,7 @@ class ChatNoResultActions extends ConsumerWidget {
     super.key,
     required this.query,
     required this.weakArticleIds,
-    required this.articles,
+    required this.articlesById,
     required this.onSuggestionTap,
     required this.onBrowseKnowledge,
     required this.onCitationClick,
@@ -35,12 +35,16 @@ class ChatNoResultActions extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (terms.isNotEmpty) ...[
-          Text(s.tryBroaderTerm,
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: colorScheme.onSurfaceVariant)),
+          Text(
+            s.tryBroaderTerm,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
           const SizedBox(height: 6),
           Wrap(
-            spacing: 8, runSpacing: 6,
+            spacing: 8,
+            runSpacing: 6,
             children: [
               for (final term in terms)
                 ActionChip(
@@ -55,18 +59,24 @@ class ChatNoResultActions extends ConsumerWidget {
         ],
         ActionChip(
           avatar: const Icon(Icons.library_books_outlined, size: 14),
-          label: Text(s.browseKnowledgeBase, style: const TextStyle(fontSize: 11)),
+          label: Text(
+            s.browseKnowledgeBase,
+            style: const TextStyle(fontSize: 11),
+          ),
           onPressed: onBrowseKnowledge,
         ),
         if (weakArticleIds.isNotEmpty) ...[
           const SizedBox(height: 12),
-          Text(s.possiblyRelated,
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: colorScheme.onSurfaceVariant)),
+          Text(
+            s.possiblyRelated,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
           const SizedBox(height: 6),
           CitationChips(
             articleIds: weakArticleIds,
-            articles: articles,
+            articlesById: articlesById,
             onCitationClick: onCitationClick,
           ),
         ],

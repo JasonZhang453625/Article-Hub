@@ -15,23 +15,42 @@ void main() {
     () async {
       Map<String, dynamic>? payload;
       final client = MockClient.streaming((request, bodyStream) async {
-        payload = jsonDecode(await bodyStream.bytesToString());
+        if (request.method == 'POST') {
+          payload = jsonDecode(await bodyStream.bytesToString());
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode(
+                jsonEncode({
+                  'id': 'run-1',
+                  'status': 'queued',
+                  'lastEventSeq': 1,
+                }),
+              ),
+            ),
+            202,
+            headers: {'content-type': 'application/json'},
+          );
+        }
         return http.StreamedResponse(
           Stream<List<int>>.fromIterable([
             utf8.encode(
+              'id: 2\n'
               'event: agent\n'
               'data: {"type":"tool.call.started","runId":"run-1",'
               '"step":1,"callId":"call-1","tool":"web_search"}\n\n',
             ),
             utf8.encode(
+              'id: 3\n'
               'event: agent\n'
               'data: {"type":"sources","runId":"run-1","sources":['
               '{"id":"w1","title":"Docs","url":"https://example.com/docs",'
               '"content":"Current docs","score":0.9}]}\n\n',
             ),
             utf8.encode(
-              'data: {"choices":[{"delta":{"content":"Answer [w1]"}}]}\n\n'
-              'data: [DONE]\n\n',
+              'id: 4\n'
+              'event: agent\n'
+              'data: {"type":"run.result","runId":"run-1",'
+              '"answer":"Answer [w1]","sources":[]}\n\n',
             ),
           ]),
           200,
@@ -68,31 +87,51 @@ void main() {
   );
 
   test('refreshes once when Agent endpoint rejects the access token', () async {
-    var calls = 0;
-    var refreshes = 0;
-    final old = _session(_jwt('old'));
-    final fresh = _session(_jwt('fresh'));
-    final client = MockClient.streaming((request, _) async {
-      calls++;
-      if (calls == 1) {
+      var calls = 0;
+      var refreshes = 0;
+      final old = _session(_jwt('old'));
+      final fresh = _session(_jwt('fresh'));
+      final client = MockClient.streaming((request, _) async {
+        if (request.method == 'POST') {
+          calls++;
+          if (calls == 1) {
+            return http.StreamedResponse(
+              Stream<List<int>>.value(utf8.encode('{"error":"expired"}')),
+              401,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          expect(
+            request.headers['authorization'],
+            'Bearer ${fresh.accessToken}',
+          );
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode(
+                jsonEncode({
+                  'id': 'run-2',
+                  'status': 'queued',
+                  'lastEventSeq': 1,
+                }),
+              ),
+            ),
+            202,
+            headers: {'content-type': 'application/json'},
+          );
+        }
         return http.StreamedResponse(
-          Stream<List<int>>.value(utf8.encode('{"error":"expired"}')),
-          401,
-          headers: {'content-type': 'application/json'},
-        );
-      }
-      expect(request.headers['authorization'], 'Bearer ${fresh.accessToken}');
-      return http.StreamedResponse(
-        Stream<List<int>>.value(
-          utf8.encode(
-            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
-            'data: [DONE]\n\n',
+          Stream<List<int>>.value(
+            utf8.encode(
+              'id: 2\n'
+              'event: agent\n'
+              'data: {"type":"run.result","runId":"run-2",'
+              '"answer":"ok","sources":[]}\n\n',
+            ),
           ),
-        ),
-        200,
-        headers: {'content-type': 'text/event-stream'},
-      );
-    });
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
     final service = HostedAgentService(
       getSession: () => old,
       refreshSession: () async {
@@ -118,12 +157,29 @@ void main() {
   test('forwards DeepSeek max thinking to the hosted Agent endpoint', () async {
     late Map<String, dynamic> payload;
     final client = MockClient.streaming((request, bodyStream) async {
-      payload = jsonDecode(await bodyStream.bytesToString());
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              jsonEncode({
+                'id': 'run-3',
+                'status': 'queued',
+                'lastEventSeq': 1,
+              }),
+            ),
+          ),
+          202,
+          headers: {'content-type': 'application/json'},
+        );
+      }
       return http.StreamedResponse(
         Stream<List<int>>.value(
           utf8.encode(
-            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
-            'data: [DONE]\n\n',
+            'id: 2\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-3",'
+            '"answer":"ok","sources":[]}\n\n',
           ),
         ),
         200,

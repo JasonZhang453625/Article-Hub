@@ -25,6 +25,16 @@ class ChatMessageRecord {
   /// Web URLs the model cited (via `[wN]`) in a web-fallback answer.
   final List<String> webUrls;
 
+  /// Durable server-side generation id for hosted AI answers. This is kept
+  /// separately from the local widget run token so a process restart can
+  /// reconnect to the same server task instead of starting a duplicate run.
+  final String? aiRunId;
+
+  /// Last server event sequence observed by the client. It makes an SSE
+  /// reconnect idempotent when the app is backgrounded or briefly loses
+  /// connectivity.
+  final int? aiRunEventSeq;
+
   const ChatMessageRecord({
     required this.id,
     required this.threadId,
@@ -41,6 +51,8 @@ class ChatMessageRecord {
     this.status = ChatMessageStatus.completed,
     this.errorCode,
     this.webUrls = const [],
+    this.aiRunId,
+    this.aiRunEventSeq,
   });
 
   ChatMessageRecord copyWith({
@@ -55,6 +67,8 @@ class ChatMessageRecord {
     ChatMessageStatus? status,
     String? errorCode,
     List<String>? webUrls,
+    String? aiRunId,
+    int? aiRunEventSeq,
   }) {
     return ChatMessageRecord(
       id: id,
@@ -72,6 +86,8 @@ class ChatMessageRecord {
       status: status ?? this.status,
       errorCode: errorCode ?? this.errorCode,
       webUrls: webUrls ?? this.webUrls,
+      aiRunId: aiRunId ?? this.aiRunId,
+      aiRunEventSeq: aiRunEventSeq ?? this.aiRunEventSeq,
     );
   }
 
@@ -88,6 +104,8 @@ class ChatMessageRecord {
       createdAt: createdAt,
       query: query,
       status: ChatMessageStatus.sending,
+      aiRunId: null,
+      aiRunEventSeq: null,
     );
   }
 }
@@ -118,13 +136,15 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       status: _statusFromStoredValue((fields[12] as num?)?.toInt()),
       errorCode: fields[13] as String?,
       webUrls: _stringList(fields[14]),
+      aiRunId: fields[15] as String?,
+      aiRunEventSeq: (fields[16] as num?)?.toInt(),
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(15)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -154,7 +174,11 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(13)
       ..write(obj.errorCode)
       ..writeByte(14)
-      ..write(obj.webUrls);
+      ..write(obj.webUrls)
+      ..writeByte(15)
+      ..write(obj.aiRunId)
+      ..writeByte(16)
+      ..write(obj.aiRunEventSeq);
   }
 }
 

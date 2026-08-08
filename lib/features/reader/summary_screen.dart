@@ -477,16 +477,24 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
             data: summary,
             selectable: true,
             styleSheet: MarkdownStyleSheet(
-              p: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+              p: theme.textTheme.bodyLarge?.copyWith(
+                fontSize: 17,
+                height: 1.4,
+              ),
               strong: theme.textTheme.bodyLarge?.copyWith(
-                height: 1.6,
+                fontSize: 17,
+                height: 1.4,
                 fontWeight: FontWeight.w700,
               ),
               em: theme.textTheme.bodyLarge?.copyWith(
-                height: 1.6,
+                fontSize: 17,
+                height: 1.4,
                 fontStyle: FontStyle.italic,
               ),
-              listBullet: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+              listBullet: theme.textTheme.bodyLarge?.copyWith(
+                fontSize: 17,
+                height: 1.4,
+              ),
             ),
           ),
           if (!widget.article.isFullText &&

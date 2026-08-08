@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
@@ -26,8 +27,6 @@ import 'chat_history_drawer.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
 import 'chat_tools_sheet.dart';
-import '../../shared/widgets/app_update_button.dart';
-import '../settings/app_update_dialog.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -43,14 +42,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _loading = false;
   bool _keyboardWasOpen = false;
 
+  /// Whether the jump-to-bottom button should be visible: true when the
+  /// list has content below the viewport, false when already at the bottom.
+  bool _showJumpToBottom = false;
+
   /// Monotonic token identifying the current answer run. A late result from an
   /// older run must never overwrite a newer retry.
   int _answerRunId = 0;
+
+  /// Hosted server runs are resumed one at a time because the service keeps
+  /// the latest event/source metadata on the instance.
+  bool _resumingServerRuns = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_resumePendingServerRuns());
+    });
   }
 
   @override
@@ -75,26 +85,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _loading) {
-      // Do not mark the answer as interrupted here. When the activity is
-      // merely covered by another app, the Dart future may still complete in
-      // the background. If Android kills the process instead, the persisted
-      // `sending` record is recovered by ChatSessionsNotifier on the next
-      // launch. Transport failures are handled by AiService's retry path.
-      _scrollToBottom();
+    if (state == AppLifecycleState.resumed) {
+      // Reconnect to a durable hosted run after the OS has paused the app or
+      // the network connection has been recreated. The server task itself is
+      // independent of this lifecycle callback.
+      unawaited(_resumePendingServerRuns());
     }
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
   }
 
   Future<void> _send([String? overrideQuery]) async {
@@ -121,7 +117,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         threadId: persistedUser.threadId,
         query: query,
       );
-      _scrollToBottom();
       await _runAnswer(pending: pending, history: history, runId: runId);
     } catch (error, stackTrace) {
       _handleRunFailure(
@@ -163,7 +158,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final retried = record.retrying();
     try {
       await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
-      _scrollToBottom();
       await _runAnswer(pending: retried, history: history, runId: runId);
     } catch (error, stackTrace) {
       _handleRunFailure(
@@ -188,6 +182,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required int runId,
   }) async {
     final sessions = ref.read(chatSessionsProvider.notifier);
+    var activePending = pending;
     final settings = ref.read(settingsProvider).valueOrNull;
     final s = ref.read(stringsProvider);
     Future<void> finish(ChatMessageRecord updated) =>
@@ -251,7 +246,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!mounted || runId != _answerRunId || delta.isEmpty) return;
       answerStarted = true;
       streamedAnswer.write(delta);
-      final partial = pending.copyWith(
+      final partial = activePending.copyWith(
         content: streamedAnswer.toString(),
         status: ChatMessageStatus.sending,
       );
@@ -306,7 +301,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           return;
       }
       sessions.replaceMessageInMemory(
-        pending.copyWith(
+        activePending.copyWith(
           content: toolProgress.values.join('\n'),
           status: ChatMessageStatus.sending,
         ),
@@ -327,6 +322,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
         onDelta: publishDelta,
         onAgentEvent: publishAgentEvent,
+        onRunCreated: (serverRunId) async {
+          if (!mounted || runId != _answerRunId) return;
+          activePending = activePending.copyWith(
+            aiRunId: serverRunId,
+            aiRunEventSeq: 0,
+            status: ChatMessageStatus.sending,
+          );
+          // Persist the server id before the first answer event. If Android
+          // kills the process immediately afterwards, the next launch can
+          // still reconnect instead of treating this as an orphaned request.
+          await sessions.updateMessage(activePending);
+        },
+        idempotencyKey: pending.id,
       );
       await partialPersistChain;
       if (runId != _answerRunId) {
@@ -337,7 +345,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       switch (result.outcome) {
         case RagConversationOutcome.answer:
           await finish(
-            pending.copyWith(
+            activePending.copyWith(
               content: result.answer ?? streamedAnswer.toString(),
               articleIds: result.citedIds,
               webUrls: result.webUrls,
@@ -349,7 +357,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           break;
         case RagConversationOutcome.noResult:
           await finish(
-            pending.copyWith(
+            activePending.copyWith(
               content: s.notEnoughInfo,
               isNoResult: true,
               weakArticleIds: result.weakArticleIds,
@@ -364,7 +372,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           final answer = (result.answer ?? streamedAnswer.toString()).trim();
           final friendlyError = localizedAiErrorMessage(s, result.error);
           await finish(
-            pending.copyWith(
+            activePending.copyWith(
               content: answer.isEmpty
                   ? friendlyError
                   : '$answer\n\n$friendlyError',
@@ -382,10 +390,118 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final friendlyError = localizedAiErrorMessage(s, error);
       final answer = streamedAnswer.toString().trim();
       await finish(
-        pending.copyWith(
+        activePending.copyWith(
           content: answer.isEmpty ? friendlyError : '$answer\n\n$friendlyError',
           status: ChatMessageStatus.failed,
           errorCode: 'unexpected_error',
+        ),
+      );
+    }
+  }
+
+  Future<void> _resumePendingServerRuns() async {
+    if (!mounted || _resumingServerRuns) return;
+    final hostedAgent = ref.read(hostedAgentServiceProvider);
+    if (hostedAgent == null) return;
+
+    _resumingServerRuns = true;
+    try {
+      final sessions = ref.read(chatSessionsProvider.notifier);
+      final pending = await sessions.pendingServerMessages();
+      for (final message in pending) {
+        final runId = message.aiRunId;
+        if (!mounted || runId == null || runId.trim().isEmpty) continue;
+        await _resumeOneServerRun(
+          message,
+          runId: runId,
+          hostedAgent: hostedAgent,
+        );
+      }
+    } catch (error, stackTrace) {
+      developer.log(
+        'failed to resume hosted chat runs',
+        name: 'memora.chat',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _resumingServerRuns = false;
+    }
+  }
+
+  Future<void> _resumeOneServerRun(
+    ChatMessageRecord message, {
+    required String runId,
+    required HostedAgentService hostedAgent,
+  }) async {
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    final buffer = StringBuffer();
+
+    bool isStillCurrent() {
+      final current = ref.read(chatSessionsProvider).valueOrNull;
+      final record = current == null
+          ? null
+          : _findMessage(current.messages, message.id);
+      return record?.aiRunId == runId &&
+          record?.status == ChatMessageStatus.sending;
+    }
+
+    try {
+      await for (final delta in hostedAgent.resumeStream(runId)) {
+        if (!isStillCurrent()) return;
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        await sessions.updateMessage(
+          message.copyWith(
+            content: buffer.toString(),
+            status: ChatMessageStatus.sending,
+            aiRunEventSeq: hostedAgent.lastEventSeq,
+            webUrls: hostedAgent.lastWebUrls,
+          ),
+        );
+      }
+
+      if (!isStillCurrent()) return;
+      final answer = buffer.toString().trim();
+      final s = ref.read(stringsProvider);
+      if (answer.isEmpty) {
+        final error = localizedAiErrorMessage(
+          s,
+          hostedAgent.lastError ?? 'Hosted Agent returned an empty answer.',
+        );
+        await sessions.updateMessage(
+          message.copyWith(
+            content: error,
+            status: ChatMessageStatus.failed,
+            errorCode: 'hosted_run_failed',
+            aiRunEventSeq: hostedAgent.lastEventSeq,
+          ),
+        );
+        return;
+      }
+      await sessions.updateMessage(
+        message.copyWith(
+          content: answer,
+          status: ChatMessageStatus.completed,
+          webUrls: hostedAgent.lastWebUrls,
+          aiRunEventSeq: hostedAgent.lastEventSeq,
+        ),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'hosted chat run resume failed',
+        name: 'memora.chat',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!isStillCurrent()) return;
+      final friendly = localizedAiErrorMessage(ref.read(stringsProvider), error);
+      await sessions.updateMessage(
+        message.copyWith(
+          content: friendly,
+          status: ChatMessageStatus.failed,
+          errorCode: 'hosted_run_failed',
+          aiRunEventSeq: hostedAgent.lastEventSeq,
         ),
       );
     }
@@ -456,8 +572,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (runId != _answerRunId) return;
     if (mounted) {
       setState(() => _loading = false);
-      _scrollToBottom();
     }
+  }
+
+  /// Updates the jump-to-bottom button's visibility as the user scrolls:
+  /// shown whenever the viewport is not at the very bottom of the list.
+  void _onListScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final atBottom =
+        position.pixels >= position.maxScrollExtent - 1 &&
+        position.maxScrollExtent > 0;
+    final show = !atBottom && position.maxScrollExtent > 0;
+    if (show != _showJumpToBottom) {
+      setState(() => _showJumpToBottom = show);
+    }
+  }
+
+  /// User-triggered scroll to the latest message (jump-to-bottom button).
+  void _jumpToBottom() {
+    if (!_scrollController.hasClients) return;
+    FocusScope.of(context).unfocus();
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void _showChatTools() {
@@ -498,6 +638,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void _showChatSettings() {
     final settings = ref.read(settingsProvider).valueOrNull;
     if (settings == null) return;
+    FocusScope.of(context).unfocus();
 
     Navigator.of(context).push(
       PageRouteBuilder<void>(
@@ -528,7 +669,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             builder: (context, _) => Align(
               alignment: Alignment.bottomCenter,
               child: FractionalTranslation(
-                translation: Offset(0, 1 - curved.value),
+                // The sheet itself is half the viewport tall, so moving the
+                // full route by half a viewport keeps the entry motion flush
+                // with the bottom edge instead of starting a screen away.
+                translation: Offset(0, 0.5 * (1 - curved.value)),
                 child: child,
               ),
             ),
@@ -624,12 +768,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   Future<void> _selectThread(String threadId) async {
     await ref.read(chatSessionsProvider.notifier).selectThread(threadId);
-    _scrollToBottom();
   }
 
   @override
   Widget build(BuildContext context) {
     final articles = ref.watch(articlesProvider).valueOrNull ?? [];
+    final articlesById = {for (final article in articles) article.id: article};
     final hasKnowledge = articles.any(
       (a) => a.processingStatus == ProcessingStatus.completed && a.hasMemory,
     );
@@ -641,111 +785,258 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             .map(ChatMessage.fromRecord)
             .toList(growable: false) ??
         const <ChatMessage>[];
+    final hasPendingServerRun = messages.any(
+      (message) => message.isPending && message.id.isNotEmpty,
+    );
+    if (chatState != null && hasPendingServerRun) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_resumePendingServerRuns());
+      });
+    }
     final chatUnavailable = chatAsync.hasError || chatAsync.isLoading;
-    final activeThreadTitle = _activeThreadTitle(chatState, s.tabChat);
-    final drawerEnabled = !_loading && chatState != null;
+    final drawerEnabled =
+        !_loading && !hasPendingServerRun && chatState != null;
+    final brightness = Theme.of(context).brightness;
+    final topInset = MediaQuery.paddingOf(context).top;
 
-    return Scaffold(
-      // The outer shell Scaffold resizes for the keyboard (default), which
-      // pins the NavigationBar to the screen bottom so it stays hidden
-      // behind the keyboard instead of floating up with it. ChatScreen
-      // disables its own resize to avoid double-compressing the layout.
-      resizeToAvoidBottomInset: false,
-      // Let the drawer be pulled out by a swipe starting anywhere on screen
-      // (edge width 0 → full-width drag), not just the left edge.
-      drawerEdgeDragWidth: 0,
-      drawerEnableOpenDragGesture: drawerEnabled,
-      drawer: chatState == null
-          ? null
-          : ChatHistoryDrawer(
-              threads: chatState.threads,
-              activeThreadId: chatState.activeThreadId,
-              s: s,
-              enabled: !_loading,
-              onNewThread: _startNewThread,
-              onSelectThread: _selectThread,
-              onDeleteThread: ref
-                  .read(chatSessionsProvider.notifier)
-                  .deleteThread,
-            ),
-      appBar: AppBar(
-        leading: Builder(
-          builder: (drawerContext) => IconButton(
-            key: const ValueKey('chat-sidebar-button'),
-            icon: const Icon(Icons.menu_rounded),
-            tooltip: s.chatHistory,
-            onPressed: drawerEnabled
-                ? () {
-                    FocusScope.of(context).unfocus();
-                    Scaffold.of(drawerContext).openDrawer();
-                  }
-                : null,
-          ),
-        ),
-        title: Text(activeThreadTitle, overflow: TextOverflow.ellipsis),
-        actions: [
-          AppUpdateButton(onPressed: () => showAppUpdateDialog(context)),
-          IconButton(
-            icon: const Icon(Icons.tune_rounded),
-            tooltip: s.chatSettings,
-            onPressed: _showChatSettings,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: chatAsync.isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : chatAsync.hasError
-                ? Center(child: Text(s.failedToLoad))
-                : messages.isEmpty
-                ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      return ChatBubble(
-                        key: ValueKey('chat-message-reveal-${message.id}'),
-                        message: message,
-                        articles: articles,
-                        onFeedback: (feedback) =>
-                            _onFeedback(message.id, message.logId, feedback),
-                        onCitationClick: (articleId) =>
-                            _onCitationClick(message.logId, articleId),
-                        onSuggestionTap: _send,
-                        onRetry: _retry,
-                        onSave: _saveAnswerToMemory,
-                        onBrowseKnowledge: () {
-                          context.go(AppRoutes.knowledge);
-                        },
-                      );
-                    },
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: brightness == Brightness.dark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
+      child: Scaffold(
+        // The outer shell Scaffold resizes for the keyboard (default), which
+        // pins the NavigationBar to the screen bottom so it stays hidden
+        // behind the keyboard instead of floating up with it. ChatScreen
+        // disables its own resize to avoid double-compressing the layout.
+        resizeToAvoidBottomInset: false,
+        // Let the drawer be pulled out by a swipe starting anywhere on screen
+        // (edge width 0 → full-width drag), not just the left edge.
+        drawerEdgeDragWidth: 0,
+        drawerEnableOpenDragGesture: drawerEnabled,
+        drawer: chatState == null
+            ? null
+            : ChatHistoryDrawer(
+                threads: chatState.threads,
+                activeThreadId: chatState.activeThreadId,
+                s: s,
+                enabled: !_loading && !hasPendingServerRun,
+                onNewThread: _startNewThread,
+                onSelectThread: _selectThread,
+                onDeleteThread: ref
+                    .read(chatSessionsProvider.notifier)
+                    .deleteThread,
+              ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            Column(
+              children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: chatAsync.isLoading
+                            ? const Center(child: CircularProgressIndicator())
+                            : chatAsync.hasError
+                            ? Center(child: Text(s.failedToLoad))
+                            : messages.isEmpty
+                            ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
+                            : NotificationListener<ScrollNotification>(
+                                onNotification: (notification) {
+                                  if (notification.metrics.axis ==
+                                      Axis.vertical) {
+                                    _onListScroll();
+                                  }
+                                  return false;
+                                },
+                                child: ListView.builder(
+                                  key: const ValueKey('chat-message-list'),
+                                  controller: _scrollController,
+                                  // Keep a bounded amount of already-built
+                                  // rich message UI around the viewport. This
+                                  // avoids reparsing long Markdown answers
+                                  // during quick scrolling.
+                                  cacheExtent: 800,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  itemCount: messages.length,
+                                  itemBuilder: (context, index) {
+                                    final message = messages[index];
+                                    return ChatBubble(
+                                      key: ValueKey(
+                                        'chat-message-reveal-${message.id}',
+                                      ),
+                                      message: message,
+                                      articlesById: articlesById,
+                                      onFeedback: (feedback) => _onFeedback(
+                                        message.id,
+                                        message.logId,
+                                        feedback,
+                                      ),
+                                      onCitationClick: (articleId) =>
+                                          _onCitationClick(
+                                            message.logId,
+                                            articleId,
+                                          ),
+                                      onSuggestionTap: _send,
+                                      onRetry: _retry,
+                                      onSave: _saveAnswerToMemory,
+                                      onBrowseKnowledge: () {
+                                        context.go(AppRoutes.knowledge);
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                      ),
+                      // Jump-to-bottom button: centered above the input bar,
+                      // shown only while the viewport is not at the bottom.
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 12,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: AnimatedOpacity(
+                            opacity: _showJumpToBottom ? 1 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOut,
+                            child: IgnorePointer(
+                              ignoring: !_showJumpToBottom,
+                              child: _ChatTopButton(
+                                surfaceKey: const ValueKey('chat-jump-surface'),
+                                buttonKey: const ValueKey('chat-jump-button'),
+                                icon: Icons.arrow_downward_rounded,
+                                tooltip: s.chatJumpToBottom,
+                                onPressed: _showJumpToBottom
+                                    ? _jumpToBottom
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-          ),
-          ChatInputBar(
-            controller: _controller,
-            loading: _loading || chatUnavailable,
-            s: s,
-            onSend: () => _send(),
-            onOpenTools: _showChatTools,
-          ),
-        ],
+                ),
+                ChatInputBar(
+                  controller: _controller,
+                  loading: _loading || hasPendingServerRun || chatUnavailable,
+                  s: s,
+                  onSend: () => _send(),
+                  onOpenTools: _showChatTools,
+                ),
+              ],
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: topInset + 88,
+              child: _ChatTopFade(brightness: brightness),
+            ),
+            Positioned(
+              top: topInset + 8,
+              left: 4,
+              child: Builder(
+                builder: (drawerContext) => _ChatTopButton(
+                  surfaceKey: const ValueKey('chat-sidebar-surface'),
+                  buttonKey: const ValueKey('chat-sidebar-button'),
+                  icon: Icons.menu_rounded,
+                  tooltip: s.chatHistory,
+                  onPressed: drawerEnabled
+                      ? () {
+                          FocusScope.of(context).unfocus();
+                          Scaffold.of(drawerContext).openDrawer();
+                        }
+                      : null,
+                ),
+              ),
+            ),
+            Positioned(
+              top: topInset + 8,
+              right: 4,
+              child: _ChatTopButton(
+                surfaceKey: const ValueKey('chat-settings-surface'),
+                buttonKey: const ValueKey('chat-settings-button'),
+                icon: Icons.tune_rounded,
+                tooltip: s.chatSettings,
+                onPressed: _showChatSettings,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+}
 
-  String _activeThreadTitle(ChatSessionState? state, String fallback) {
-    final activeThreadId = state?.activeThreadId;
-    if (activeThreadId == null) return fallback;
-    for (final thread in state!.threads) {
-      if (thread.id == activeThreadId) return thread.title;
-    }
-    return fallback;
+class _ChatTopFade extends StatelessWidget {
+  final Brightness brightness;
+
+  const _ChatTopFade({required this.brightness});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = brightness == Brightness.dark ? Colors.black : Colors.white;
+    return IgnorePointer(
+      child: DecoratedBox(
+        key: const ValueKey('chat-top-fade'),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [color, color.withAlpha(242), color.withAlpha(0)],
+            stops: const [0, 0.42, 1],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatTopButton extends StatelessWidget {
+  final Key surfaceKey;
+  final Key buttonKey;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  const _ChatTopButton({
+    required this.surfaceKey,
+    required this.buttonKey,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 48,
+      child: Center(
+        child: Material(
+          key: surfaceKey,
+          color: Colors.white,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: IconButton(
+            key: buttonKey,
+            icon: Icon(icon),
+            tooltip: tooltip,
+            onPressed: onPressed,
+            style: IconButton.styleFrom(
+              foregroundColor: const Color(0xFF10273F),
+              disabledForegroundColor: const Color(0xFF8FA3B1),
+              minimumSize: const Size.square(40),
+              maximumSize: const Size.square(40),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

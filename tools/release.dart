@@ -221,6 +221,7 @@ bool _isUnrelatedPath(String path) {
       path == '.git' ||
       path.startsWith('.git/') ||
       path == 'skills-lock.json' ||
+      path.startsWith('_backend_staging/') ||
       path.endsWith('.lock');
 }
 

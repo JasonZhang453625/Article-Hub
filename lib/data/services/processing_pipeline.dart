@@ -578,15 +578,12 @@ class ProcessingPipeline {
           generatedAt: DateTime.now(),
         ),
       );
-      final mergedTags = [...article.tags];
-      final existingTags = article.tags.toSet();
-      for (final tag in result.tags) {
-        if (existingTags.add(tag)) mergedTags.add(tag);
-      }
-
       return article.copyWith(
         title: newTitle ?? article.title,
-        tags: mergedTags,
+        // Tags come from the same structured-memory response. Replacing the
+        // previous set keeps repeated regenerations from accumulating stale
+        // AI labels indefinitely.
+        tags: result.tags,
         summary: Article.clearValue,
         memory: generatedMemory,
         isFullText: false,

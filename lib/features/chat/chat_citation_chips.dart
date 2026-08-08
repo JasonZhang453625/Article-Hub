@@ -7,13 +7,13 @@ import '../../data/models/passage.dart';
 
 class CitationChips extends StatelessWidget {
   final List<String> articleIds;
-  final List<Article> articles;
+  final Map<String, Article> articlesById;
   final ValueChanged<String> onCitationClick;
 
   const CitationChips({
     super.key,
     required this.articleIds,
-    required this.articles,
+    required this.articlesById,
     required this.onCitationClick,
   });
 
@@ -24,7 +24,7 @@ class CitationChips extends StatelessWidget {
       spacing: 2,
       runSpacing: 0,
       children: articleIds.map((id) {
-        final article = articles.where((a) => a.id == id).firstOrNull;
+        final article = articlesById[id];
         if (article == null) return const SizedBox.shrink();
         final source = article.source;
         return ActionChip(
@@ -43,10 +43,7 @@ class CitationChips extends StatelessWidget {
           visualDensity: VisualDensity.compact,
           onPressed: () {
             onCitationClick(article.id);
-            context.push(
-              AppRoutes.summaryWithId(article.id),
-              extra: article,
-            );
+            context.push(AppRoutes.summaryWithId(article.id), extra: article);
           },
         );
       }).toList(),
@@ -61,11 +58,7 @@ class WebCitationChips extends StatelessWidget {
   final List<String> urls;
   final String? sourceLabel;
 
-  const WebCitationChips({
-    super.key,
-    required this.urls,
-    this.sourceLabel,
-  });
+  const WebCitationChips({super.key, required this.urls, this.sourceLabel});
 
   @override
   Widget build(BuildContext context) {

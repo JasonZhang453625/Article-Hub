@@ -49,8 +49,10 @@ class ChatInputBar extends StatelessWidget {
                   customBorder: const CircleBorder(),
                   onTap: loading ? null : onOpenTools,
                   child: Container(
-                    width: 36,
-                    height: 36,
+                    // Match the filled send button's Material tap target and
+                    // visible circle so the input controls align visually.
+                    width: 48,
+                    height: 48,
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surface,
                       shape: BoxShape.circle,
@@ -87,6 +89,7 @@ class ChatInputBar extends StatelessWidget {
               ),
               const SizedBox(width: 4),
               IconButton.filled(
+                key: const ValueKey('chat-send-button'),
                 onPressed: loading ? null : onSend,
                 icon: loading
                     ? const SizedBox(

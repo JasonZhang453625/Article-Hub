@@ -12,7 +12,7 @@ import 'chat_typing_indicator.dart';
 
 class ChatBubble extends ConsumerWidget {
   final ChatMessage message;
-  final List<Article> articles;
+  final Map<String, Article> articlesById;
   final ValueChanged<int> onFeedback;
   final ValueChanged<String> onCitationClick;
   final ValueChanged<String> onSuggestionTap;
@@ -23,7 +23,7 @@ class ChatBubble extends ConsumerWidget {
   const ChatBubble({
     super.key,
     required this.message,
-    required this.articles,
+    required this.articlesById,
     required this.onFeedback,
     required this.onCitationClick,
     required this.onSuggestionTap,
@@ -66,7 +66,7 @@ class ChatBubble extends ConsumerWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      s.answerInterrupted,
+                      s.aiGenericError,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -86,25 +86,39 @@ class ChatBubble extends ConsumerWidget {
     }
 
     if (isUser) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.82,
+      // User questions animate in as well: a quick fade + slight rise, so
+      // sending a message doesn't snap it into place.
+      return TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        builder: (context, value, child) => Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, 10 * (1 - value)),
+            child: child,
           ),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primary,
-            borderRadius: BorderRadius.circular(
-              18,
-            ).copyWith(bottomRight: const Radius.circular(4)),
-          ),
-          child: SelectableText(
-            message.text,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onPrimary,
-              fontSize: 16,
+        ),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.82,
+            ),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary,
+              borderRadius: BorderRadius.circular(
+                18,
+              ).copyWith(bottomRight: const Radius.circular(4)),
+            ),
+            child: SelectableText(
+              message.text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onPrimary,
+                fontSize: 16,
+              ),
             ),
           ),
         ),
@@ -112,10 +126,11 @@ class ChatBubble extends ConsumerWidget {
     }
 
     // Assistant answers render full-width (ChatGPT-style) with the text
-    // column capped at a comfortable reading width and centered. While the
-    // answer is still streaming (`isPending`), no size animation is applied:
-    // the bubble grows instantly with each token so the page height only
-    // changes on the user's own scroll, not from animated transitions.
+    // column capped at a comfortable reading width and centered. The
+    // AnimatedSize makes a streaming answer unfold like a waterfall — the
+    // bubble height grows smoothly as tokens arrive, so text appears from
+    // the top downward instead of popping in all at once. The viewport
+    // itself never auto-scrolls; only the user's own scrolling moves it.
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -123,22 +138,23 @@ class ChatBubble extends ConsumerWidget {
           data: message.text,
           selectable: true,
           styleSheet: MarkdownStyleSheet(
+            pPadding: const EdgeInsets.only(bottom: 4),
             p: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface,
               fontSize: 17,
-              height: 1.5,
+              height: 1.2,
             ),
             strong: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface,
               fontWeight: FontWeight.w700,
               fontSize: 17,
-              height: 1.5,
+              height: 1.2,
             ),
             em: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface,
               fontStyle: FontStyle.italic,
               fontSize: 17,
-              height: 1.5,
+              height: 1.2,
             ),
             code: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface,
@@ -156,7 +172,7 @@ class ChatBubble extends ConsumerWidget {
             blockquote: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
               fontSize: 17,
-              height: 1.5,
+              height: 1.2,
             ),
             blockquoteDecoration: BoxDecoration(
               border: Border(
@@ -187,7 +203,7 @@ class ChatBubble extends ConsumerWidget {
               color: theme.colorScheme.primary,
               decoration: TextDecoration.underline,
               fontSize: 17,
-              height: 1.5,
+              height: 1.2,
             ),
           ),
         ),
@@ -196,7 +212,7 @@ class ChatBubble extends ConsumerWidget {
           _InterruptedAnswerNotice(
             message: message,
             onRetry: onRetry,
-            label: s.answerInterrupted,
+            label: s.aiGenericError,
             retryLabel: s.retry,
           ),
         ],
@@ -204,7 +220,7 @@ class ChatBubble extends ConsumerWidget {
           const SizedBox(height: 12),
           CitationChips(
             articleIds: message.articleIds,
-            articles: articles,
+            articlesById: articlesById,
             onCitationClick: onCitationClick,
           ),
         ],
@@ -217,7 +233,7 @@ class ChatBubble extends ConsumerWidget {
           ChatNoResultActions(
             query: message.query ?? '',
             weakArticleIds: message.weakArticleIds,
-            articles: articles,
+            articlesById: articlesById,
             onSuggestionTap: onSuggestionTap,
             onBrowseKnowledge: onBrowseKnowledge,
             onCitationClick: onCitationClick,
@@ -248,14 +264,14 @@ class ChatBubble extends ConsumerWidget {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: message.isPending
-              ? content
-              : AnimatedSize(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: content,
-                ),
+          child: ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: content,
+            ),
+          ),
         ),
       ),
     );

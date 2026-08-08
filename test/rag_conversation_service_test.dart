@@ -140,6 +140,97 @@ void main() {
     },
   );
 
+  test(
+    'keeps a streamed answer when completion status falsely reports empty text',
+    () async {
+      final article = agentArticle();
+      final service = RagConversationService(
+        retrieve: (query, articles) async => RetrievalResult(
+          articles: [article],
+          method: RetrievalMethod.keyword,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('stream completion should be used'),
+        completeStream:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) => Stream<String>.value('A complete answer.'),
+        completionError: () => 'AI response content was empty',
+        saveLog: (_) async {},
+        promptService: _FakePromptService(),
+      );
+
+      final result = await service.ask(
+        RagConversationRequest(
+          question: 'Explain handoff',
+          articles: [article],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+        ),
+      );
+
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(result.answer, 'A complete answer.');
+      expect(result.error, isNull);
+    },
+  );
+
+  test('keeps a real completion error after partial streamed text', () async {
+    final article = agentArticle();
+    final service = RagConversationService(
+      retrieve: (query, articles) async => RetrievalResult(
+        articles: [article],
+        method: RetrievalMethod.keyword,
+        duration: Duration.zero,
+      ),
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async => fail('stream completion should be used'),
+      completeStream:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) => Stream<String>.value('Partial answer.'),
+      completionError: () => 'HTTP 503: service unavailable',
+      saveLog: (_) async {},
+      promptService: _FakePromptService(),
+    );
+
+    final result = await service.ask(
+      RagConversationRequest(
+        question: 'Explain handoff',
+        articles: [article],
+        knowledgeOnly: true,
+        detailedAnswer: false,
+        languageHint: '',
+      ),
+    );
+
+    expect(result.outcome, RagConversationOutcome.error);
+    expect(result.answer, 'Partial answer.');
+    expect(result.error, 'HTTP 503: service unavailable');
+  });
+
   test('an uncited answer does not expose every retrieved candidate', () async {
     final article = agentArticle();
     final service = RagConversationService(

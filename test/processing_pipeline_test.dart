@@ -203,7 +203,7 @@ void main() {
     test(
       'one AI request stores structured memory and generated tags',
       () async {
-        final seed = seedArticle().copyWith(tags: ['manual-tag']);
+        final seed = seedArticle().copyWith(tags: ['stale-ai-tag']);
         final notifier = await seedAndGetNotifier(seed);
         final settings = AppSettings(
           aiBaseUrl: 'https://example.com/v1',
@@ -268,7 +268,7 @@ void main() {
         expect(result?.memory?.overview, 'Generated overview.');
         expect(result?.memory?.generation?.model, 'test-model');
         expect(result?.summary, isNull);
-        expect(result?.tags, ['manual-tag', 'AI tag', 'Agent SDK']);
+        expect(result?.tags, ['AI tag', 'Agent SDK']);
         expect(result?.processingStatus, ProcessingStatus.completed);
       },
     );

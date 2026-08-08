@@ -105,7 +105,9 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   ) {
     return messages
         .map(
-          (message) => message.status == ChatMessageStatus.sending
+          (message) =>
+              message.status == ChatMessageStatus.sending &&
+                  message.aiRunId == null
               ? message.copyWith(status: ChatMessageStatus.interrupted)
               : message,
         )
@@ -116,7 +118,10 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     try {
       for (final thread in threads) {
         for (final message in _repo.getMessages(thread.id)) {
-          if (message.status != ChatMessageStatus.sending) continue;
+          if (message.status != ChatMessageStatus.sending ||
+              message.aiRunId != null) {
+            continue;
+          }
           await _repo.putMessage(
             message.copyWith(status: ChatMessageStatus.interrupted),
           );
@@ -134,11 +139,34 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     final messages = _repo.getMessages(threadId);
     final recovered = _recoverMessagesInMemory(messages);
     for (var index = 0; index < messages.length; index++) {
-      if (messages[index].status == ChatMessageStatus.sending) {
+      if (messages[index].status == ChatMessageStatus.sending &&
+          messages[index].aiRunId == null) {
         await _repo.putMessage(recovered[index]);
       }
     }
     return recovered;
+  }
+
+  /// Returns hosted generations that can be resumed after a process restart.
+  ///
+  /// A local BYOK request has no server task to reconnect to, so only records
+  /// with a durable [ChatMessageRecord.aiRunId] are returned.
+  Future<List<ChatMessageRecord>> pendingServerMessages() async {
+    await _ensureLoaded();
+    final pending = <ChatMessageRecord>[];
+    for (final thread in _repo.getThreads()) {
+      pending.addAll(
+        _repo
+            .getMessages(thread.id)
+            .where(
+              (message) =>
+                  message.role == ChatMessageRole.assistant &&
+                  message.status == ChatMessageStatus.sending &&
+                  message.aiRunId != null,
+            ),
+      );
+    }
+    return List.unmodifiable(pending);
   }
 
   Future<void> startNewThread() async {

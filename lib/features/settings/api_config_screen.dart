@@ -27,17 +27,11 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
   late final TextEditingController _imageAiBaseUrlCtrl,
       _imageAiApiKeyCtrl,
       _imageAiModelCtrl;
-  late final TextEditingController _embBaseUrlCtrl,
-      _embApiKeyCtrl,
-      _embModelCtrl;
-  late final TextEditingController _tavilyApiKeyCtrl;
   bool _initialized = false;
   bool _modeSaving = false;
   bool _aiSaving = false;
   bool _chatAiSaving = false;
   bool _imageAiSaving = false;
-  bool _embSaving = false;
-  bool _tavilySaving = false;
 
   @override
   void initState() {
@@ -51,10 +45,6 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     _imageAiBaseUrlCtrl = TextEditingController();
     _imageAiApiKeyCtrl = TextEditingController();
     _imageAiModelCtrl = TextEditingController();
-    _embBaseUrlCtrl = TextEditingController();
-    _embApiKeyCtrl = TextEditingController();
-    _embModelCtrl = TextEditingController();
-    _tavilyApiKeyCtrl = TextEditingController();
   }
 
   @override
@@ -76,10 +66,6 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     _imageAiBaseUrlCtrl.text = settings.imageAiBaseUrl;
     _imageAiApiKeyCtrl.text = settings.imageAiApiKey;
     _imageAiModelCtrl.text = settings.imageAiModel;
-    _embBaseUrlCtrl.text = settings.embeddingBaseUrl;
-    _embApiKeyCtrl.text = settings.embeddingApiKey;
-    _embModelCtrl.text = settings.embeddingModel;
-    _tavilyApiKeyCtrl.text = settings.tavilyApiKey;
   }
 
   @override
@@ -93,10 +79,6 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     _imageAiBaseUrlCtrl.dispose();
     _imageAiApiKeyCtrl.dispose();
     _imageAiModelCtrl.dispose();
-    _embBaseUrlCtrl.dispose();
-    _embApiKeyCtrl.dispose();
-    _embModelCtrl.dispose();
-    _tavilyApiKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -161,38 +143,6 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
         .read(settingsProvider.notifier)
         .setAiProviderMode(enabled ? 1 : 0);
     if (mounted) setState(() => _modeSaving = false);
-  }
-
-  Future<void> _saveEmb() async {
-    setState(() => _embSaving = true);
-    await ref
-        .read(settingsProvider.notifier)
-        .setEmbeddingConfig(
-          baseUrl: _embBaseUrlCtrl.text.trim(),
-          apiKey: _embApiKeyCtrl.text.trim(),
-          model: _embModelCtrl.text.trim(),
-        );
-    if (mounted) {
-      setState(() => _embSaving = false);
-      showAppSnackBar(
-        context,
-        message: ref.read(stringsProvider).aiSettingsSaved,
-      );
-    }
-  }
-
-  Future<void> _saveTavily() async {
-    setState(() => _tavilySaving = true);
-    await ref
-        .read(settingsProvider.notifier)
-        .setTavilyApiKey(_tavilyApiKeyCtrl.text.trim());
-    if (mounted) {
-      setState(() => _tavilySaving = false);
-      showAppSnackBar(
-        context,
-        message: ref.read(stringsProvider).aiSettingsSaved,
-      );
-    }
   }
 
   @override
@@ -347,26 +297,6 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                   outlineColor: outlineColor,
                 ),
                 const SizedBox(height: 10),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.public_rounded,
-                        size: 18,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          s.hostedWebSearchDesc,
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ] else ...[
                 _ApiCard(
                   icon: Icons.chat_bubble_rounded,
@@ -440,26 +370,6 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                   outlineColor: outlineColor,
                   isDark: isDark,
                 ),
-                const SizedBox(height: 14),
-                _ApiCard(
-                  icon: Icons.public_rounded,
-                  title: s.webSearchConfig,
-                  fields: [
-                    _field(
-                      s.webSearchApiKey,
-                      _tavilyApiKeyCtrl,
-                      'tvly-...',
-                      obscured: true,
-                    ),
-                  ],
-                  saving: _tavilySaving,
-                  onSave: _saveTavily,
-                  saveLabel: s.saveAiSettings,
-                  theme: theme,
-                  cardColor: cardColor,
-                  outlineColor: outlineColor,
-                  isDark: isDark,
-                ),
               ],
               const SizedBox(height: 14),
               SectionLabel(label: s.embeddingSection, theme: theme),
@@ -467,43 +377,11 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  settings?.hasCustomEmbeddingConfig == true
-                      ? s.usingCustom
-                      : s.usingBuiltIn,
+                  s.usingBuiltIn,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _ApiCard(
-                icon: Icons.dataset_rounded,
-                title: s.embeddingConfig,
-                fields: [
-                  _field(
-                    s.embeddingBaseUrl,
-                    _embBaseUrlCtrl,
-                    AppSettings.defaultEmbeddingBaseUrl,
-                  ),
-                  _field(
-                    s.embeddingApiKey,
-                    _embApiKeyCtrl,
-                    'sk-...',
-                    obscured: true,
-                  ),
-                  _field(
-                    s.embeddingModel,
-                    _embModelCtrl,
-                    AppSettings.defaultEmbeddingModel,
-                  ),
-                ],
-                saving: _embSaving,
-                onSave: _saveEmb,
-                saveLabel: s.saveAiSettings,
-                theme: theme,
-                cardColor: cardColor,
-                outlineColor: outlineColor,
-                isDark: isDark,
               ),
             ],
           ),
