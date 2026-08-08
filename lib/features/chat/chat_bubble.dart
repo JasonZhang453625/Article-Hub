@@ -104,7 +104,7 @@ class ChatBubble extends ConsumerWidget {
         child: Align(
           alignment: Alignment.centerRight,
           child: Container(
-            margin: const EdgeInsets.only(bottom: 12),
+            margin: const EdgeInsets.only(bottom: 18),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.82,
@@ -141,7 +141,8 @@ class ChatBubble extends ConsumerWidget {
           selectable: true,
           builders: {'pre': _CodeBlockBuilder()},
           styleSheet: MarkdownStyleSheet(
-            pPadding: const EdgeInsets.only(bottom: 8),
+            pPadding: const EdgeInsets.only(bottom: 12),
+            horizontalRuleDecoration: const BoxDecoration(),
             p: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface,
               fontSize: 17,
@@ -374,10 +375,13 @@ class _CodeBlockState extends State<_CodeBlock> {
     );
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 6),
+      // Paragraphs have a 12px trailing gap. Keep the code card 3px below
+      // its preceding paragraph, so the visible gap is 15px; use 15px below
+      // the card before the following paragraph.
+      margin: const EdgeInsets.only(top: 3, bottom: 15),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: colorScheme.outline.withValues(alpha: 0.25)),
       ),
       clipBehavior: Clip.antiAlias,

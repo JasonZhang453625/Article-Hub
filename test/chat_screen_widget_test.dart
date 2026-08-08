@@ -227,6 +227,67 @@ void main() {
     expect(find.byType(ChatTypingIndicator), findsNothing);
   });
 
+  testWidgets('keeps tools and chat history available while answering', (
+    tester,
+  ) async {
+    final streamController = StreamController<String>();
+    final conversation = RagConversationService(
+      retrieve: (query, articles) async => const RetrievalResult(
+        articles: [],
+        method: RetrievalMethod.none,
+        duration: Duration.zero,
+      ),
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async => fail('stream completion should be used'),
+      completeStream:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) => streamController.stream,
+      saveLog: (_) async {},
+      promptService: _TestChatPromptService(),
+    );
+    await pumpChat(
+      tester,
+      articles: [],
+      settings: AppSettings(
+        chatAiBaseUrl: 'https://example.com/v1',
+        chatAiApiKey: 'test-key',
+        chatKnowledgeSourceIndex: 1,
+      ),
+      conversation: conversation,
+    );
+
+    await tester.enterText(find.byType(TextField), 'keep navigating');
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pump();
+    expect(find.byType(ChatTypingIndicator), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('chat-tools-button')));
+    await tester.pump();
+    expect(find.text('Tools'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byKey(const ValueKey('chat-sidebar-button')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Chat History'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('chat-sidebar-close-button')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await streamController.close();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
     'shows tool calls without reasoning then replaces them with the final answer',
     (tester) async {
@@ -477,6 +538,33 @@ void main() {
     expect(find.byIcon(Icons.send_rounded), findsOneWidget);
   });
 
+  testWidgets(
+    'restores input focus after the tools sheet close animation completes',
+    (tester) async {
+      await pumpChat(tester, articles: []);
+
+      bool inputHasFocus() =>
+          FocusManager.instance.primaryFocus?.debugLabel == 'chat-input';
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(inputHasFocus(), isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('chat-tools-button')));
+      await tester.pump();
+      expect(find.text('Tools'), findsOneWidget);
+      expect(inputHasFocus(), isFalse);
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pump();
+      expect(inputHasFocus(), isFalse);
+
+      await tester.pumpAndSettle();
+      expect(inputHasFocus(), isTrue);
+    },
+  );
+
   testWidgets('restores the most recent local chat after rebuilding', (
     tester,
   ) async {
@@ -547,6 +635,14 @@ void main() {
     expect(find.byKey(const ValueKey('chat-sidebar-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-settings-button')), findsOneWidget);
     expect(
+      tester.getCenter(find.byKey(const ValueKey('chat-sidebar-surface'))).dx,
+      tester.getCenter(find.byKey(const ValueKey('chat-tools-button'))).dx,
+    );
+    expect(
+      tester.getCenter(find.byKey(const ValueKey('chat-settings-surface'))).dx,
+      tester.getCenter(find.byKey(const ValueKey('chat-send-button'))).dx,
+    );
+    expect(
       tester.getTopLeft(find.byKey(const ValueKey('chat-message-list'))).dy,
       0,
     );
@@ -557,8 +653,9 @@ void main() {
           )
           .dy,
       tester
-          .getBottomLeft(find.byKey(const ValueKey('chat-sidebar-surface')))
-          .dy,
+              .getBottomLeft(find.byKey(const ValueKey('chat-sidebar-surface')))
+              .dy +
+          12,
     );
 
     for (final key in const [

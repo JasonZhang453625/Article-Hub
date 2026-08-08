@@ -14,6 +14,10 @@ class ChatHistoryDrawer extends StatelessWidget {
   final Future<void> Function(String threadId, String title) onRenameThread;
   final Future<void> Function(String threadId, bool isPinned) onSetThreadPinned;
 
+  /// Called when the user asks to close the sidebar (close button, selecting
+  /// a thread, starting a new thread). The parent owns the drawer state.
+  final VoidCallback onClose;
+
   const ChatHistoryDrawer({
     super.key,
     required this.threads,
@@ -25,16 +29,20 @@ class ChatHistoryDrawer extends StatelessWidget {
     required this.onDeleteThread,
     required this.onRenameThread,
     required this.onSetThreadPinned,
+    required this.onClose,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final screenWidth = MediaQuery.sizeOf(context).width;
 
-    return Drawer(
-      width: screenWidth < 420 ? screenWidth * 0.86 : 360,
-      backgroundColor: theme.colorScheme.surfaceContainerLow,
+    // Standalone panel (no Drawer widget): the caller owns open/close and
+    // gestures, so the sidebar can be dragged with angle-aware gestures
+    // without racing the DrawerController's whole-surface swipe.
+    return Material(
+      key: const ValueKey('chat-history-panel'),
+      color: theme.colorScheme.surfaceContainerLow,
+      elevation: 8,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -50,10 +58,11 @@ class ChatHistoryDrawer extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    key: const ValueKey('chat-sidebar-close-button'),
                     tooltip: MaterialLocalizations.of(
                       context,
                     ).closeButtonTooltip,
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: onClose,
                     icon: const Icon(Icons.close_rounded),
                   ),
                 ],
@@ -229,12 +238,12 @@ class ChatHistoryDrawer extends StatelessWidget {
 
   Future<void> _startNewThread(BuildContext context) async {
     await onNewThread();
-    if (context.mounted) Navigator.pop(context);
+    onClose();
   }
 
   Future<void> _selectThread(BuildContext context, String threadId) async {
     await onSelectThread(threadId);
-    if (context.mounted) Navigator.pop(context);
+    onClose();
   }
 
   Future<void> _confirmDelete(BuildContext context, ChatThread thread) async {

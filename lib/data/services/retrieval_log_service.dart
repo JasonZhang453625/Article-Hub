@@ -139,24 +139,6 @@ class RetrievalLogService {
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
 
-  /// Returns basic stats for the quality dashboard.
-  Future<({int total, int useful, int notUseful, int noResult})>
-  getStats() async {
-    final logs = await getAll();
-    int useful = 0, notUseful = 0, noResult = 0;
-    for (final log in logs) {
-      if (log.method == 'none') noResult++;
-      if (log.feedback == 1) useful++;
-      if (log.feedback == -1) notUseful++;
-    }
-    return (
-      total: logs.length,
-      useful: useful,
-      notUseful: notUseful,
-      noResult: noResult,
-    );
-  }
-
   Future<void> clear() async {
     final box = await _openBox();
     await box.clear();

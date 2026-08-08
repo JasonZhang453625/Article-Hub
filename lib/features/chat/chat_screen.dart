@@ -38,6 +38,11 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen>
     with WidgetsBindingObserver {
   final _controller = TextEditingController();
+  final _inputFocusNode = FocusNode(debugLabel: 'chat-input');
+  final _toolsParkingFocusNode = FocusNode(
+    debugLabel: 'chat-tools-parking',
+    skipTraversal: true,
+  );
   final _scrollController = ScrollController();
   bool _loading = false;
   bool _keyboardWasOpen = false;
@@ -54,6 +59,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// the latest event/source metadata on the instance.
   bool _resumingServerRuns = false;
 
+  /// Whether the history sidebar is open.
+  bool _drawerOpen = false;
+
+  /// Horizontal offset (px) the sidebar is being dragged by; 0 when closed.
+  /// Non-zero only while a horizontal drag is in flight.
+  double _drawerDragOffset = 0;
+
+  /// True once the in-flight drag has been classified as horizontal. The
+  /// sidebar only starts following the finger after this, so vertical
+  /// scrolling on the thread list is never stolen.
+  bool _drawerDragActive = false;
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +84,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
+    _inputFocusNode.dispose();
+    _toolsParkingFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -495,7 +514,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         stackTrace: stackTrace,
       );
       if (!isStillCurrent()) return;
-      final friendly = localizedAiErrorMessage(ref.read(stringsProvider), error);
+      final friendly = localizedAiErrorMessage(
+        ref.read(stringsProvider),
+        error,
+      );
       await sessions.updateMessage(
         message.copyWith(
           content: friendly,
@@ -600,13 +622,102 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  void _showChatTools() {
+  double get _drawerWidth {
+    final width = MediaQuery.sizeOf(context).width;
+    return width < 420 ? width * 0.86 : 360;
+  }
+
+  void _openDrawer() {
+    if (_drawerOpen || !mounted) return;
     FocusScope.of(context).unfocus();
-    showModalBottomSheet<void>(
-      context: context,
+    setState(() {
+      _drawerOpen = true;
+      _drawerDragOffset = 0;
+    });
+  }
+
+  void _closeDrawer() {
+    if (!_drawerOpen) return;
+    setState(() {
+      _drawerOpen = false;
+      _drawerDragOffset = 0;
+    });
+  }
+
+  // ── Angle-aware drawer drag ──────────────────────────────────────────
+  // The drag gesture is tracked across the whole chat body. While the
+  // finger moves we compare the dominant direction: once the horizontal
+  // movement clearly outpaces the vertical one the drag is claimed by the
+  // drawer (which then follows the finger 1:1). Until then the gesture
+  // stays unclaimed, so the thread list keeps its vertical scroll.
+
+  void _onDrawerDragStart(DragStartDetails details) {
+    _drawerDragActive = false;
+    _drawerDragOffset = 0;
+  }
+
+  void _onDrawerDragUpdate(DragUpdateDetails details) {
+    final dx = details.delta.dx;
+    final dy = details.delta.dy;
+    final horizontal = dx.abs() > dy.abs() * 1.2;
+    if (!_drawerDragActive) {
+      if (!horizontal) return;
+      // Claim the drag only for the direction that makes sense for the
+      // current state: opening needs a rightward swipe, closing a leftward
+      // one. A horizontal swipe the wrong way is ignored.
+      final opening = !_drawerOpen && dx > 0;
+      final closing = _drawerOpen && dx < 0;
+      if (!opening && !closing) return;
+      _drawerDragActive = true;
+    }
+    final width = _drawerWidth;
+    // 1:1 follow while dragging.
+    setState(() {
+      _drawerDragOffset = (_drawerDragOffset + dx).clamp(-width, width);
+    });
+  }
+
+  void _onDrawerDragEnd(DragEndDetails details) {
+    if (!_drawerDragActive) return;
+    _drawerDragActive = false;
+    final width = _drawerWidth;
+    final velocity = details.primaryVelocity ?? 0;
+    final shouldOpen = _drawerOpen
+        ? velocity > 500 || _drawerDragOffset < -width * 0.4
+        : velocity < -500 || _drawerDragOffset > width * 0.4;
+    setState(() {
+      _drawerDragOffset = 0;
+      _drawerOpen = shouldOpen;
+    });
+  }
+
+  void _onDrawerDragCancel() {
+    _drawerDragActive = false;
+    _drawerDragOffset = 0;
+  }
+
+  Future<void> _showChatTools() async {
+    final restoreInputFocus = _inputFocusNode.hasFocus;
+    if (restoreInputFocus) {
+      _toolsParkingFocusNode.requestFocus();
+    } else {
+      FocusScope.of(context).unfocus();
+    }
+    final navigator = Navigator.of(context);
+    final localizations = MaterialLocalizations.of(context);
+    final route = ModalBottomSheetRoute<void>(
+      capturedThemes: InheritedTheme.capture(
+        from: context,
+        to: navigator.context,
+      ),
       backgroundColor: Colors.transparent,
-      barrierColor: Colors.black54,
+      modalBarrierColor: Colors.black54,
+      barrierLabel: localizations.scrimLabel,
+      barrierOnTapHint: localizations.scrimOnTapHint(
+        localizations.bottomSheetLabel,
+      ),
       isScrollControlled: true,
+      requestFocus: false,
       builder: (_) => Consumer(
         builder: (context, sheetRef, _) {
           final settings = sheetRef.watch(settingsProvider).valueOrNull;
@@ -633,6 +744,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         },
       ),
     );
+    await navigator.push(route);
+    await route.completed;
+    if (mounted && restoreInputFocus) {
+      _inputFocusNode.requestFocus();
+    }
   }
 
   void _showChatSettings() {
@@ -683,6 +799,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _onFeedback(String messageId, String? logId, int feedback) {
+    final record = ref
+        .read(chatSessionsProvider)
+        .valueOrNull
+        ?.messages
+        .where((message) => message.id == messageId)
+        .firstOrNull;
     unawaited(
       ref
           .read(chatSessionsProvider.notifier)
@@ -691,6 +813,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (logId != null) {
       unawaited(
         ref.read(retrievalLogServiceProvider).updateFeedback(logId, feedback),
+      );
+    }
+    if (record != null) {
+      unawaited(
+        ref
+            .read(conversationFeedbackServiceProvider)
+            .submit(
+              messageId: record.id,
+              threadId: record.threadId,
+              feedback: feedback,
+              retrievalLogId: record.logId ?? logId,
+              method: record.method,
+              isNoResult: record.isNoResult,
+            ),
       );
     }
   }
@@ -794,192 +930,274 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       });
     }
     final chatUnavailable = chatAsync.hasError || chatAsync.isLoading;
-    final drawerEnabled =
-        !_loading && !hasPendingServerRun && chatState != null;
+    // Browsing tools and chat history is safe while an answer is in flight:
+    // the pending record is persisted by id, so switching views does not
+    // cancel or overwrite the active run.
+    final drawerEnabled = chatState != null;
     final brightness = Theme.of(context).brightness;
     final topInset = MediaQuery.paddingOf(context).top;
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: brightness == Brightness.dark
-          ? SystemUiOverlayStyle.light
-          : SystemUiOverlayStyle.dark,
-      child: Scaffold(
-        // The outer shell Scaffold resizes for the keyboard (default), which
-        // pins the NavigationBar to the screen bottom so it stays hidden
-        // behind the keyboard instead of floating up with it. ChatScreen
-        // disables its own resize to avoid double-compressing the layout.
-        resizeToAvoidBottomInset: false,
-        // Let the drawer be pulled out by a swipe starting anywhere on screen
-        // (edge width 0 → full-width drag), not just the left edge.
-        drawerEdgeDragWidth: 0,
-        drawerEnableOpenDragGesture: drawerEnabled,
-        drawer: chatState == null
-            ? null
-            : ChatHistoryDrawer(
-                threads: chatState.threads,
-                activeThreadId: chatState.activeThreadId,
-                s: s,
-                enabled: !_loading && !hasPendingServerRun,
-                onNewThread: _startNewThread,
-                onSelectThread: _selectThread,
-                onDeleteThread: ref
-                    .read(chatSessionsProvider.notifier)
-                    .deleteThread,
-                onRenameThread: ref
-                    .read(chatSessionsProvider.notifier)
-                    .renameThread,
-                onSetThreadPinned: ref
-                    .read(chatSessionsProvider.notifier)
-                    .setThreadPinned,
-              ),
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            Column(
-              children: [
-                Expanded(
-                  child: Stack(
+    return Focus(
+      focusNode: _toolsParkingFocusNode,
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: brightness == Brightness.dark
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
+        child: PopScope(
+          // System back closes the sidebar first, then exits the screen.
+          canPop: !_drawerOpen,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && _drawerOpen) {
+              _closeDrawer();
+            }
+          },
+          child: Scaffold(
+            // The outer shell Scaffold resizes for the keyboard (default), which
+            // pins the NavigationBar to the screen bottom so it stays hidden
+            // behind the keyboard instead of floating up with it. ChatScreen
+            // disables its own resize to avoid double-compressing the layout.
+            resizeToAvoidBottomInset: false,
+            body: GestureDetector(
+              // Angle-aware sidebar drag: horizontal swipes drag the history
+              // sidebar, vertical swipes pass through to the message list.
+              onHorizontalDragStart: _onDrawerDragStart,
+              onHorizontalDragUpdate: _onDrawerDragUpdate,
+              onHorizontalDragEnd: _onDrawerDragEnd,
+              onHorizontalDragCancel: _onDrawerDragCancel,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Column(
                     children: [
-                      Positioned.fill(
-                        child: chatAsync.isLoading
-                            ? const Center(child: CircularProgressIndicator())
-                            : chatAsync.hasError
-                            ? Center(child: Text(s.failedToLoad))
-                            : messages.isEmpty
-                            ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
-                            : NotificationListener<ScrollNotification>(
-                                onNotification: (notification) {
-                                  if (notification.metrics.axis ==
-                                      Axis.vertical) {
-                                    _onListScroll();
-                                  }
-                                  return false;
-                                },
-                                child: ListView.builder(
-                                  key: const ValueKey('chat-message-list'),
-                                  controller: _scrollController,
-                                  // Keep a bounded amount of already-built
-                                  // rich message UI around the viewport. This
-                                  // avoids reparsing long Markdown answers
-                                  // during quick scrolling.
-                                  cacheExtent: 800,
-                                  // The list still extends behind the top
-                                  // fade, but at its minimum scroll extent the
-                                  // first bubble stops at the visible bottom
-                                  // of the two floating top buttons:
-                                  // 8 top offset + 48 Material tap surface.
-                                  padding: EdgeInsets.fromLTRB(
-                                    16,
-                                    topInset + 56,
-                                    16,
-                                    12,
-                                  ),
-                                  itemCount: messages.length,
-                                  itemBuilder: (context, index) {
-                                    final message = messages[index];
-                                    return ChatBubble(
-                                      key: ValueKey(
-                                        'chat-message-reveal-${message.id}',
-                                      ),
-                                      message: message,
-                                      articlesById: articlesById,
-                                      onFeedback: (feedback) => _onFeedback(
-                                        message.id,
-                                        message.logId,
-                                        feedback,
-                                      ),
-                                      onCitationClick: (articleId) =>
-                                          _onCitationClick(
-                                            message.logId,
-                                            articleId,
-                                          ),
-                                      onSuggestionTap: _send,
-                                      onRetry: _retry,
-                                      onSave: _saveAnswerToMemory,
-                                      onBrowseKnowledge: () {
-                                        context.go(AppRoutes.knowledge);
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: chatAsync.isLoading
+                                  ? const Center(
+                                      child: CircularProgressIndicator(),
+                                    )
+                                  : chatAsync.hasError
+                                  ? Center(child: Text(s.failedToLoad))
+                                  : messages.isEmpty
+                                  ? ChatEmptyState(
+                                      hasKnowledge: hasKnowledge,
+                                      s: s,
+                                    )
+                                  : NotificationListener<ScrollNotification>(
+                                      onNotification: (notification) {
+                                        if (notification.metrics.axis ==
+                                            Axis.vertical) {
+                                          _onListScroll();
+                                        }
+                                        return false;
                                       },
-                                    );
-                                  },
+                                      child: ListView.builder(
+                                        key: const ValueKey(
+                                          'chat-message-list',
+                                        ),
+                                        controller: _scrollController,
+                                        // Keep a bounded amount of already-built
+                                        // rich message UI around the viewport. This
+                                        // avoids reparsing long Markdown answers
+                                        // during quick scrolling.
+                                        cacheExtent: 800,
+                                        // The list still extends behind the top
+                                        // fade, but at its minimum scroll extent the
+                                        // first bubble stops 12px below the visible
+                                        // bottom of the two floating top buttons:
+                                        // 8 top + 48 Material surface + 12 gap.
+                                        padding: EdgeInsets.fromLTRB(
+                                          16,
+                                          topInset + 68,
+                                          16,
+                                          12,
+                                        ),
+                                        itemCount: messages.length,
+                                        itemBuilder: (context, index) {
+                                          final message = messages[index];
+                                          return ChatBubble(
+                                            key: ValueKey(
+                                              'chat-message-reveal-${message.id}',
+                                            ),
+                                            message: message,
+                                            articlesById: articlesById,
+                                            onFeedback: (feedback) =>
+                                                _onFeedback(
+                                                  message.id,
+                                                  message.logId,
+                                                  feedback,
+                                                ),
+                                            onCitationClick: (articleId) =>
+                                                _onCitationClick(
+                                                  message.logId,
+                                                  articleId,
+                                                ),
+                                            onSuggestionTap: _send,
+                                            onRetry: _retry,
+                                            onSave: _saveAnswerToMemory,
+                                            onBrowseKnowledge: () {
+                                              context.go(AppRoutes.knowledge);
+                                            },
+                                          );
+                                        },
+                                      ),
+                                    ),
+                            ),
+                            // Jump-to-bottom button: centered above the input bar,
+                            // shown only while the viewport is not at the bottom.
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: 12,
+                              child: Align(
+                                alignment: Alignment.bottomCenter,
+                                child: AnimatedOpacity(
+                                  opacity: _showJumpToBottom ? 1 : 0,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                  child: IgnorePointer(
+                                    ignoring: !_showJumpToBottom,
+                                    child: _ChatTopButton(
+                                      surfaceKey: const ValueKey(
+                                        'chat-jump-surface',
+                                      ),
+                                      buttonKey: const ValueKey(
+                                        'chat-jump-button',
+                                      ),
+                                      icon: Icons.arrow_downward_rounded,
+                                      tooltip: s.chatJumpToBottom,
+                                      onPressed: _showJumpToBottom
+                                          ? _jumpToBottom
+                                          : null,
+                                    ),
+                                  ),
                                 ),
                               ),
-                      ),
-                      // Jump-to-bottom button: centered above the input bar,
-                      // shown only while the viewport is not at the bottom.
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 12,
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: AnimatedOpacity(
-                            opacity: _showJumpToBottom ? 1 : 0,
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeOut,
-                            child: IgnorePointer(
-                              ignoring: !_showJumpToBottom,
-                              child: _ChatTopButton(
-                                surfaceKey: const ValueKey('chat-jump-surface'),
-                                buttonKey: const ValueKey('chat-jump-button'),
-                                icon: Icons.arrow_downward_rounded,
-                                tooltip: s.chatJumpToBottom,
-                                onPressed: _showJumpToBottom
-                                    ? _jumpToBottom
-                                    : null,
-                              ),
                             ),
-                          ),
+                          ],
                         ),
+                      ),
+                      ChatInputBar(
+                        controller: _controller,
+                        focusNode: _inputFocusNode,
+                        loading:
+                            _loading || hasPendingServerRun || chatUnavailable,
+                        s: s,
+                        onSend: () => _send(),
+                        onOpenTools: _showChatTools,
                       ),
                     ],
                   ),
-                ),
-                ChatInputBar(
-                  controller: _controller,
-                  loading: _loading || hasPendingServerRun || chatUnavailable,
-                  s: s,
-                  onSend: () => _send(),
-                  onOpenTools: _showChatTools,
-                ),
-              ],
-            ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: topInset + 88,
-              child: _ChatTopFade(brightness: brightness),
-            ),
-            Positioned(
-              top: topInset + 8,
-              left: 4,
-              child: Builder(
-                builder: (drawerContext) => _ChatTopButton(
-                  surfaceKey: const ValueKey('chat-sidebar-surface'),
-                  buttonKey: const ValueKey('chat-sidebar-button'),
-                  icon: Icons.menu_rounded,
-                  tooltip: s.chatHistory,
-                  onPressed: drawerEnabled
-                      ? () {
-                          FocusScope.of(context).unfocus();
-                          Scaffold.of(drawerContext).openDrawer();
-                        }
-                      : null,
-                ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: topInset + 88,
+                    child: _ChatTopFade(brightness: brightness),
+                  ),
+                  Positioned(
+                    top: topInset + 8,
+                    left: 0,
+                    right: 0,
+                    child: Padding(
+                      // Match ChatInputBar so each top button shares a vertical
+                      // centerline with the tool/send button below, including when
+                      // the content row reaches its 760px desktop width cap.
+                      padding: const EdgeInsets.only(left: 16, right: 8),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 760),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _ChatTopButton(
+                                surfaceKey: const ValueKey(
+                                  'chat-sidebar-surface',
+                                ),
+                                buttonKey: const ValueKey(
+                                  'chat-sidebar-button',
+                                ),
+                                icon: Icons.menu_rounded,
+                                tooltip: s.chatHistory,
+                                onPressed: drawerEnabled ? _openDrawer : null,
+                              ),
+                              _ChatTopButton(
+                                surfaceKey: const ValueKey(
+                                  'chat-settings-surface',
+                                ),
+                                buttonKey: const ValueKey(
+                                  'chat-settings-button',
+                                ),
+                                icon: Icons.tune_rounded,
+                                tooltip: s.chatSettings,
+                                onPressed: _showChatSettings,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_drawerOpen ||
+                      _drawerDragActive ||
+                      _drawerDragOffset != 0) ...[
+                    // Scrim: tap to close while open, dims the page proportionally to
+                    // how far the panel has been dragged out.
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        ignoring: !_drawerOpen,
+                        child: GestureDetector(
+                          onTap: _closeDrawer,
+                          child: AnimatedOpacity(
+                            opacity: _drawerOpen || _drawerDragOffset > 0
+                                ? 0.5
+                                : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: const ColoredBox(color: Colors.black),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: _drawerWidth,
+                      child: AnimatedSlide(
+                        offset: Offset(_drawerOpen ? 0 : -1, 0),
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                        child: Transform.translate(
+                          offset: Offset(_drawerDragOffset, 0),
+                          child: chatState == null
+                              ? const SizedBox.shrink()
+                              : ChatHistoryDrawer(
+                                  threads: chatState.threads,
+                                  activeThreadId: chatState.activeThreadId,
+                                  s: s,
+                                  enabled: true,
+                                  onNewThread: _startNewThread,
+                                  onSelectThread: _selectThread,
+                                  onDeleteThread: ref
+                                      .read(chatSessionsProvider.notifier)
+                                      .deleteThread,
+                                  onRenameThread: ref
+                                      .read(chatSessionsProvider.notifier)
+                                      .renameThread,
+                                  onSetThreadPinned: ref
+                                      .read(chatSessionsProvider.notifier)
+                                      .setThreadPinned,
+                                  onClose: _closeDrawer,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-            Positioned(
-              top: topInset + 8,
-              right: 4,
-              child: _ChatTopButton(
-                surfaceKey: const ValueKey('chat-settings-surface'),
-                buttonKey: const ValueKey('chat-settings-button'),
-                icon: Icons.tune_rounded,
-                tooltip: s.chatSettings,
-                onPressed: _showChatSettings,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

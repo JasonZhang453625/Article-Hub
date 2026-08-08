@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/features/chat/chat_bubble.dart';
 import 'package:memora/features/chat/chat_message.dart';
@@ -55,5 +56,39 @@ void main() {
 
     expect(copiedCode, 'void main() {}');
     expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+  });
+
+  testWidgets('hides horizontal rules and gives paragraphs 12px spacing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [languageIndexProvider.overrideWithValue(1)],
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              message: ChatMessage(
+                role: MessageRole.assistant,
+                text: 'First paragraph.\n\n---\n\nSecond paragraph.',
+              ),
+              articlesById: const {},
+              onFeedback: (_) {},
+              onCitationClick: (_) {},
+              onSuggestionTap: (_) {},
+              onRetry: (_) {},
+              onSave: (_) async {},
+              onBrowseKnowledge: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final markdown = tester.widget<MarkdownBody>(find.byType(MarkdownBody));
+    expect(markdown.styleSheet?.pPadding, const EdgeInsets.only(bottom: 12));
+    final horizontalRule =
+        markdown.styleSheet?.horizontalRuleDecoration as BoxDecoration;
+    expect(horizontalRule.border, isNull);
+    expect(horizontalRule.color, isNull);
   });
 }

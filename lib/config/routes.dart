@@ -15,7 +15,6 @@ import '../features/settings/appearance_screen.dart';
 import '../features/settings/api_config_screen.dart';
 import '../features/settings/operations_screen.dart';
 import '../features/settings/other_screen.dart';
-import '../features/settings/developer_screen.dart';
 import '../features/settings/source_platforms_screen.dart';
 import '../features/settings/account_screen.dart';
 import '../features/settings/login_screen.dart';
@@ -31,7 +30,6 @@ class AppRoutes {
   static const String settingsApiConfig = '/settings/api-config';
   static const String settingsOperations = '/settings/operations';
   static const String settingsOther = '/settings/other';
-  static const String settingsDeveloper = '/settings/developer';
   static const String sourcePlatforms = '/settings/source-platforms';
   static const String settingsAccount = '/settings/account';
   static const String settingsLogin = '/settings/login';
@@ -245,11 +243,6 @@ final appRouter = GoRouter(
       path: AppRoutes.settingsOther,
       pageBuilder: (context, state) =>
           _buildPage(state: state, child: const OtherScreen()),
-    ),
-    GoRoute(
-      path: AppRoutes.settingsDeveloper,
-      pageBuilder: (context, state) =>
-          _buildPage(state: state, child: const DeveloperScreen()),
     ),
     GoRoute(
       path: AppRoutes.settingsAccount,

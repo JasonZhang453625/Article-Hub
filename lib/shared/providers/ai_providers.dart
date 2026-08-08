@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
+import '../../data/services/conversation_feedback_service.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/hosted_ai_capabilities.dart';
 import '../../data/services/hosted_agent_service.dart';
@@ -54,6 +55,16 @@ final retrievalServiceProvider = Provider<RetrievalService?>((ref) {
 
 final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
   return RetrievalLogService();
+});
+
+final conversationFeedbackServiceProvider =
+    Provider<ConversationFeedbackService>((ref) {
+  final service = ConversationFeedbackService(
+    getSession: () => ref.read(currentSessionProvider),
+    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+  );
+  ref.onDispose(service.dispose);
+  return service;
 });
 
 /// Effective hosted mode is account-bound. A persisted hosted preference is

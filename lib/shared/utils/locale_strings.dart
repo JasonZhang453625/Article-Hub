@@ -214,8 +214,6 @@ class LocaleStrings {
   final String settingsOperationsDesc;
   final String settingsOther;
   final String settingsOtherDesc;
-  final String settingsDev;
-  final String settingsDevDesc;
   final String checkForUpdates;
   final String checkForUpdatesDesc;
   final String currentVersion;
@@ -557,8 +555,6 @@ class LocaleStrings {
     required this.settingsOperationsDesc,
     required this.settingsOther,
     required this.settingsOtherDesc,
-    required this.settingsDev,
-    required this.settingsDevDesc,
     required this.checkForUpdates,
     required this.checkForUpdatesDesc,
     required this.currentVersion,
@@ -944,8 +940,6 @@ class LocaleStrings {
     settingsOperationsDesc: 'Memory style, batch processing, index & more',
     settingsOther: 'Other',
     settingsOtherDesc: 'Source platforms, backup & restore',
-    settingsDev: 'Feedback Stats',
-    settingsDevDesc: 'Response feedback data (dev)',
     checkForUpdates: 'Check for Updates',
     checkForUpdatesDesc: 'Current version',
     currentVersion: 'Current version',
@@ -1300,8 +1294,6 @@ class LocaleStrings {
     settingsOperationsDesc: '批量处理、索引、剪贴板等',
     settingsOther: '其他',
     settingsOtherDesc: '来源平台、备份与恢复',
-    settingsDev: '反馈统计',
-    settingsDevDesc: '对话反馈数据（开发用）',
     checkForUpdates: '检查更新',
     checkForUpdatesDesc: '当前版本',
     currentVersion: '当前版本',

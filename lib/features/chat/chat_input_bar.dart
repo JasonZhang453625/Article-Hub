@@ -7,6 +7,7 @@ class ChatInputBar extends StatelessWidget {
   final bool loading;
   final LocaleStrings s;
   final VoidCallback onSend;
+  final FocusNode? focusNode;
 
   /// Opens the tools bottom sheet ("+" button).
   final VoidCallback onOpenTools;
@@ -18,6 +19,7 @@ class ChatInputBar extends StatelessWidget {
     required this.s,
     required this.onSend,
     required this.onOpenTools,
+    this.focusNode,
   });
 
   @override
@@ -42,12 +44,13 @@ class ChatInputBar extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 760),
           child: Row(
             children: [
+              // AI 对话工具页入口：左侧加号打开工具面板。
               Tooltip(
                 message: s.chatTools,
                 child: InkWell(
                   key: const ValueKey('chat-tools-button'),
                   customBorder: const CircleBorder(),
-                  onTap: loading ? null : onOpenTools,
+                  onTap: onOpenTools,
                   child: Container(
                     // Match the filled send button's Material tap target and
                     // visible circle so the input controls align visually.
@@ -68,6 +71,7 @@ class ChatInputBar extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: controller,
+                  focusNode: focusNode,
                   // Auto-growing input: single line initially, expands up to
                   // 5 lines as the user types, then scrolls internally.
                   minLines: 1,
