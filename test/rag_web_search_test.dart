@@ -455,6 +455,69 @@ void main() {
     expect(result.citedIds, [local.id]);
     expect(result.webUrls, isEmpty);
   });
+
+  test(
+    'hosted Agent owns web tool selection instead of eager client search',
+    () async {
+      var directSearches = 0;
+      bool? agentWebPermission;
+      final logs = <RetrievalLog>[];
+      final service = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration(milliseconds: 2),
+          candidateIds: [],
+        ),
+        webSearch: (query, {topK = 5}) async {
+          directSearches++;
+          return webHits();
+        },
+        complete:
+            ({
+              required systemPrompt,
+              required userMessage,
+              history = const [],
+              temperature = 0.3,
+              maxTokens = 800,
+            }) async => fail('plain completion must not produce the answer'),
+        agentCompleteStream:
+            ({
+              required systemPrompt,
+              required userMessage,
+              history = const [],
+              temperature = 0.3,
+              maxTokens = 800,
+              required webSearch,
+              onEvent,
+            }) async* {
+              agentWebPermission = webSearch;
+              yield 'Agent searched when useful [w1].';
+            },
+        agentWebUrls: () => const ['https://example.com/live'],
+        saveLog: (log) async => logs.add(log),
+        promptService: _WebPromptService(),
+      );
+
+      final result = await service.ask(
+        const RagConversationRequest(
+          question: 'what changed today?',
+          articles: [],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+          webSearch: true,
+        ),
+      );
+
+      expect(directSearches, 0);
+      expect(agentWebPermission, isTrue);
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(result.method, 'web');
+      expect(result.webUrls, ['https://example.com/live']);
+      expect(logs.single.webCandidateUrls, ['https://example.com/live']);
+    },
+  );
 }
 
 class _WebPromptService extends PromptService {

@@ -17,6 +17,7 @@ class ChatBubble extends ConsumerWidget {
   final ValueChanged<String> onCitationClick;
   final ValueChanged<String> onSuggestionTap;
   final ValueChanged<ChatMessage> onRetry;
+  final Future<void> Function(ChatMessage) onSave;
   final VoidCallback onBrowseKnowledge;
 
   const ChatBubble({
@@ -27,6 +28,7 @@ class ChatBubble extends ConsumerWidget {
     required this.onCitationClick,
     required this.onSuggestionTap,
     required this.onRetry,
+    required this.onSave,
     required this.onBrowseKnowledge,
   });
 
@@ -110,143 +112,150 @@ class ChatBubble extends ConsumerWidget {
     }
 
     // Assistant answers render full-width (ChatGPT-style) with the text
-    // column capped at a comfortable reading width and centered.
+    // column capped at a comfortable reading width and centered. While the
+    // answer is still streaming (`isPending`), no size animation is applied:
+    // the bubble grows instantly with each token so the page height only
+    // changes on the user's own scroll, not from animated transitions.
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        MarkdownBody(
+          data: message.text,
+          selectable: true,
+          styleSheet: MarkdownStyleSheet(
+            p: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontSize: 17,
+              height: 1.5,
+            ),
+            strong: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
+              fontSize: 17,
+              height: 1.5,
+            ),
+            em: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontStyle: FontStyle.italic,
+              fontSize: 17,
+              height: 1.5,
+            ),
+            code: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              fontFamily: 'monospace',
+              fontSize: 14,
+            ),
+            codeblockDecoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: theme.colorScheme.outline.withValues(alpha: 0.2),
+              ),
+            ),
+            blockquote: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+              fontSize: 17,
+              height: 1.5,
+            ),
+            blockquoteDecoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.4),
+                  width: 3,
+                ),
+              ),
+            ),
+            listBullet: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontSize: 17,
+            ),
+            h1: theme.textTheme.titleLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+            ),
+            h2: theme.textTheme.titleMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontSize: 19,
+              height: 1.4,
+            ),
+            h3: theme.textTheme.titleSmall?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontSize: 17,
+              height: 1.4,
+            ),
+            a: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.primary,
+              decoration: TextDecoration.underline,
+              fontSize: 17,
+              height: 1.5,
+            ),
+          ),
+        ),
+        if (message.isInterrupted) ...[
+          const SizedBox(height: 12),
+          _InterruptedAnswerNotice(
+            message: message,
+            onRetry: onRetry,
+            label: s.answerInterrupted,
+            retryLabel: s.retry,
+          ),
+        ],
+        if (message.articleIds.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          CitationChips(
+            articleIds: message.articleIds,
+            articles: articles,
+            onCitationClick: onCitationClick,
+          ),
+        ],
+        if (message.webUrls.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          WebCitationChips(urls: message.webUrls),
+        ],
+        if (message.isNoResult) ...[
+          const SizedBox(height: 12),
+          ChatNoResultActions(
+            query: message.query ?? '',
+            weakArticleIds: message.weakArticleIds,
+            articles: articles,
+            onSuggestionTap: onSuggestionTap,
+            onBrowseKnowledge: onBrowseKnowledge,
+            onCitationClick: onCitationClick,
+          ),
+        ],
+        if (message.isPending) ...[
+          const SizedBox(height: 6),
+          const ChatTypingIndicator(),
+        ] else if (!message.isNoResult &&
+            !message.isInterrupted &&
+            message.text.trim().isNotEmpty) ...[
+          const SizedBox(height: 10),
+          ChatFeedbackRow(
+            message: message,
+            onFeedback: onFeedback,
+            onRetry: onRetry,
+            onSave: onSave,
+            retryLabel: s.retry,
+            saveTooltip: s.saveAnswerTooltip,
+            saveSavingLabel: s.saveAnswerSaving,
+          ),
+        ],
+      ],
+    );
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                MarkdownBody(
-                  data: message.text,
-                  selectable: true,
-                  styleSheet: MarkdownStyleSheet(
-                    p: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 17,
-                      height: 1.5,
-                    ),
-                    strong: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 17,
-                      height: 1.5,
-                    ),
-                    em: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontStyle: FontStyle.italic,
-                      fontSize: 17,
-                      height: 1.5,
-                    ),
-                    code: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      backgroundColor:
-                          theme.colorScheme.surfaceContainerHighest,
-                      fontFamily: 'monospace',
-                      fontSize: 14,
-                    ),
-                    codeblockDecoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: theme.colorScheme.outline.withValues(alpha: 0.2),
-                      ),
-                    ),
-                    blockquote: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                      fontSize: 17,
-                      height: 1.5,
-                    ),
-                    blockquoteDecoration: BoxDecoration(
-                      border: Border(
-                        left: BorderSide(
-                          color: theme.colorScheme.primary.withValues(
-                            alpha: 0.4,
-                          ),
-                          width: 3,
-                        ),
-                      ),
-                    ),
-                    listBullet: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 17,
-                    ),
-                    h1: theme.textTheme.titleLarge?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                    ),
-                    h2: theme.textTheme.titleMedium?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 19,
-                      height: 1.4,
-                    ),
-                    h3: theme.textTheme.titleSmall?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 17,
-                      height: 1.4,
-                    ),
-                    a: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.primary,
-                      decoration: TextDecoration.underline,
-                      fontSize: 17,
-                      height: 1.5,
-                    ),
-                  ),
+          child: message.isPending
+              ? content
+              : AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: content,
                 ),
-                if (message.isInterrupted) ...[
-                  const SizedBox(height: 12),
-                  _InterruptedAnswerNotice(
-                    message: message,
-                    onRetry: onRetry,
-                    label: s.answerInterrupted,
-                    retryLabel: s.retry,
-                  ),
-                ],
-                if (message.articleIds.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  CitationChips(
-                    articleIds: message.articleIds,
-                    articles: articles,
-                    onCitationClick: onCitationClick,
-                  ),
-                ],
-                if (message.webUrls.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  WebCitationChips(urls: message.webUrls),
-                ],
-                if (message.isNoResult) ...[
-                  const SizedBox(height: 12),
-                  ChatNoResultActions(
-                    query: message.query ?? '',
-                    weakArticleIds: message.weakArticleIds,
-                    articles: articles,
-                    onSuggestionTap: onSuggestionTap,
-                    onBrowseKnowledge: onBrowseKnowledge,
-                    onCitationClick: onCitationClick,
-                  ),
-                ],
-                if (message.isPending) ...[
-                  const SizedBox(height: 6),
-                  const ChatTypingIndicator(),
-                ] else if (!message.isNoResult &&
-                    !message.isInterrupted &&
-                    message.text.trim().isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  ChatFeedbackRow(
-                    message: message,
-                    onFeedback: onFeedback,
-                    onRetry: onRetry,
-                    retryLabel: s.retry,
-                  ),
-                ],
-              ],
-            ),
-          ),
         ),
       ),
     );

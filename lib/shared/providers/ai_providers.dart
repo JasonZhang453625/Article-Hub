@@ -3,6 +3,7 @@ import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/hosted_ai_capabilities.dart';
+import '../../data/services/hosted_agent_service.dart';
 import '../../data/services/hosted_ai_service.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/prompt_service.dart';
@@ -109,6 +110,9 @@ final webSearchServiceProvider = Provider<WebSearchGateway?>((ref) {
 });
 
 final webSearchConfiguredProvider = Provider<bool>((ref) {
+  if (ref.watch(hostedAiEnabledProvider)) {
+    return ref.watch(hostedAgentServiceProvider) != null;
+  }
   return ref.watch(webSearchServiceProvider) != null;
 });
 
@@ -119,6 +123,17 @@ final hostedAiConfiguredProvider = Provider<bool>((ref) {
   if (settings == null || !ref.watch(hostedAiEnabledProvider)) return false;
   return settings.hostedAiModel.trim().isNotEmpty &&
       settings.hostedChatModel.trim().isNotEmpty;
+});
+
+final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
+  if (settings.hostedChatModel.trim().isEmpty) return null;
+  return HostedAgentService(
+    getSession: () => ref.read(currentSessionProvider),
+    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+    model: settings.hostedChatModel.trim(),
+  );
 });
 
 final summaryAiGatewayProvider = Provider<AiGateway?>((ref) {
@@ -199,6 +214,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
 
   final logService = ref.watch(retrievalLogServiceProvider);
   final webSearch = ref.watch(webSearchServiceProvider);
+  final hostedAgent = ref.watch(hostedAgentServiceProvider);
 
   return RagConversationService(
     retrieve: retrieval.retrieve,
@@ -234,7 +250,33 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             maxTokens: maxTokens,
           );
         },
-    completionError: () => ai.lastError,
+    agentCompleteStream: hostedAgent == null
+        ? null
+        : ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+            required bool webSearch,
+            void Function(HostedAgentEvent event)? onEvent,
+          }) {
+            return hostedAgent.chatStream(
+              systemPrompt: systemPrompt,
+              userMessage: userMessage,
+              history: history,
+              temperature: temperature,
+              maxTokens: maxTokens,
+              webSearch: webSearch,
+              onEvent: onEvent,
+            );
+          },
+    completionError: () => hostedAgent?.lastError ?? ai.lastError,
+    configureThinking: (level) {
+      ai.thinkingLevel = level;
+      if (hostedAgent != null) hostedAgent.thinkingLevel = level;
+    },
+    agentWebUrls: hostedAgent == null ? null : () => hostedAgent.lastWebUrls,
     saveLog: logService.save,
     promptService: PromptService(),
     webSearch: webSearch == null

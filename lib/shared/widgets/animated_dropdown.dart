@@ -104,7 +104,14 @@ class _AnimatedDropdownButtonState<T> extends State<AnimatedDropdownButton<T>> {
           key: _triggerKey,
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            _focusNode.requestFocus();
+            // Focus is kept after the menu is dismissed by tapping outside,
+            // so requestFocus() alone would be a no-op and the menu could
+            // never reopen. Open directly when focus is already held.
+            if (_focusNode.hasFocus) {
+              _openMenu();
+            } else {
+              _focusNode.requestFocus();
+            }
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),

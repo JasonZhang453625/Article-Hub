@@ -4,8 +4,28 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import '../models/ai_thinking_level.dart';
 import '../models/memory_document.dart';
 import 'prompt_service.dart';
+
+bool supportsDeepSeekThinking({required String model, String baseUrl = ''}) {
+  final normalizedModel = model.trim().toLowerCase().split('/').last;
+  return normalizedModel.contains('deepseek') ||
+      baseUrl.trim().toLowerCase().contains('deepseek');
+}
+
+Map<String, dynamic> deepSeekThinkingOptions(AiThinkingLevel level) {
+  final effort = level.deepSeekReasoningEffort;
+  if (effort == null) {
+    return {
+      'thinking': {'type': 'disabled'},
+    };
+  }
+  return {
+    'thinking': {'type': 'enabled'},
+    'reasoning_effort': effort,
+  };
+}
 
 class AiSummaryResult {
   final String? title;
@@ -32,6 +52,10 @@ abstract interface class AiGateway {
   String? get lastError;
 
   void Function(int totalTokens)? onTokensUsed;
+
+  AiThinkingLevel get thinkingLevel;
+
+  set thinkingLevel(AiThinkingLevel value);
 
   Future<AiSummaryResult> summarizeWithTitle(
     String title,
@@ -78,6 +102,9 @@ class AiService implements AiGateway {
   final PromptService _prompts;
 
   @override
+  AiThinkingLevel thinkingLevel;
+
+  @override
   String? lastError;
 
   int? lastStatusCode;
@@ -92,6 +119,7 @@ class AiService implements AiGateway {
     required this.model,
     this.timeout = defaultTimeout,
     this.retryDelay = defaultRetryDelay,
+    this.thinkingLevel = AiThinkingLevel.none,
     PromptService? promptService,
   }) : _prompts = promptService ?? PromptService();
 
@@ -113,6 +141,9 @@ class AiService implements AiGateway {
     return b.contains('mimo') || m.contains('mimo');
   }
 
+  bool get _isDeepSeek =>
+      supportsDeepSeekThinking(model: model, baseUrl: baseUrl);
+
   bool get _usesMaxCompletionTokens {
     if (_isMiMo) return true;
     final normalizedModel = model.trim().toLowerCase().split('/').last;
@@ -120,17 +151,26 @@ class AiService implements AiGateway {
         RegExp(r'^(?:o1|o3|o4)(?:[-.]|$)').hasMatch(normalizedModel);
   }
 
-  Map<String, dynamic> _outputTokenOptions(int maxTokens) {
+  Map<String, dynamic> _outputTokenOptions(
+    int maxTokens, {
+    AiThinkingLevel? chatThinkingLevel,
+  }) {
+    final options = <String, dynamic>{};
     if (_isMiMo) {
-      return {
+      options.addAll({
         'max_completion_tokens': maxTokens,
         'thinking': {'type': 'disabled'},
-      };
+      });
+    } else if (_usesMaxCompletionTokens) {
+      options['max_completion_tokens'] = maxTokens;
+    } else {
+      options['max_tokens'] = maxTokens;
     }
-    if (_usesMaxCompletionTokens) {
-      return {'max_completion_tokens': maxTokens};
+
+    if (_isDeepSeek && chatThinkingLevel != null) {
+      options.addAll(deepSeekThinkingOptions(chatThinkingLevel));
     }
-    return {'max_tokens': maxTokens};
+    return options;
   }
 
   /// Summarize content and also generate a proper article title.
@@ -473,10 +513,14 @@ class AiService implements AiGateway {
     final payload = <String, dynamic>{
       'model': model,
       'messages': messages,
-      'temperature': temperature,
       'stream': true,
     };
-    payload.addAll(_outputTokenOptions(maxTokens));
+    if (!_isDeepSeek || thinkingLevel == AiThinkingLevel.none) {
+      payload['temperature'] = temperature;
+    }
+    payload.addAll(
+      _outputTokenOptions(maxTokens, chatThinkingLevel: thinkingLevel),
+    );
 
     developer.log(
       'chatStream() usesMaxCompletionTokens=$_usesMaxCompletionTokens '

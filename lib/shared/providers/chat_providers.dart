@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/models/chat_message_record.dart';
 import '../../data/models/chat_thread.dart';
+import '../../data/models/ai_thinking_level.dart';
 import '../../data/repositories/chat_repository.dart';
 import 'article_providers.dart';
 
@@ -28,6 +29,12 @@ final chatSessionsProvider =
 ///
 /// Lives for the app session only — it is not persisted.
 final chatWebSearchEnabledProvider = StateProvider<bool>((ref) => false);
+
+/// Session-level thinking strength selected from the chat tools sheet.
+/// Provider-specific request mapping happens in the AI transport layer.
+final chatThinkingLevelProvider = StateProvider<AiThinkingLevel>(
+  (ref) => AiThinkingLevel.none,
+);
 
 class ChatSessionState {
   final List<ChatThread> threads;

@@ -4,6 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../shared/providers/app_update_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 
+Future<void> showAppUpdateDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (_) => const AppUpdateDialog(),
+  );
+}
+
 class AppUpdateDialog extends ConsumerWidget {
   const AppUpdateDialog({super.key});
 

@@ -5,7 +5,9 @@ import 'package:uuid/uuid.dart';
 export 'chat_context_window.dart' show ChatContextWindow, RagConversationTurn;
 
 import '../models/passage.dart';
+import '../models/ai_thinking_level.dart';
 import 'chat_context_window.dart';
+import 'hosted_agent_service.dart';
 import 'prompt_service.dart';
 import 'rag_citation.dart';
 import 'rag_context_builder.dart';
@@ -34,6 +36,17 @@ typedef RagCompletionStream =
       int maxTokens,
     });
 
+typedef RagAgentCompletionStream =
+    Stream<String> Function({
+      required String systemPrompt,
+      required String userMessage,
+      List<Map<String, String>> history,
+      double temperature,
+      int maxTokens,
+      required bool webSearch,
+      void Function(HostedAgentEvent event)? onEvent,
+    });
+
 typedef RagCompletionError = String? Function();
 
 typedef RagSaveLog = Future<void> Function(RetrievalLog log);
@@ -54,6 +67,7 @@ class RagConversationRequest {
   final bool webSearch;
   final int contextTokenBudget;
   final int contextWindowTokens;
+  final AiThinkingLevel thinkingLevel;
 
   const RagConversationRequest({
     required this.question,
@@ -65,6 +79,7 @@ class RagConversationRequest {
     this.webSearch = false,
     this.contextTokenBudget = 2200,
     this.contextWindowTokens = ChatContextWindow.defaultContextWindowTokens,
+    this.thinkingLevel = AiThinkingLevel.none,
   });
 }
 
@@ -148,7 +163,10 @@ class RagConversationService {
   final RagRetrieve _retrieve;
   final RagCompletion _complete;
   final RagCompletionStream? _completeStream;
+  final RagAgentCompletionStream? _agentCompleteStream;
   final RagCompletionError? _completionError;
+  final void Function(AiThinkingLevel level)? _configureThinking;
+  final List<String> Function()? _agentWebUrls;
   final RagSaveLog _saveLog;
   final PromptService _prompts;
   final RagContextBuilder _contextBuilder;
@@ -161,7 +179,10 @@ class RagConversationService {
     required RagRetrieve retrieve,
     required RagCompletion complete,
     RagCompletionStream? completeStream,
+    RagAgentCompletionStream? agentCompleteStream,
     RagCompletionError? completionError,
+    void Function(AiThinkingLevel level)? configureThinking,
+    List<String> Function()? agentWebUrls,
     required RagSaveLog saveLog,
     required PromptService promptService,
     RagContextBuilder contextBuilder = const RagContextBuilder(),
@@ -172,7 +193,10 @@ class RagConversationService {
   }) : _retrieve = retrieve,
        _complete = complete,
        _completeStream = completeStream,
+       _agentCompleteStream = agentCompleteStream,
        _completionError = completionError,
+       _configureThinking = configureThinking,
+       _agentWebUrls = agentWebUrls,
        _saveLog = saveLog,
        _prompts = promptService,
        _contextBuilder = contextBuilder,
@@ -199,7 +223,9 @@ class RagConversationService {
   Future<RagConversationResult> askWithProgress(
     RagConversationRequest request, {
     void Function(String delta)? onDelta,
+    void Function(HostedAgentEvent event)? onAgentEvent,
   }) async {
+    _configureThinking?.call(request.thinkingLevel);
     final question = request.question.trim();
     final logId = const Uuid().v4();
     final rewrittenQuery = await _queryRewriter.rewrite(
@@ -212,7 +238,8 @@ class RagConversationService {
     // sequence.
     final retrievalStopwatch = Stopwatch()..start();
     final retrievalFuture = _attemptRetrieval(rewrittenQuery, request.articles);
-    final webFuture = request.webSearch && _webSearch != null
+    final agentCanSearch = request.webSearch && _agentCompleteStream != null;
+    final webFuture = request.webSearch && !agentCanSearch && _webSearch != null
         ? _attemptWebSearch(rewrittenQuery)
         : Future.value((fatalError: null, results: const <WebSearchResult>[]));
     final retrievalAttempt = await retrievalFuture;
@@ -231,7 +258,9 @@ class RagConversationService {
       );
     }
 
-    if (retrievalAttempt.result == null && webResults.isEmpty) {
+    if (retrievalAttempt.result == null &&
+        webResults.isEmpty &&
+        !agentCanSearch) {
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
         error: retrievalAttempt.error.toString(),
@@ -261,7 +290,10 @@ class RagConversationService {
       retrievalMethod: retrieval.method,
     );
 
-    if (!useLocalContext && !useWebContext && request.knowledgeOnly) {
+    if (!useLocalContext &&
+        !useWebContext &&
+        request.knowledgeOnly &&
+        !agentCanSearch) {
       await _writeLog(
         logId: logId,
         question: question,
@@ -294,7 +326,7 @@ class RagConversationService {
           ? 'chat/length_detailed.txt'
           : 'chat/length_concise.txt';
       final baseKnowledgeRule = await _prompts.load(knowledgeRulePath);
-      final webKnowledgeRule = useWebContext
+      final webKnowledgeRule = useWebContext || agentCanSearch
           ? await _prompts.load('chat/knowledge_web.txt')
           : '';
       final knowledgeRule = [
@@ -401,7 +433,19 @@ class RagConversationService {
         history: history.map((turn) => turn.toMessage()).toList(),
         maxTokens: maxTokens,
         temperature: 0.3,
+        webSearch: request.webSearch,
         onDelta: onDelta,
+        onAgentEvent: onAgentEvent,
+      );
+
+      final agentWebUrls = _agentCompleteStream == null
+          ? const <String>[]
+          : (_agentWebUrls?.call() ?? const <String>[]);
+      final effectiveWebUrls = webUrls.isNotEmpty ? webUrls : agentWebUrls;
+      final effectiveMethod = _methodFor(
+        local: useLocalContext,
+        web: effectiveWebUrls.isNotEmpty,
+        retrievalMethod: retrieval.method,
       );
 
       final completionError = _completionError?.call()?.trim();
@@ -412,10 +456,10 @@ class RagConversationService {
           logId: logId,
           question: question,
           rewrittenQuery: rewrittenQuery,
-          method: method,
+          method: effectiveMethod,
           candidateIds: candidateIds,
           citedIds: const [],
-          webCandidateUrls: webUrls,
+          webCandidateUrls: effectiveWebUrls,
           webCitedUrls: const [],
           durationMs: retrievalStopwatch.elapsed.inMilliseconds,
         );
@@ -426,7 +470,7 @@ class RagConversationService {
               ? 'empty response'
               : completionError,
           rewrittenQuery: rewrittenQuery,
-          method: method,
+          method: effectiveMethod,
           logId: logId,
         );
       }
@@ -438,16 +482,16 @@ class RagConversationService {
       );
       final citedWebUrls = extractValidWebCitations(
         response: response,
-        urls: webUrls,
+        urls: effectiveWebUrls,
       );
       await _writeLog(
         logId: logId,
         question: question,
         rewrittenQuery: rewrittenQuery,
-        method: method,
+        method: effectiveMethod,
         candidateIds: candidateIds,
         citedIds: citedIds,
-        webCandidateUrls: webUrls,
+        webCandidateUrls: effectiveWebUrls,
         webCitedUrls: citedWebUrls,
         durationMs: retrievalStopwatch.elapsed.inMilliseconds,
       );
@@ -456,7 +500,7 @@ class RagConversationService {
         answer: response,
         rewrittenQuery: rewrittenQuery,
         citedIds: List.unmodifiable(citedIds),
-        method: method,
+        method: effectiveMethod,
         logId: logId,
         webUrls: List.unmodifiable(citedWebUrls),
       );
@@ -488,8 +532,30 @@ class RagConversationService {
     required List<Map<String, String>> history,
     required double temperature,
     required int maxTokens,
+    required bool webSearch,
     void Function(String delta)? onDelta,
+    void Function(HostedAgentEvent event)? onAgentEvent,
   }) async {
+    final agentStream = _agentCompleteStream;
+    if (agentStream != null) {
+      final buffer = StringBuffer();
+      await for (final delta in agentStream(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+        webSearch: webSearch,
+        onEvent: onAgentEvent,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+
     final stream = _completeStream;
     if (stream == null) {
       return _complete(

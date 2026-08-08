@@ -9,6 +9,7 @@ import 'shared/providers/locale_provider.dart';
 import 'shared/providers/settings_providers.dart';
 import 'shared/providers/pipeline_provider.dart';
 import 'shared/widgets/auto_sync_host.dart';
+import 'shared/widgets/app_update_host.dart';
 
 class App extends ConsumerWidget {
   const App({super.key});
@@ -72,7 +73,7 @@ class App extends ConsumerWidget {
             data: MediaQuery.of(
               context,
             ).copyWith(textScaler: TextScaler.linear(textScaleFactor)),
-            child: AutoSyncHost(child: child!),
+            child: AppUpdateHost(child: AutoSyncHost(child: child!)),
           ),
         );
       },

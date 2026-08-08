@@ -6,19 +6,27 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memora/data/models/chat_message_record.dart';
 import 'package:memora/data/models/chat_thread.dart';
+import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/data/repositories/chat_repository.dart';
+import 'package:memora/data/services/processing_pipeline.dart';
+import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
 import 'package:memora/data/services/retrieval_service.dart';
+import 'package:memora/data/services/sync_mutation_service.dart';
+import 'package:memora/data/services/sync_outbox_service.dart';
+import 'package:memora/data/services/sync_shadow_service.dart';
 import 'package:memora/features/chat/chat_screen.dart';
 import 'package:memora/features/chat/chat_typing_indicator.dart';
 import 'package:memora/shared/providers/chat_providers.dart';
+import 'package:memora/shared/providers/pipeline_provider.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
+import 'package:memora/shared/providers/sync_providers.dart';
 
 /// Phase 3.4 widget tests for the Chat screen states.
 ///
@@ -214,6 +222,88 @@ void main() {
     expect(find.textContaining('First second'), findsOneWidget);
     expect(find.byType(ChatTypingIndicator), findsNothing);
   });
+
+  testWidgets(
+    'shows tool calls without reasoning then replaces them with the final answer',
+    (tester) async {
+      final releaseTool = Completer<void>();
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('Agent stream should be used'),
+        agentCompleteStream:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+              required bool webSearch,
+              void Function(HostedAgentEvent event)? onEvent,
+            }) async* {
+              onEvent?.call(
+                const HostedAgentEvent(
+                  type: 'tool.call.started',
+                  data: {
+                    'callId': 'search-1',
+                    'tool': 'web_search',
+                    'query': '中国人口 最新数据',
+                  },
+                ),
+              );
+              await releaseTool.future;
+              onEvent?.call(
+                const HostedAgentEvent(
+                  type: 'tool.call.completed',
+                  data: {
+                    'callId': 'search-1',
+                    'tool': 'web_search',
+                    'sourceCount': 3,
+                  },
+                ),
+              );
+              yield 'Final sourced answer [w1].';
+            },
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+      await pumpChat(
+        tester,
+        articles: [],
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+          chatKnowledgeSourceIndex: 1,
+        ),
+        conversation: conversation,
+      );
+
+      await tester.enterText(find.byType(TextField), 'Search population');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining('Searching the web'), findsOneWidget);
+      expect(find.textContaining('中国人口 最新数据'), findsOneWidget);
+      expect(find.textContaining('thinking'), findsNothing);
+
+      releaseTool.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Final sourced answer'), findsOneWidget);
+      expect(find.textContaining('Searching the web'), findsNothing);
+      expect(find.textContaining('中国人口 最新数据'), findsNothing);
+    },
+  );
 
   testWidgets(
     'empty local knowledge completes the placeholder instead of leaving dots',
@@ -572,6 +662,99 @@ void main() {
     expect(find.byKey(const ValueKey('chat-thread-older')), findsNothing);
     expect(find.byKey(const ValueKey('chat-thread-recent')), findsOneWidget);
   });
+
+  testWidgets('assistant answer shows a save button and saving adds a memory', (
+    tester,
+  ) async {
+    final articles = <Article>[];
+    final repository = _InMemoryArticleRepository(articles);
+    final thread = ChatThread(
+      id: 't1',
+      title: 'Chat',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    final messages = [
+      ChatMessageRecord(
+        id: 'a1',
+        threadId: thread.id,
+        role: ChatMessageRole.assistant,
+        content: 'Here is a useful answer.',
+        createdAt: DateTime.now(),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          hiveInitProvider.overrideWith((ref) => Completer<void>().future),
+          languageIndexProvider.overrideWith((ref) => 2),
+          settingsProvider.overrideWith(
+            (ref) => _TestSettingsNotifier(ref, AppSettings()),
+          ),
+          articleRepositoryProvider.overrideWith((ref) async => repository),
+          chatRepositoryProvider.overrideWith(
+            (ref) async => _InMemoryChatRepository([thread], messages),
+          ),
+          // No-op sync layer: article.add() enqueues a cloud mutation.
+          syncMutationProvider.overrideWith((ref) => _NoopSyncMutation()),
+          // Fake pipeline: records the answer as full-text memory immediately.
+          processingPipelineProvider.overrideWith((ref) {
+            return _FakeProcessingPipeline(ref.read(articlesProvider.notifier));
+          }),
+        ],
+        child: const MaterialApp(home: ChatScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pumpAndSettle();
+
+    final saveButton = find.byKey(const ValueKey('chat-save-button-a1'));
+    expect(saveButton, findsOneWidget);
+    expect(
+      saveButton.hitTestable(),
+      findsOneWidget,
+      reason: 'save button must be tappable',
+    );
+    expect(find.byIcon(Icons.bookmark_add_outlined), findsOneWidget);
+
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    final exception = tester.takeException();
+    expect(exception, isNull, reason: 'save flow must not throw');
+    // Any snackbar (success or failure) proves the save callback ran.
+    expect(
+      find.byType(SnackBar),
+      findsWidgets,
+      reason: 'save must produce a snackbar',
+    );
+    final snackBarText = tester
+        .widget<Text>(
+          find.descendant(
+            of: find.byType(SnackBar),
+            matching: find.byType(Text),
+          ),
+        )
+        .data;
+    expect(
+      snackBarText,
+      'Answer saved to Memora',
+      reason: 'success snackbar should appear after saving, got: $snackBarText',
+    );
+
+    expect(
+      articles.any((a) => a.url == 'memora://chat/a1'),
+      isTrue,
+      reason: 'saving an answer must create a full-text memory article',
+    );
+    final saved = articles.firstWhere((a) => a.url == 'memora://chat/a1');
+    expect(saved.isFullText, isTrue);
+    expect(saved.processingStatus, ProcessingStatus.completed);
+    // No question text on this record, so the app title is the fallback.
+    expect(saved.title, 'Memora');
+  });
 }
 
 class _TestSettingsNotifier extends SettingsNotifier {
@@ -640,6 +823,50 @@ class _InMemoryArticleRepository implements ArticleRepository {
 
   @override
   Future<void> unsetFolderBatch(String folderId) async {}
+}
+
+/// No-op cloud mutation sink for tests that exercise article.add().
+class _NoopSyncMutation extends SyncMutationService {
+  _NoopSyncMutation()
+    : super(outbox: SyncOutboxService(), shadow: SyncShadowService());
+
+  @override
+  Future<void> upsert({
+    String? accountId,
+    required String collection,
+    required String itemId,
+    required Map<String, dynamic> payload,
+    int? baseEntityRevision,
+    Map<String, dynamic>? basePayload,
+  }) async {}
+}
+
+/// Pipeline double for the save-answer test: records the injected content as
+/// a completed full-text memory without touching AI/embedding services.
+class _FakeProcessingPipeline extends ProcessingPipeline {
+  _FakeProcessingPipeline(ArticlesNotifier articles)
+    : super(
+        articles: articles,
+        getSettings: () => null,
+        getFolders: () => const [],
+      );
+
+  @override
+  Future<Article?> processFile(
+    Article article,
+    String content, {
+    bool fullText = false,
+    String? fullTextFormat,
+    MemoryGeneration? fullTextGeneration,
+  }) async {
+    return article.copyWith(
+      memory: MemoryDocument.fullText(body: content, format: 'plain'),
+      isFullText: true,
+      processingStatus: ProcessingStatus.completed,
+      processingStage: Article.clearValue,
+      lastProcessedAt: DateTime.now(),
+    );
+  }
 }
 
 class _InMemoryChatRepository implements ChatRepository {

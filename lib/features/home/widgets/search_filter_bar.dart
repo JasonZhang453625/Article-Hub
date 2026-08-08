@@ -6,6 +6,9 @@ import '../../../shared/providers/filter_providers.dart';
 import '../../../shared/providers/locale_provider.dart';
 import '../../../shared/providers/passage_providers.dart';
 import '../../../shared/providers/settings_providers.dart';
+import '../../../shared/providers/app_update_provider.dart';
+import '../../../shared/widgets/app_update_button.dart';
+import '../../settings/app_update_dialog.dart';
 import 'filter_management_dialog.dart';
 
 class SearchFilterBar extends ConsumerStatefulWidget {
@@ -43,6 +46,8 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final chipBg = isDark ? theme.colorScheme.surface : Colors.white;
+    final hasUpdate =
+        ref.watch(appUpdateControllerProvider).check?.updateAvailable == true;
 
     ref.listen<List<SourcePlatform>>(visibleSourcePlatformsProvider,
         (previous, next) {
@@ -66,23 +71,41 @@ class _SearchFilterBarState extends ConsumerState<SearchFilterBar> {
           behavior: HitTestBehavior.translucent,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-            child: Container(
-              decoration: BoxDecoration(
-                color: chipBg,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: s.searchHint,
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 16),
+            child: Row(
+              children: [
+                ClipRect(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 320),
+                    curve: Curves.easeOutCubic,
+                    width: hasUpdate ? 44 : 0,
+                    child: hasUpdate
+                        ? AppUpdateButton(
+                            onPressed: () => showAppUpdateDialog(context),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
                 ),
-                onChanged: (value) {
-                  ref.read(searchQueryProvider.notifier).state = value;
-                },
-              ),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: chipBg,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: s.searchHint,
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      onChanged: (value) {
+                        ref.read(searchQueryProvider.notifier).state = value;
+                      },
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

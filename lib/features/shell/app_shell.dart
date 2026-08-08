@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/connectivity_provider.dart';
+import '../../shared/providers/home_navigation_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/breakpoints.dart';
 import 'share_handler.dart';
@@ -23,6 +24,31 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   bool _redirected = false;
+  DateTime? _lastKnowledgeTap;
+
+  static const _doubleTapWindow = Duration(milliseconds: 360);
+
+  void _handleMobileDestinationSelected({
+    required int branchIndex,
+    required int currentBranchIndex,
+  }) {
+    final now = DateTime.now();
+    final isKnowledgeTap = branchIndex == 1;
+    final isDoubleTap =
+        isKnowledgeTap &&
+        _lastKnowledgeTap != null &&
+        now.difference(_lastKnowledgeTap!) <= _doubleTapWindow;
+
+    _lastKnowledgeTap = isKnowledgeTap ? now : null;
+    widget.navigationShell.goBranch(
+      branchIndex,
+      initialLocation: branchIndex == currentBranchIndex,
+    );
+
+    if (isDoubleTap) {
+      ref.read(homeScrollToTopRequestProvider.notifier).state++;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -140,10 +166,9 @@ class _AppShellState extends ConsumerState<AppShell> {
                 destinations: destinations,
                 currentIndex: toRenderedIndex(widget.navigationShell.currentIndex),
                 onDestinationSelected: (i) {
-                  widget.navigationShell.goBranch(
-                    toBranchIndex(i),
-                    initialLocation:
-                        toBranchIndex(i) == widget.navigationShell.currentIndex,
+                  _handleMobileDestinationSelected(
+                    branchIndex: toBranchIndex(i),
+                    currentBranchIndex: widget.navigationShell.currentIndex,
                   );
                 },
                 offlineBanner: offlineBanner,

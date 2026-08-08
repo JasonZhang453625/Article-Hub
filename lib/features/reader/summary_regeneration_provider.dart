@@ -51,6 +51,11 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
   final ScheduleSummaryRegeneration? _schedule;
   final Map<String, Future<SummaryRegenerationResult>> _jobs = {};
 
+  /// Tags produced by the latest regeneration attempt per article. Kept until
+  /// the job leaves the running set so the UI can show them (and the user can
+  /// keep them) even when the queue processes the re-enqueued article.
+  final Map<String, List<String>> generatedTags = {};
+
   SummaryRegenerationController({
     SummaryRegenerationRunner? runner,
     SaveGeneratedSummary? save,
@@ -92,6 +97,9 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
     try {
       final result = await _runner!(article, settings);
       if (result.succeeded) {
+        if (result.tags.isNotEmpty) {
+          generatedTags[article.id] = result.tags;
+        }
         await _save!(
           article.id,
           result.title,
@@ -132,3 +140,12 @@ final summaryRegenerationProvider =
         schedule: ref.read(processingQueueProvider).enqueue,
       );
     });
+
+/// Latest AI-generated tags per article from the most recent regeneration.
+/// Lives on the controller so the summary screen can display them while the
+/// regenerated memory is still queued for processing.
+final summaryRegenerationTagsProvider =
+    Provider<Map<String, List<String>>>((ref) {
+  final controller = ref.watch(summaryRegenerationProvider.notifier);
+  return controller.generatedTags;
+});

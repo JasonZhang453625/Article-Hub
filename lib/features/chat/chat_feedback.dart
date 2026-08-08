@@ -7,14 +7,20 @@ class ChatFeedbackRow extends StatefulWidget {
   final ChatMessage message;
   final ValueChanged<int> onFeedback;
   final ValueChanged<ChatMessage> onRetry;
+  final Future<void> Function(ChatMessage) onSave;
   final String retryLabel;
+  final String saveTooltip;
+  final String saveSavingLabel;
 
   const ChatFeedbackRow({
     super.key,
     required this.message,
     required this.onFeedback,
     required this.onRetry,
+    required this.onSave,
     required this.retryLabel,
+    required this.saveTooltip,
+    required this.saveSavingLabel,
   });
 
   @override
@@ -23,8 +29,19 @@ class ChatFeedbackRow extends StatefulWidget {
 
 class _ChatFeedbackRowState extends State<ChatFeedbackRow> {
   int? _localFeedback;
+  bool _saving = false;
 
   int? get _effectiveFeedback => _localFeedback ?? widget.message.feedback;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onSave(widget.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +76,19 @@ class _ChatFeedbackRowState extends State<ChatFeedbackRow> {
         ),
         const SizedBox(width: 4),
         Tooltip(
+          message: widget.saveTooltip,
+          child: _FeedbackButton(
+            key: ValueKey('chat-save-button-${widget.message.id}'),
+            icon: Icons.bookmark_add_outlined,
+            activeIcon: Icons.bookmark_added_rounded,
+            isActive: false,
+            activeColor: colorScheme.primary,
+            busy: _saving,
+            onTap: _save,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Tooltip(
           message: widget.retryLabel,
           child: _FeedbackButton(
             key: ValueKey('chat-retry-button-${widget.message.id}'),
@@ -90,6 +120,7 @@ class _FeedbackButton extends StatelessWidget {
   final bool isActive;
   final Color activeColor;
   final VoidCallback onTap;
+  final bool busy;
 
   const _FeedbackButton({
     super.key,
@@ -98,22 +129,31 @@ class _FeedbackButton extends StatelessWidget {
     required this.isActive,
     required this.activeColor,
     required this.onTap,
+    this.busy = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: isActive ? null : onTap,
+      onTap: isActive || busy ? null : onTap,
       child: Padding(
         padding: const EdgeInsets.all(8),
-        child: Icon(
-          isActive ? activeIcon : icon,
-          size: 20,
-          color: isActive
-              ? activeColor
-              : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(150),
-        ),
+        child: busy
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                isActive ? activeIcon : icon,
+                size: 20,
+                color: isActive
+                    ? activeColor
+                    : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(
+                          150,
+                        ),
+              ),
       ),
     );
   }

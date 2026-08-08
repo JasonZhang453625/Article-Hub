@@ -18,6 +18,12 @@ class LocaleStrings {
   final String failedToLoad;
   final String alreadySaved;
   final String savedProcessing;
+  final String saveAnswerTooltip;
+  final String saveAnswerSaving;
+  final String saveAnswerSuccess;
+  final String saveAnswerExists;
+  final String saveAnswerFailed;
+  final String saveAnswerNoContent;
   final String processed;
   final String failed;
   final String clipboardLink;
@@ -327,6 +333,17 @@ class LocaleStrings {
   final String chatApply;
   final String chatTools;
   final String chatToolsWebSearch;
+  final String chatThinkingStrength;
+  final String chatThinkingNone;
+  final String chatThinkingLow;
+  final String chatThinkingMedium;
+  final String chatThinkingMax;
+  final String chatThinkingDeepSeekOnly;
+  final String chatToolCalling;
+  final String chatToolSearching;
+  final String chatToolCompleted;
+  final String chatToolFailed;
+  final String chatToolSources;
   final String webSearchSection;
   final String webSearchConfig;
   final String webSearchApiKey;
@@ -352,6 +369,12 @@ class LocaleStrings {
     required this.failedToLoad,
     required this.alreadySaved,
     required this.savedProcessing,
+    required this.saveAnswerTooltip,
+    required this.saveAnswerSaving,
+    required this.saveAnswerSuccess,
+    required this.saveAnswerExists,
+    required this.saveAnswerFailed,
+    required this.saveAnswerNoContent,
     required this.processed,
     required this.failed,
     required this.clipboardLink,
@@ -661,6 +684,17 @@ class LocaleStrings {
     required this.chatApply,
     required this.chatTools,
     required this.chatToolsWebSearch,
+    required this.chatThinkingStrength,
+    required this.chatThinkingNone,
+    required this.chatThinkingLow,
+    required this.chatThinkingMedium,
+    required this.chatThinkingMax,
+    required this.chatThinkingDeepSeekOnly,
+    required this.chatToolCalling,
+    required this.chatToolSearching,
+    required this.chatToolCompleted,
+    required this.chatToolFailed,
+    required this.chatToolSources,
     required this.webSearchSection,
     required this.webSearchConfig,
     required this.webSearchApiKey,
@@ -703,6 +737,12 @@ class LocaleStrings {
     failedToLoad: 'Failed to load memories',
     alreadySaved: 'Already saved',
     savedProcessing: 'Saved — processing in background',
+    saveAnswerTooltip: 'Save this answer as a memory',
+    saveAnswerSaving: 'Saving...',
+    saveAnswerSuccess: 'Answer saved to Memora',
+    saveAnswerExists: 'This answer is already saved',
+    saveAnswerFailed: 'Failed to save this answer',
+    saveAnswerNoContent: 'This answer has no content to save',
     processed: 'Processed',
     failed: 'Failed',
     clipboardLink: 'Link found on clipboard',
@@ -1049,6 +1089,18 @@ class LocaleStrings {
     chatApply: 'Apply',
     chatTools: 'Tools',
     chatToolsWebSearch: 'Web Search',
+    chatThinkingStrength: 'Thinking strength',
+    chatThinkingNone: 'None',
+    chatThinkingLow: 'Low',
+    chatThinkingMedium: 'Medium',
+    chatThinkingMax: 'Max',
+    chatThinkingDeepSeekOnly:
+        'Thinking strength is currently available for DeepSeek only.',
+    chatToolCalling: 'Calling tool',
+    chatToolSearching: 'Searching the web',
+    chatToolCompleted: 'Tool completed',
+    chatToolFailed: 'Tool failed',
+    chatToolSources: 'sources',
     webSearchSection: 'Web Search',
     webSearchConfig: 'Web Search (Tavily)',
     webSearchApiKey: 'Tavily API Key',
@@ -1076,6 +1128,12 @@ class LocaleStrings {
     failedToLoad: '加载记忆失败',
     alreadySaved: '已保存',
     savedProcessing: '已保存，后台处理中',
+    saveAnswerTooltip: '将此回答保存为记忆',
+    saveAnswerSaving: '保存中…',
+    saveAnswerSuccess: '回答已保存到记忆库',
+    saveAnswerExists: '此回答已保存',
+    saveAnswerFailed: '保存此回答失败',
+    saveAnswerNoContent: '此回答没有可保存的内容',
     processed: '已处理',
     failed: '失败',
     clipboardLink: '剪贴板链接',
@@ -1386,6 +1444,17 @@ class LocaleStrings {
     chatApply: '应用',
     chatTools: '工具',
     chatToolsWebSearch: '联网搜索',
+    chatThinkingStrength: '思考强度',
+    chatThinkingNone: '无',
+    chatThinkingLow: '低',
+    chatThinkingMedium: '中',
+    chatThinkingMax: 'Max',
+    chatThinkingDeepSeekOnly: '思考强度目前仅支持 DeepSeek 模型。',
+    chatToolCalling: '正在调用工具',
+    chatToolSearching: '正在联网搜索',
+    chatToolCompleted: '工具调用完成',
+    chatToolFailed: '工具调用失败',
+    chatToolSources: '个来源',
     webSearchSection: '联网搜索',
     webSearchConfig: '联网搜索（Tavily）',
     webSearchApiKey: 'Tavily API Key',

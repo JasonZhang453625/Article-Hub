@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:memora/data/models/ai_thinking_level.dart';
 import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/services/ai_service.dart';
 
@@ -339,6 +340,62 @@ void main() {
       expect(payload['thinking'], {'type': 'disabled'});
     },
   );
+
+  test('DeepSeek chat maps four UI levels to three provider states', () async {
+    final expected = <AiThinkingLevel, Map<String, dynamic>>{
+      AiThinkingLevel.none: {
+        'thinking': {'type': 'disabled'},
+      },
+      AiThinkingLevel.low: {
+        'thinking': {'type': 'enabled'},
+        'reasoning_effort': 'high',
+      },
+      AiThinkingLevel.medium: {
+        'thinking': {'type': 'enabled'},
+        'reasoning_effort': 'high',
+      },
+      AiThinkingLevel.max: {
+        'thinking': {'type': 'enabled'},
+        'reasoning_effort': 'max',
+      },
+    };
+
+    for (final entry in expected.entries) {
+      late Map<String, dynamic> payload;
+      final client = MockClient((request) async {
+        payload = jsonDecode(request.body) as Map<String, dynamic>;
+        return _chatResponse('ok');
+      });
+      final ai = AiService(
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'test-key',
+        model: 'deepseek-v4-pro',
+        thinkingLevel: entry.key,
+      );
+
+      await http.runWithClient(
+        () => ai.chat(systemPrompt: 's', userMessage: 'u'),
+        () => client,
+      );
+
+      expect(
+        payload['thinking'],
+        entry.value['thinking'],
+        reason: '${entry.key}',
+      );
+      expect(
+        payload['reasoning_effort'],
+        entry.value['reasoning_effort'],
+        reason: '${entry.key}',
+      );
+      expect(payload['max_tokens'], 800, reason: '${entry.key}');
+      expect(
+        payload.containsKey('temperature'),
+        entry.key == AiThinkingLevel.none,
+        reason: '${entry.key}',
+      );
+    }
+  });
 
   for (final statusCode in [429, 503]) {
     test('chat retries HTTP $statusCode once and then succeeds', () async {

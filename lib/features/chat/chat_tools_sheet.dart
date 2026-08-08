@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../data/models/ai_thinking_level.dart';
 import '../../shared/utils/locale_strings.dart';
 
 /// Bottom sheet listing chat tools (web search, future skills, …).
@@ -9,20 +11,27 @@ import '../../shared/utils/locale_strings.dart';
 class ChatToolsSheet extends StatelessWidget {
   final LocaleStrings s;
 
-  /// Whether the session-level web-search fallback is enabled.
+  /// Whether the session-level Agent web-search tool is enabled.
   final bool webSearchEnabled;
 
-  /// Whether a web search backend is configured (Tavily key set).
+  /// Whether the selected AI path exposes a web-search tool.
   final bool webSearchAvailable;
 
-  final VoidCallback onToggleWebSearch;
+  final AiThinkingLevel thinkingLevel;
+  final bool thinkingAvailable;
+
+  final ValueChanged<bool> onToggleWebSearch;
+  final ValueChanged<AiThinkingLevel> onThinkingChanged;
 
   const ChatToolsSheet({
     super.key,
     required this.s,
     required this.webSearchEnabled,
     required this.webSearchAvailable,
+    required this.thinkingLevel,
+    required this.thinkingAvailable,
     required this.onToggleWebSearch,
+    required this.onThinkingChanged,
   });
 
   @override
@@ -79,14 +88,195 @@ class ChatToolsSheet extends StatelessWidget {
                       ? null
                       : Text(s.webSearchNotConfigured),
                   value: webSearchEnabled,
-                  onChanged: webSearchAvailable
-                      ? (_) => onToggleWebSearch()
-                      : null,
+                  onChanged: webSearchAvailable ? onToggleWebSearch : null,
                 ),
               ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Icon(
+                    Icons.psychology_alt_rounded,
+                    size: 20,
+                    color: thinkingAvailable
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    s.chatThinkingStrength,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _ThinkingStrengthSlider(
+                value: thinkingLevel,
+                enabled: thinkingAvailable,
+                labels: [
+                  s.chatThinkingNone,
+                  s.chatThinkingLow,
+                  s.chatThinkingMedium,
+                  s.chatThinkingMax,
+                ],
+                semanticsLabel: s.chatThinkingStrength,
+                onChanged: onThinkingChanged,
+              ),
+              if (!thinkingAvailable) ...[
+                const SizedBox(height: 8),
+                Text(
+                  s.chatThinkingDeepSeekOnly,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ThinkingStrengthSlider extends StatelessWidget {
+  final AiThinkingLevel value;
+  final bool enabled;
+  final List<String> labels;
+  final String semanticsLabel;
+  final ValueChanged<AiThinkingLevel> onChanged;
+
+  const _ThinkingStrengthSlider({
+    required this.value,
+    required this.enabled,
+    required this.labels,
+    required this.semanticsLabel,
+    required this.onChanged,
+  });
+
+  void _selectForPosition(double dx, double width) {
+    if (!enabled || width <= 0) return;
+    final index = (dx.clamp(0, width) / width * AiThinkingLevel.values.length)
+        .floor()
+        .clamp(0, AiThinkingLevel.values.length - 1)
+        .toInt();
+    onChanged(AiThinkingLevel.values[index]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final selectedIndex = value.index;
+    return Semantics(
+      label: semanticsLabel,
+      value: labels[selectedIndex],
+      enabled: enabled,
+      increasedValue: selectedIndex < labels.length - 1
+          ? labels[selectedIndex + 1]
+          : null,
+      decreasedValue: selectedIndex > 0 ? labels[selectedIndex - 1] : null,
+      onIncrease: enabled && selectedIndex < AiThinkingLevel.values.length - 1
+          ? () => onChanged(AiThinkingLevel.values[selectedIndex + 1])
+          : null,
+      onDecrease: enabled && selectedIndex > 0
+          ? () => onChanged(AiThinkingLevel.values[selectedIndex - 1])
+          : null,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return GestureDetector(
+            key: const ValueKey('chat-thinking-slider'),
+            behavior: HitTestBehavior.opaque,
+            onTapDown: enabled
+                ? (details) => _selectForPosition(
+                    details.localPosition.dx,
+                    constraints.maxWidth,
+                  )
+                : null,
+            onHorizontalDragUpdate: enabled
+                ? (details) => _selectForPosition(
+                    details.localPosition.dx,
+                    constraints.maxWidth,
+                  )
+                : null,
+            child: Container(
+              height: 44,
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Stack(
+                children: [
+                  AnimatedAlign(
+                    key: const ValueKey('chat-thinking-thumb'),
+                    alignment: Alignment(
+                      -1 + (selectedIndex * 2 / (labels.length - 1)),
+                      0,
+                    ),
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    child: FractionallySizedBox(
+                      widthFactor: 1 / labels.length,
+                      heightFactor: 1,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: enabled
+                              ? colors.primaryContainer
+                              : colors.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: enabled
+                              ? [
+                                  BoxShadow(
+                                    color: colors.shadow.withValues(
+                                      alpha: 0.08,
+                                    ),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: List.generate(labels.length, (index) {
+                      final selected = index == selectedIndex;
+                      return Expanded(
+                        child: InkWell(
+                          key: ValueKey('chat-thinking-level-$index'),
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: enabled
+                              ? () => onChanged(AiThinkingLevel.values[index])
+                              : null,
+                          child: Center(
+                            child: AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                              style: Theme.of(context).textTheme.labelMedium!
+                                  .copyWith(
+                                    color: !enabled
+                                        ? colors.onSurface.withValues(
+                                            alpha: 0.38,
+                                          )
+                                        : selected
+                                        ? colors.onPrimaryContainer
+                                        : colors.onSurfaceVariant,
+                                    fontWeight: selected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                  ),
+                              child: Text(labels[index]),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -4,16 +4,21 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 import '../../config/routes.dart';
 import '../../data/models/chat_message_record.dart';
 import '../../data/models/passage.dart';
+import '../../data/models/source_platform.dart';
+import '../../data/services/ai_service.dart';
+import '../../data/services/hosted_agent_service.dart';
 import '../../data/services/rag_conversation_service.dart';
 import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
+import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/ai_error_messages.dart';
-import '../../shared/widgets/delayed_reveal.dart';
+import '../../shared/utils/snackbar_helpers.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
@@ -21,6 +26,8 @@ import 'chat_history_drawer.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
 import 'chat_tools_sheet.dart';
+import '../../shared/widgets/app_update_button.dart';
+import '../settings/app_update_dialog.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -235,20 +242,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
 
     final streamedAnswer = StringBuffer();
+    final toolProgress = <String, String>{};
+    var answerStarted = false;
     var lastPartialPersist = DateTime.fromMillisecondsSinceEpoch(0);
     var partialPersistChain = Future<void>.value();
 
     void publishDelta(String delta) {
       if (!mounted || runId != _answerRunId || delta.isEmpty) return;
+      answerStarted = true;
       streamedAnswer.write(delta);
       final partial = pending.copyWith(
         content: streamedAnswer.toString(),
         status: ChatMessageStatus.sending,
       );
       // Update the visible bubble for every delta, but throttle durable writes
-      // so a long answer does not turn Hive into a per-token queue.
+      // so a long answer does not turn Hive into a per-token queue. The page
+      // does NOT auto-scroll here: the viewport stays put while text streams
+      // in — only the user's own scrolling moves the page.
       sessions.replaceMessageInMemory(partial);
-      _scrollToBottom();
 
       final now = DateTime.now();
       if (now.difference(lastPartialPersist) <
@@ -266,6 +277,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       });
     }
 
+    void publishAgentEvent(HostedAgentEvent event) {
+      if (!mounted || runId != _answerRunId || answerStarted) return;
+      final tool = (event.data['tool'] ?? '').toString().trim();
+      if (tool.isEmpty) return;
+      final callId = (event.data['callId'] ?? '').toString().trim();
+      final key = callId.isEmpty ? '$tool-${toolProgress.length}' : callId;
+      switch (event.type) {
+        case 'tool.call.started':
+          final query = (event.data['query'] ?? '').toString().trim();
+          toolProgress[key] = tool == 'web_search'
+              ? query.isEmpty
+                    ? '🔎 ${s.chatToolSearching}'
+                    : '🔎 ${s.chatToolSearching}: $query'
+              : '🛠️ ${s.chatToolCalling}: $tool';
+          break;
+        case 'tool.call.completed':
+          final sourceCount = event.data['sourceCount'];
+          final sources = sourceCount is num && sourceCount > 0
+              ? ' (${sourceCount.toInt()} ${s.chatToolSources})'
+              : '';
+          toolProgress[key] = '✓ ${s.chatToolCompleted}: $tool$sources';
+          break;
+        case 'tool.call.failed':
+          toolProgress[key] = '⚠️ ${s.chatToolFailed}: $tool';
+          break;
+        default:
+          return;
+      }
+      sessions.replaceMessageInMemory(
+        pending.copyWith(
+          content: toolProgress.values.join('\n'),
+          status: ChatMessageStatus.sending,
+        ),
+      );
+    }
+
     try {
       final result = await conversation.askWithProgress(
         RagConversationRequest(
@@ -276,8 +323,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           detailedAnswer: activeSettings.chatAnswerLengthIndex == 1,
           languageHint: aiLanguagePrompt(activeSettings.languageIndex),
           webSearch: ref.read(chatWebSearchEnabledProvider),
+          thinkingLevel: ref.read(chatThinkingLevelProvider),
         ),
         onDelta: publishDelta,
+        onAgentEvent: publishAgentEvent,
       );
       await partialPersistChain;
       if (runId != _answerRunId) {
@@ -418,14 +467,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black54,
       isScrollControlled: true,
-      builder: (_) => ChatToolsSheet(
-        s: ref.read(stringsProvider),
-        webSearchEnabled: ref.read(chatWebSearchEnabledProvider),
-        webSearchAvailable: ref.read(webSearchConfiguredProvider),
-        onToggleWebSearch: () =>
-            ref.read(chatWebSearchEnabledProvider.notifier).state = !ref.read(
-              chatWebSearchEnabledProvider,
+      builder: (_) => Consumer(
+        builder: (context, sheetRef, _) {
+          final settings = sheetRef.watch(settingsProvider).valueOrNull;
+          final hosted = sheetRef.watch(hostedAiEnabledProvider);
+          final model = hosted
+              ? (settings?.hostedChatModel ?? '')
+              : (settings?.chatAiModel ?? '');
+          final baseUrl = hosted ? '' : (settings?.chatAiBaseUrl ?? '');
+          return ChatToolsSheet(
+            s: sheetRef.watch(stringsProvider),
+            webSearchEnabled: sheetRef.watch(chatWebSearchEnabledProvider),
+            webSearchAvailable: sheetRef.watch(webSearchConfiguredProvider),
+            thinkingLevel: sheetRef.watch(chatThinkingLevelProvider),
+            thinkingAvailable: supportsDeepSeekThinking(
+              model: model,
+              baseUrl: baseUrl,
             ),
+            onToggleWebSearch: (enabled) =>
+                sheetRef.read(chatWebSearchEnabledProvider.notifier).state =
+                    enabled,
+            onThinkingChanged: (level) =>
+                sheetRef.read(chatThinkingLevelProvider.notifier).state = level,
+          );
+        },
       ),
     );
   }
@@ -491,6 +556,67 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     ref.read(retrievalLogServiceProvider).recordCitationClick(logId, articleId);
   }
 
+  /// Saves an assistant answer as a full-text memory: the answer text becomes
+  /// the memory body, and the pipeline runs the tags/folder stages (no AI
+  /// re-summarization of the answer).
+  Future<void> _saveAnswerToMemory(ChatMessage message) async {
+    final s = ref.read(stringsProvider);
+    final text = message.text.trim();
+    if (text.isEmpty) {
+      showAppSnackBar(context, message: s.saveAnswerNoContent);
+      return;
+    }
+
+    final articles = ref.read(articlesProvider).valueOrNull ?? [];
+    if (articles.any((a) => a.url == _chatMemoryUrl(message.id))) {
+      showAppSnackBar(context, message: s.saveAnswerExists);
+      return;
+    }
+
+    try {
+      final id = const Uuid().v4();
+      final title = message.query == null || message.query!.trim().isEmpty
+          ? s.appTitle
+          : message.query!.trim();
+      final article = Article(
+        id: id,
+        url: _chatMemoryUrl(message.id),
+        title: _truncateTitle(title),
+        source: SourcePlatform.local,
+        isFullText: true,
+        processingStatus: ProcessingStatus.pending,
+      );
+      // Full-text path: inject the answer text directly as the memory body,
+      // then run only the tags/folder stages synchronously. Processing before
+      // adding keeps the record out of the processing queue (which would try
+      // to re-fetch the memora:// URL); when `add` fires the queue scan the
+      // article is already completed and gets skipped.
+      final processed = await ref
+          .read(processingPipelineProvider)
+          .processFile(article, text, fullText: true);
+      await ref.read(articlesProvider.notifier).add(processed ?? article);
+      if (mounted) {
+        showAppSnackBar(context, message: s.saveAnswerSuccess);
+      }
+    } catch (e, st) {
+      developer.log(
+        'save answer failed: $e',
+        name: 'memora.chat',
+        error: e,
+        stackTrace: st,
+      );
+      if (mounted) {
+        showAppSnackBar(context, message: '${s.saveAnswerFailed}: $e');
+      }
+    }
+  }
+
+  String _chatMemoryUrl(String messageId) => 'memora://chat/$messageId';
+
+  String _truncateTitle(String title) {
+    return title.length > 60 ? title.substring(0, 60) : title;
+  }
+
   Future<void> _startNewThread() async {
     await ref.read(chatSessionsProvider.notifier).startNewThread();
     _controller.clear();
@@ -525,6 +651,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // behind the keyboard instead of floating up with it. ChatScreen
       // disables its own resize to avoid double-compressing the layout.
       resizeToAvoidBottomInset: false,
+      // Let the drawer be pulled out by a swipe starting anywhere on screen
+      // (edge width 0 → full-width drag), not just the left edge.
+      drawerEdgeDragWidth: 0,
       drawerEnableOpenDragGesture: drawerEnabled,
       drawer: chatState == null
           ? null
@@ -555,6 +684,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
         title: Text(activeThreadTitle, overflow: TextOverflow.ellipsis),
         actions: [
+          AppUpdateButton(onPressed: () => showAppUpdateDialog(context)),
           IconButton(
             icon: const Icon(Icons.tune_rounded),
             tooltip: s.chatSettings,
@@ -580,26 +710,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
-                      final revealDelayMs = index > 7 ? 210 : index * 30;
-                      return DelayedReveal(
+                      return ChatBubble(
                         key: ValueKey('chat-message-reveal-${message.id}'),
-                        delayMs: revealDelayMs,
-                        duration: const Duration(milliseconds: 380),
-                        beginOffset: const Offset(0, 0.025),
-                        child: ChatBubble(
-                          key: ValueKey('chat-bubble-${message.id}'),
-                          message: message,
-                          articles: articles,
-                          onFeedback: (feedback) =>
-                              _onFeedback(message.id, message.logId, feedback),
-                          onCitationClick: (articleId) =>
-                              _onCitationClick(message.logId, articleId),
-                          onSuggestionTap: _send,
-                          onRetry: _retry,
-                          onBrowseKnowledge: () {
-                            context.go(AppRoutes.knowledge);
-                          },
-                        ),
+                        message: message,
+                        articles: articles,
+                        onFeedback: (feedback) =>
+                            _onFeedback(message.id, message.logId, feedback),
+                        onCitationClick: (articleId) =>
+                            _onCitationClick(message.logId, articleId),
+                        onSuggestionTap: _send,
+                        onRetry: _retry,
+                        onSave: _saveAnswerToMemory,
+                        onBrowseKnowledge: () {
+                          context.go(AppRoutes.knowledge);
+                        },
                       );
                     },
                   ),

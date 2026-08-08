@@ -34,9 +34,7 @@ class ChatInputBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
-          top: BorderSide(
-            color: Theme.of(context).dividerColor.withAlpha(40),
-          ),
+          top: BorderSide(color: Theme.of(context).dividerColor.withAlpha(40)),
         ),
       ),
       child: Center(
@@ -46,9 +44,22 @@ class ChatInputBar extends StatelessWidget {
             children: [
               Tooltip(
                 message: s.chatTools,
-                child: IconButton(
-                  onPressed: loading ? null : onOpenTools,
-                  icon: const Icon(Icons.add_rounded, size: 24),
+                child: InkWell(
+                  key: const ValueKey('chat-tools-button'),
+                  customBorder: const CircleBorder(),
+                  onTap: loading ? null : onOpenTools,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(context).dividerColor.withAlpha(60),
+                      ),
+                    ),
+                    child: const Icon(Icons.add_rounded, size: 22),
+                  ),
                 ),
               ),
               const SizedBox(width: 4),
@@ -68,7 +79,9 @@ class ChatInputBar extends StatelessWidget {
                     ),
                     filled: true,
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 10),
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
                   ),
                 ),
               ),
@@ -77,7 +90,8 @@ class ChatInputBar extends StatelessWidget {
                 onPressed: loading ? null : onSend,
                 icon: loading
                     ? const SizedBox(
-                        width: 20, height: 20,
+                        width: 20,
+                        height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.send_rounded),

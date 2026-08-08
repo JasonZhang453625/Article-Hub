@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../data/models/passage.dart';
 import '../../shared/providers/locale_provider.dart';
+import '../../shared/providers/filter_providers.dart';
+import '../../shared/providers/home_navigation_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/url_helpers.dart';
@@ -26,6 +28,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
+  final _articleScrollController = ScrollController();
+
   /// URLs already offered this session, so the same clipboard link isn't
   /// suggested repeatedly.
   final Set<String> _handledClipboardUrls = {};
@@ -43,7 +47,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _articleScrollController.dispose();
     super.dispose();
+  }
+
+  void _returnToAllAndScrollToTop() {
+    ref.read(selectedSourceProvider.notifier).state = '';
+    ref.read(selectedFilterGroupProvider.notifier).state = '';
+    ref.read(selectedFolderIdProvider.notifier).state = '';
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_articleScrollController.hasClients) return;
+      final position = _articleScrollController.position;
+      if (position.pixels <= position.minScrollExtent) return;
+      _articleScrollController.animateTo(
+        position.minScrollExtent,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   @override
@@ -108,6 +130,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       orElse: () => false,
     );
 
+    ref.listen<int>(homeScrollToTopRequestProvider, (previous, next) {
+      if (previous != next) {
+        _returnToAllAndScrollToTop();
+      }
+    });
+
     return Scaffold(
       floatingActionButton: null,
       body: SafeArea(
@@ -163,6 +191,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       final articleList = _ArticleListView(
                         articles: articles,
                         isMasterDetail: isMasterDetail,
+                        scrollController: _articleScrollController,
                       );
 
                       if (!isMasterDetail) {
@@ -195,10 +224,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 class _ArticleListView extends ConsumerWidget {
   final List<Article> articles;
   final bool isMasterDetail;
+  final ScrollController scrollController;
 
   const _ArticleListView({
     required this.articles,
     required this.isMasterDetail,
+    required this.scrollController,
   });
 
   @override
@@ -210,6 +241,7 @@ class _ArticleListView extends ConsumerWidget {
             ref.read(articlesProvider.notifier).refresh();
           },
           child: ListView.builder(
+            controller: scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.only(top: 8, bottom: 104),
             itemCount: articles.length,

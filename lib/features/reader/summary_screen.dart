@@ -101,6 +101,17 @@ class SummaryContent extends ConsumerWidget {
       orElse: () => null,
     );
     final a = latest ?? article;
+    final regeneratingTags = ref.watch(
+      summaryRegenerationProvider.select(
+        (ids) => ids.contains(article.id),
+      ),
+    )
+        ? ref.watch(
+            summaryRegenerationTagsProvider.select(
+              (tags) => tags[article.id] ?? const <String>[],
+            ),
+          )
+        : const <String>[];
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -123,8 +134,25 @@ class SummaryContent extends ConsumerWidget {
 
           const SizedBox(height: 16),
 
-          // Tags
-          if (a.tags.isNotEmpty) ...[
+          // Tags — merge with the current list so a newly generated summary
+          // (whose tags may not be in this screen's article snapshot yet)
+          // never loses the tags the user just saw.
+          if (a.tags.isNotEmpty || regeneratingTags.isNotEmpty) ...[
+            if (regeneratingTags.isNotEmpty) ...[
+              Text(
+                s.tags,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _TagsWrap(
+                tags: regeneratingTags,
+                theme: theme,
+                isDark: isDark,
+              ),
+              const SizedBox(height: 16),
+            ],
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -215,6 +243,45 @@ class SummaryContent extends ConsumerWidget {
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+class _TagsWrap extends StatelessWidget {
+  final List<String> tags;
+  final ThemeData theme;
+  final bool isDark;
+
+  const _TagsWrap({
+    required this.tags,
+    required this.theme,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: tags
+          .map(
+            (tag) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : const Color(0xFFF2F6F9),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                tag,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          )
+          .toList(),
     );
   }
 }

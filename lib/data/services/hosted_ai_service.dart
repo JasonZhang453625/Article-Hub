@@ -1,4 +1,5 @@
 import '../../config/backend_config.dart';
+import '../models/ai_thinking_level.dart';
 import 'ai_service.dart';
 import 'auth_service.dart';
 
@@ -29,12 +30,16 @@ class HostedAiService implements AiGateway {
 
   int? lastStatusCode;
 
+  @override
+  AiThinkingLevel thinkingLevel;
+
   HostedAiService({
     required AuthSession? Function() getSession,
     required Future<AuthSession?> Function() refreshSession,
     required this.model,
     required this.purpose,
     this.timeout = AiService.defaultTimeout,
+    this.thinkingLevel = AiThinkingLevel.none,
   }) : _getSession = getSession,
        _refreshSession = refreshSession;
 
@@ -69,6 +74,7 @@ class HostedAiService implements AiGateway {
       apiKey: session.accessToken,
       model: model,
       timeout: timeout,
+      thinkingLevel: thinkingLevel,
     );
     ai.onTokensUsed = onTokensUsed;
     return ai;

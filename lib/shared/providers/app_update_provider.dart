@@ -280,7 +280,12 @@ class AppUpdateController extends StateNotifier<AppUpdateState> {
   Future<void> cancelUpdate() async {
     await _cancelActiveDownload();
     if (!_disposed) {
-      state = AppUpdateState(phase: AppUpdatePhase.idle, check: state.check);
+      state = AppUpdateState(
+        phase: state.check?.updateAvailable == true
+            ? AppUpdatePhase.available
+            : AppUpdatePhase.idle,
+        check: state.check,
+      );
     }
   }
 
