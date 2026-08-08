@@ -8,13 +8,8 @@ class ChatInputBar extends StatelessWidget {
   final LocaleStrings s;
   final VoidCallback onSend;
 
-  /// Whether the session-level web-search fallback is enabled.
-  final bool webSearchEnabled;
-
-  /// Whether a web search backend is configured (Tavily key set).
-  final bool webSearchAvailable;
-
-  final VoidCallback? onToggleWebSearch;
+  /// Opens the tools bottom sheet ("+" button).
+  final VoidCallback onOpenTools;
 
   const ChatInputBar({
     super.key,
@@ -22,9 +17,7 @@ class ChatInputBar extends StatelessWidget {
     required this.loading,
     required this.s,
     required this.onSend,
-    this.webSearchEnabled = false,
-    this.webSearchAvailable = false,
-    this.onToggleWebSearch,
+    required this.onOpenTools,
   });
 
   @override
@@ -51,6 +44,14 @@ class ChatInputBar extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 760),
           child: Row(
             children: [
+              Tooltip(
+                message: s.chatTools,
+                child: IconButton(
+                  onPressed: loading ? null : onOpenTools,
+                  icon: const Icon(Icons.add_rounded, size: 24),
+                ),
+              ),
+              const SizedBox(width: 4),
               Expanded(
                 child: TextField(
                   controller: controller,
@@ -69,39 +70,6 @@ class ChatInputBar extends StatelessWidget {
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 10),
                   ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: webSearchAvailable
-                    ? (webSearchEnabled
-                          ? s.webSearchOn
-                          : s.webSearchOff)
-                    : s.webSearchNotConfigured,
-                child: IconButton(
-                  onPressed: loading
-                      ? null
-                      : (webSearchAvailable ? onToggleWebSearch : null),
-                  icon: Icon(
-                    Icons.public_rounded,
-                    size: 22,
-                    color: webSearchAvailable
-                        ? (webSearchEnabled
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant)
-                        : Theme.of(context).disabledColor,
-                  ),
-                  // Visible state without long-press: a filled dot under the
-                  // globe when the web fallback is armed.
-                  style: webSearchAvailable && webSearchEnabled
-                      ? IconButton.styleFrom(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.12),
-                        )
-                      : null,
                 ),
               ),
               const SizedBox(width: 4),

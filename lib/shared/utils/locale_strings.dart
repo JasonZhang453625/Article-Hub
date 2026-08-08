@@ -325,6 +325,8 @@ class LocaleStrings {
   final String chatKnowledgeBaseOnly;
   final String chatKbPlusGeneral;
   final String chatApply;
+  final String chatTools;
+  final String chatToolsWebSearch;
   final String webSearchSection;
   final String webSearchConfig;
   final String webSearchApiKey;
@@ -657,6 +659,8 @@ class LocaleStrings {
     required this.chatKnowledgeBaseOnly,
     required this.chatKbPlusGeneral,
     required this.chatApply,
+    required this.chatTools,
+    required this.chatToolsWebSearch,
     required this.webSearchSection,
     required this.webSearchConfig,
     required this.webSearchApiKey,
@@ -1043,6 +1047,8 @@ class LocaleStrings {
     chatKnowledgeBaseOnly: 'Knowledge Base Only',
     chatKbPlusGeneral: 'KB + General',
     chatApply: 'Apply',
+    chatTools: 'Tools',
+    chatToolsWebSearch: 'Web Search',
     webSearchSection: 'Web Search',
     webSearchConfig: 'Web Search (Tavily)',
     webSearchApiKey: 'Tavily API Key',
@@ -1378,6 +1384,8 @@ class LocaleStrings {
     chatKnowledgeBaseOnly: '仅知识库',
     chatKbPlusGeneral: '知识库 + 通用',
     chatApply: '应用',
+    chatTools: '工具',
+    chatToolsWebSearch: '联网搜索',
     webSearchSection: '联网搜索',
     webSearchConfig: '联网搜索（Tavily）',
     webSearchApiKey: 'Tavily API Key',

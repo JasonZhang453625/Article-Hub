@@ -19,6 +19,7 @@ import 'chat_empty_state.dart';
 import 'chat_history_drawer.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
+import 'chat_tools_sheet.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -409,6 +410,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  void _showChatTools() {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      isScrollControlled: true,
+      builder: (_) => ChatToolsSheet(
+        s: ref.read(stringsProvider),
+        webSearchEnabled: ref.read(chatWebSearchEnabledProvider),
+        webSearchAvailable: ref.read(webSearchConfiguredProvider),
+        onToggleWebSearch: () =>
+            ref.read(chatWebSearchEnabledProvider.notifier).state = !ref
+                .read(chatWebSearchEnabledProvider),
+      ),
+    );
+  }
+
   void _showChatSettings() {
     final settings = ref.read(settingsProvider).valueOrNull;
     if (settings == null) return;
@@ -582,11 +601,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             loading: _loading || chatUnavailable,
             s: s,
             onSend: () => _send(),
-            webSearchEnabled: ref.watch(chatWebSearchEnabledProvider),
-            webSearchAvailable: ref.watch(webSearchConfiguredProvider),
-            onToggleWebSearch: () =>
-                ref.read(chatWebSearchEnabledProvider.notifier).state = !ref
-                    .read(chatWebSearchEnabledProvider),
+            onOpenTools: _showChatTools,
           ),
         ],
       ),
