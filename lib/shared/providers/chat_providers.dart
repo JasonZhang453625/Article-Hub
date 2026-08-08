@@ -381,6 +381,40 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     );
   }
 
+  Future<void> renameThread(String threadId, String title) async {
+    await _ensureLoaded();
+    final normalized = title.trim();
+    if (normalized.isEmpty) return;
+    final current = _current;
+    final thread = _findThread(threadId, current.threads);
+    if (thread == null || thread.title == normalized) return;
+    final updated = thread.copyWith(title: normalized);
+    await _repo.putThread(updated);
+    state = AsyncValue.data(
+      ChatSessionState(
+        threads: List.unmodifiable(_upsertThread(current.threads, updated)),
+        activeThreadId: current.activeThreadId,
+        messages: current.messages,
+      ),
+    );
+  }
+
+  Future<void> setThreadPinned(String threadId, bool isPinned) async {
+    await _ensureLoaded();
+    final current = _current;
+    final thread = _findThread(threadId, current.threads);
+    if (thread == null || thread.isPinned == isPinned) return;
+    final updated = thread.copyWith(isPinned: isPinned);
+    await _repo.putThread(updated);
+    state = AsyncValue.data(
+      ChatSessionState(
+        threads: List.unmodifiable(_upsertThread(current.threads, updated)),
+        activeThreadId: current.activeThreadId,
+        messages: current.messages,
+      ),
+    );
+  }
+
   Future<void> deleteThread(String threadId) async {
     await _ensureLoaded();
     final current = _current;
@@ -450,9 +484,6 @@ List<ChatThread> _upsertThread(List<ChatThread> threads, ChatThread updated) {
     updated,
     ...threads.where((thread) => thread.id != updated.id),
   ];
-  result.sort((a, b) {
-    final byUpdatedAt = b.updatedAt.compareTo(a.updatedAt);
-    return byUpdatedAt != 0 ? byUpdatedAt : b.id.compareTo(a.id);
-  });
+  result.sort(compareChatThreads);
   return result;
 }

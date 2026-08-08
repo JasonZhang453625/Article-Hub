@@ -79,36 +79,53 @@ XPageAssessment assessXPage(String htmlBody, String url) {
 
   final heading = _cleanInline(article.querySelector('h1')?.text ?? '');
   final explicitBody = article.querySelector('.x-article-body');
+  final structuredBody = _cleanInline(
+    article
+            .querySelector('meta[itemprop="articleBody"]')
+            ?.attributes['content'] ??
+        '',
+  );
   final hasArticleCover =
       article.querySelector('img[alt="Article cover image"]') != null;
+  final hasStructuredLongBody =
+      structuredBody.length >= xLongArticleMinimumTextLength;
   final looksLikeLongArticle =
-      explicitBody != null || heading.isNotEmpty || hasArticleCover;
-
-  if (!looksLikeLongArticle) {
-    return const XPageAssessment(
-      isXStatusPage: true,
-      hasTargetArticle: true,
-      looksLikeLongArticle: false,
-      hasCompleteArticleBody: false,
-      reason: 'x_normal_post',
-    );
-  }
+      explicitBody != null ||
+      heading.isNotEmpty ||
+      hasArticleCover ||
+      hasStructuredLongBody;
 
   final body = explicitBody ?? article;
   final blocks = _contentBlocks(body, excludeHeading: explicitBody == null);
   final bodyText = blocks.isEmpty
       ? _cleanInline(body.text)
       : blocks.join('\n\n');
+
+  if (!looksLikeLongArticle) {
+    return XPageAssessment(
+      isXStatusPage: true,
+      hasTargetArticle: true,
+      looksLikeLongArticle: false,
+      hasCompleteArticleBody: false,
+      reason: 'x_normal_post',
+      content: structuredBody.isNotEmpty ? structuredBody : bodyText,
+    );
+  }
+
   final isExplicitBodyComplete =
       explicitBody != null &&
       bodyText.length >= xLongArticleMinimumTextLength &&
       (blocks.length >= 2 || bodyText.length >= 500);
+  final isStructuredBodyComplete = hasStructuredLongBody;
   final isSemanticFallbackComplete =
       explicitBody == null &&
       heading.isNotEmpty &&
       blocks.length >= xLongArticleSemanticFallbackMinimumBlocks &&
       bodyText.length >= xLongArticleSemanticFallbackMinimumTextLength;
-  final complete = isExplicitBodyComplete || isSemanticFallbackComplete;
+  final complete =
+      isExplicitBodyComplete ||
+      isStructuredBodyComplete ||
+      isSemanticFallbackComplete;
 
   if (!complete) {
     return XPageAssessment(
@@ -123,7 +140,7 @@ XPageAssessment assessXPage(String htmlBody, String url) {
 
   final content = [
     if (heading.isNotEmpty) heading,
-    bodyText,
+    if (isStructuredBodyComplete) structuredBody else bodyText,
   ].where((part) => part.trim().isNotEmpty).join('\n\n');
   return XPageAssessment(
     isXStatusPage: true,
@@ -170,7 +187,7 @@ class XWebViewReadiness {
 Element? _findTargetArticle(Document document, String statusId) {
   final articles = document.querySelectorAll('article');
   for (final article in articles) {
-    if (_articleLinksToStatus(article, statusId)) return article;
+    if (_articleMatchesStatus(article, statusId)) return article;
   }
   for (final article in articles) {
     if (article.querySelector('.x-article-body') != null ||
@@ -181,14 +198,35 @@ Element? _findTargetArticle(Document document, String statusId) {
   return null;
 }
 
+bool _articleMatchesStatus(Element article, String statusId) {
+  if (article.attributes['data-tweet-id'] == statusId) return true;
+
+  for (final meta in article.querySelectorAll('meta[itemprop]')) {
+    final itemProp = meta.attributes['itemprop'];
+    final content = meta.attributes['content'];
+    if (itemProp == 'identifier' && content == statusId) return true;
+    if ((itemProp == 'url' || itemProp == 'mainEntityOfPage') &&
+        _urlContainsStatus(content, statusId)) {
+      return true;
+    }
+  }
+
+  return _articleLinksToStatus(article, statusId);
+}
+
 bool _articleLinksToStatus(Element article, String statusId) {
   for (final link in article.querySelectorAll('a[href]')) {
     final href = link.attributes['href'];
     if (href == null) continue;
-    final path = Uri.tryParse(href)?.path ?? href;
-    if (RegExp('/status/$statusId(?:/|\$)').hasMatch(path)) return true;
+    if (_urlContainsStatus(href, statusId)) return true;
   }
   return false;
+}
+
+bool _urlContainsStatus(String? value, String statusId) {
+  if (value == null) return false;
+  final path = Uri.tryParse(value)?.path ?? value;
+  return RegExp('/status/$statusId(?:/|\$)').hasMatch(path);
 }
 
 List<String> _contentBlocks(Element root, {required bool excludeHeading}) {

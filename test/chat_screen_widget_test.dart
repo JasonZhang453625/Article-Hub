@@ -550,6 +550,16 @@ void main() {
       tester.getTopLeft(find.byKey(const ValueKey('chat-message-list'))).dy,
       0,
     );
+    expect(
+      tester
+          .getTopLeft(
+            find.byKey(const ValueKey('chat-message-reveal-top-message')),
+          )
+          .dy,
+      tester
+          .getBottomLeft(find.byKey(const ValueKey('chat-sidebar-surface')))
+          .dy,
+    );
 
     for (final key in const [
       ValueKey('chat-sidebar-surface'),
@@ -658,6 +668,15 @@ void main() {
     expect(find.text('Chat History'), findsOneWidget);
     expect(find.text('New Chat'), findsOneWidget);
     expect(find.text('Saved chat'), findsWidgets);
+    expect(
+      find.descendant(of: find.byType(Drawer), matching: find.byType(Divider)),
+      findsNothing,
+    );
+    final savedTile = tester.widget<ListTile>(
+      find.byKey(const ValueKey('chat-thread-thread-1')),
+    );
+    expect(savedTile.dense, isTrue);
+    expect(savedTile.visualDensity, const VisualDensity(vertical: -1));
 
     await tester.tap(find.byKey(const ValueKey('chat-new-thread-button')));
     await tester.pumpAndSettle();
@@ -727,6 +746,87 @@ void main() {
 
     expect(find.byKey(const ValueKey('chat-thread-older')), findsNothing);
     expect(find.byKey(const ValueKey('chat-thread-recent')), findsOneWidget);
+  });
+
+  testWidgets('long press renames and pins a saved chat', (tester) async {
+    final now = DateTime.utc(2026, 8, 9);
+    final recent = ChatThread(
+      id: 'recent-actions',
+      title: 'Recent chat',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final older = ChatThread(
+      id: 'older-actions',
+      title: 'Older chat',
+      createdAt: now.subtract(const Duration(days: 1)),
+      updatedAt: now.subtract(const Duration(days: 1)),
+    );
+    await pumpChat(tester, articles: [], threads: [recent, older]);
+    await tester.tap(find.byKey(const ValueKey('chat-sidebar-button')));
+    await tester.pumpAndSettle();
+
+    final olderTile = find.byKey(const ValueKey('chat-thread-older-actions'));
+    await tester.longPress(olderTile);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-thread-rename-action')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-thread-rename-field')),
+      'Renamed chat',
+    );
+    await tester.tap(find.byKey(const ValueKey('chat-thread-rename-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Renamed chat'), findsOneWidget);
+
+    await tester.longPress(olderTile);
+    await tester.pumpAndSettle();
+    expect(find.text('Pin'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('chat-thread-pin-action')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('chat-thread-pin-older-actions')),
+      findsOneWidget,
+    );
+    expect(
+      tester.getTopLeft(olderTile).dy,
+      lessThan(
+        tester
+            .getTopLeft(
+              find.byKey(const ValueKey('chat-thread-recent-actions')),
+            )
+            .dy,
+      ),
+    );
+  });
+
+  testWidgets('chat history list stays clipped at its top boundary', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 8, 9);
+    final threads = List.generate(
+      16,
+      (index) => ChatThread(
+        id: 'overflow-$index',
+        title: 'Chat $index',
+        createdAt: now.subtract(Duration(minutes: index)),
+        updatedAt: now.subtract(Duration(minutes: index)),
+      ),
+    );
+    await pumpChat(tester, articles: [], threads: threads);
+    await tester.tap(find.byKey(const ValueKey('chat-sidebar-button')));
+    await tester.pumpAndSettle();
+
+    final list = find.byKey(const ValueKey('chat-thread-list'));
+    final first = find.byKey(const ValueKey('chat-thread-overflow-0'));
+    await tester.drag(list, const Offset(0, 220));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(first).dy,
+      greaterThanOrEqualTo(tester.getTopLeft(list).dy),
+    );
   });
 
   testWidgets('assistant answer shows a save button and saving adds a memory', (
@@ -952,8 +1052,7 @@ class _InMemoryChatRepository implements ChatRepository {
 
   @override
   List<ChatThread> getThreads() {
-    final threads = _threads.values.toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final threads = _threads.values.toList()..sort(compareChatThreads);
     return threads;
   }
 

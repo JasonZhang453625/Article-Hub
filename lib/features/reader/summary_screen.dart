@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:go_router/go_router.dart';
@@ -101,6 +102,7 @@ class SummaryContent extends ConsumerWidget {
       orElse: () => null,
     );
     final a = latest ?? article;
+    final generatedAt = a.memory?.generation?.generatedAt;
     final regeneratingTags = ref.watch(
       summaryRegenerationProvider.select(
         (ids) => ids.contains(article.id),
@@ -204,26 +206,56 @@ class SummaryContent extends ConsumerWidget {
           ],
 
           // URL display
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.04)
-                  : const Color(0xFFF2F6F9),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              a.url,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: isDark ? Colors.white38 : const Color(0xFF98ADB8),
+          Semantics(
+            button: true,
+            label: a.url,
+            hint: s.urlCopied,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onLongPress: () async {
+                await Clipboard.setData(ClipboardData(text: a.url));
+                if (!context.mounted) return;
+                showAppSnackBar(context, message: s.urlCopied);
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.04)
+                      : const Color(0xFFF2F6F9),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  a.url,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: isDark ? Colors.white38 : const Color(0xFF98ADB8),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 12),
+
+          Text(
+            '${s.memoryAddedAt}: ${formatDateTime(a.createdAt)}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: isDark ? Colors.white54 : const Color(0xFF728895),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${s.aiMemoryGeneratedAt}: '
+            '${generatedAt == null ? s.noGenerationRecord : formatDateTime(generatedAt.toLocal())}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: isDark ? Colors.white54 : const Color(0xFF728895),
+            ),
+          ),
+
+          const SizedBox(height: 24),
 
           // Read Original button
           SizedBox(
@@ -477,6 +509,7 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
             data: summary,
             selectable: true,
             styleSheet: MarkdownStyleSheet(
+              pPadding: const EdgeInsets.only(bottom: 4),
               p: theme.textTheme.bodyLarge?.copyWith(
                 fontSize: 17,
                 height: 1.4,

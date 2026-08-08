@@ -110,6 +110,31 @@ void main() {
     }
   });
 
+  test(
+    'extracts a current server-rendered X post from structured metadata',
+    () {
+      const page = FetchedPage(
+        statusCode: 200,
+        contentType: 'text/html; charset=utf-8',
+        body:
+            '<html><body><article data-tweet-id="2048757569775378858">'
+            '<meta content="2048757569775378858" itemprop="identifier">'
+            '<meta content="A short original X post" itemprop="articleBody">'
+            '<div>A short original X post</div>'
+            '</article></body></html>',
+        finalUrl: 'https://x.com/author/status/2048757569775378858',
+        source: PageLoadSource.http,
+      );
+
+      final extractor = ContentExtractor();
+      try {
+        expect(extractor.fromFetchedPage(page), 'A short original X post');
+      } finally {
+        extractor.dispose();
+      }
+    },
+  );
+
   test('does not extract an X long-article preview as full content', () {
     const page = FetchedPage(
       statusCode: 200,

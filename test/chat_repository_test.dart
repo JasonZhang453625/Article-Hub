@@ -93,6 +93,26 @@ void main() {
     expect(repository.getMessages('thread-2'), hasLength(1));
   });
 
+  test('persists pin state and sorts pinned threads first', () async {
+    final now = DateTime.utc(2026, 8, 9);
+    await repository.putThread(
+      ChatThread(id: 'newer', title: 'Newer', createdAt: now, updatedAt: now),
+    );
+    await repository.putThread(
+      ChatThread(
+        id: 'pinned-older',
+        title: 'Pinned older',
+        createdAt: now.subtract(const Duration(days: 1)),
+        updatedAt: now.subtract(const Duration(days: 1)),
+        isPinned: true,
+      ),
+    );
+
+    final threads = repository.getThreads();
+    expect(threads.map((thread) => thread.id), ['pinned-older', 'newer']);
+    expect(repository.getThread('pinned-older')!.isPinned, isTrue);
+  });
+
   test('chat titles are normalized and bounded by Unicode characters', () {
     expect(chatTitleFromMessage('  hello\n  world  '), 'hello world');
     expect(chatTitleFromMessage(repeated('记', 40)).runes.length, 33);

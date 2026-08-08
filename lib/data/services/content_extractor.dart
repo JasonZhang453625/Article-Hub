@@ -50,6 +50,7 @@ class ContentExtractor {
       if (xAssessment.looksLikeLongArticle) {
         return xAssessment.hasCompleteArticleBody ? xAssessment.content : null;
       }
+      return xAssessment.content;
     }
 
     final document = html_parser.parse(htmlBody);

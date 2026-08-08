@@ -112,6 +112,25 @@ void main() {
       expect(fallback.fetchCount, 0);
     });
 
+    test('current X target metadata accepts a short original post', () async {
+      final primary = _FakeLoader(
+        page: _xCurrentServerRenderedPost(PageLoadSource.http),
+      );
+      final fallback = _FakeLoader(page: _usablePage(PageLoadSource.webView));
+      final loader = ResilientPageLoader(
+        primary: primary,
+        fallback: fallback,
+        ownsLoaders: false,
+      );
+
+      final result = await loader.fetch(
+        'https://x.com/author/status/2048757569775378858',
+      );
+
+      expect(result?.source, PageLoadSource.http);
+      expect(fallback.fetchCount, 0);
+    });
+
     test(
       'incomplete X long article remains a failure after fallback',
       () async {
@@ -269,6 +288,21 @@ FetchedPage _xLoginShell(PageLoadSource source) {
     contentType: 'text/html; charset=utf-8',
     body: '<html><body><main>$noise</main></body></html>',
     finalUrl: 'https://x.com/i/status/2048757569775378858',
+    source: source,
+  );
+}
+
+FetchedPage _xCurrentServerRenderedPost(PageLoadSource source) {
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body: '''<html><body><article data-tweet-id="2048757569775378858"
+      itemid="https://x.com/i/status/2048757569775378858">
+      <meta content="2048757569775378858" itemprop="identifier">
+      <meta content="A short original post" itemprop="articleBody">
+      <div>A short original post</div>
+    </article></body></html>''',
+    finalUrl: 'https://x.com/author/status/2048757569775378858',
     source: source,
   );
 }

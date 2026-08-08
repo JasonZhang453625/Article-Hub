@@ -34,6 +34,14 @@ void main() {
     expect(state.activeThreadId, second.threadId);
     expect(state.messages.single.content, 'Second conversation');
 
+    await sessions.renameThread(first.threadId, '  Renamed first chat  ');
+    await sessions.setThreadPinned(first.threadId, true);
+    state = container.read(chatSessionsProvider).requireValue;
+    expect(state.threads.first.id, first.threadId);
+    expect(state.threads.first.title, 'Renamed first chat');
+    expect(state.threads.first.isPinned, isTrue);
+    expect(repository.getThread(first.threadId)!.isPinned, isTrue);
+
     await sessions.selectThread(first.threadId);
     state = container.read(chatSessionsProvider).requireValue;
     expect(state.messages, hasLength(2));
@@ -157,8 +165,7 @@ class _MemoryChatRepository implements ChatRepository {
 
   @override
   List<ChatThread> getThreads() {
-    final threads = _threads.values.toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final threads = _threads.values.toList()..sort(compareChatThreads);
     return threads;
   }
 

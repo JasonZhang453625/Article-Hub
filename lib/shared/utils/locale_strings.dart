@@ -79,6 +79,10 @@ class LocaleStrings {
   final String generating;
   final String summaryFailed;
   final String readOriginal;
+  final String urlCopied;
+  final String memoryAddedAt;
+  final String aiMemoryGeneratedAt;
+  final String noGenerationRecord;
   final String refresh;
   final String processing;
   final String waiting;
@@ -310,6 +314,8 @@ class LocaleStrings {
   final String chatNoHistory;
   final String chatDelete;
   final String chatDeleteConfirm;
+  final String chatPin;
+  final String chatUnpin;
   final String chatSettings;
   final String chatAnswerLength;
   final String chatShort;
@@ -416,6 +422,10 @@ class LocaleStrings {
     required this.generating,
     required this.summaryFailed,
     required this.readOriginal,
+    required this.urlCopied,
+    required this.memoryAddedAt,
+    required this.aiMemoryGeneratedAt,
+    required this.noGenerationRecord,
     required this.refresh,
     required this.processing,
     required this.waiting,
@@ -647,6 +657,8 @@ class LocaleStrings {
     required this.chatNoHistory,
     required this.chatDelete,
     required this.chatDeleteConfirm,
+    required this.chatPin,
+    required this.chatUnpin,
     required this.chatSettings,
     required this.chatAnswerLength,
     required this.chatShort,
@@ -776,6 +788,10 @@ class LocaleStrings {
     summaryFailed:
         'Memory generation failed. Check your model API configuration.',
     readOriginal: 'Read Original',
+    urlCopied: 'Link copied',
+    memoryAddedAt: 'Memory added at',
+    aiMemoryGeneratedAt: 'AI memory generated at',
+    noGenerationRecord: 'No record',
     refresh: 'Refresh',
     processing: 'Processing',
     waiting: 'Waiting',
@@ -1037,6 +1053,8 @@ class LocaleStrings {
     chatNoHistory: 'No saved chats yet',
     chatDelete: 'Delete Chat',
     chatDeleteConfirm: 'Delete this chat and all of its local messages?',
+    chatPin: 'Pin',
+    chatUnpin: 'Unpin',
     chatSettings: 'Chat Settings',
     chatAnswerLength: 'Answer Length',
     chatShort: 'Short',
@@ -1147,6 +1165,10 @@ class LocaleStrings {
     generating: '生成中…',
     summaryFailed: '摘要生成失败，请检查模型api配置。',
     readOriginal: '阅读原文',
+    urlCopied: '链接已复制',
+    memoryAddedAt: '记忆添加时间',
+    aiMemoryGeneratedAt: 'AI 记忆生成时间',
+    noGenerationRecord: '暂无记录',
     refresh: '刷新',
     processing: '处理中',
     waiting: '等待中',
@@ -1378,6 +1400,8 @@ class LocaleStrings {
     chatNoHistory: '暂无已保存的对话',
     chatDelete: '删除对话',
     chatDeleteConfirm: '删除此对话及其全部本地消息？',
+    chatPin: '置顶',
+    chatUnpin: '取消置顶',
     chatSettings: '对话设置',
     chatAnswerLength: '回答长度',
     chatShort: '简洁',

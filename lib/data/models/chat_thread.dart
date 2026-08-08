@@ -8,6 +8,7 @@ class ChatThread {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String lastMessagePreview;
+  final bool isPinned;
 
   const ChatThread({
     required this.id,
@@ -15,12 +16,14 @@ class ChatThread {
     required this.createdAt,
     required this.updatedAt,
     this.lastMessagePreview = '',
+    this.isPinned = false,
   });
 
   ChatThread copyWith({
     String? title,
     DateTime? updatedAt,
     String? lastMessagePreview,
+    bool? isPinned,
   }) {
     return ChatThread(
       id: id,
@@ -28,6 +31,7 @@ class ChatThread {
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+      isPinned: isPinned ?? this.isPinned,
     );
   }
 }
@@ -49,13 +53,14 @@ class ChatThreadAdapter extends TypeAdapter<ChatThread> {
       createdAt: createdAt,
       updatedAt: fields[3] as DateTime? ?? createdAt,
       lastMessagePreview: fields[4] as String? ?? '',
+      isPinned: fields[5] as bool? ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatThread obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(6)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -65,7 +70,9 @@ class ChatThreadAdapter extends TypeAdapter<ChatThread> {
       ..writeByte(3)
       ..write(obj.updatedAt)
       ..writeByte(4)
-      ..write(obj.lastMessagePreview);
+      ..write(obj.lastMessagePreview)
+      ..writeByte(5)
+      ..write(obj.isPinned);
   }
 }
 

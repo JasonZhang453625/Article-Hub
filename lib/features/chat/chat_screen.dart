@@ -825,6 +825,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 onDeleteThread: ref
                     .read(chatSessionsProvider.notifier)
                     .deleteThread,
+                onRenameThread: ref
+                    .read(chatSessionsProvider.notifier)
+                    .renameThread,
+                onSetThreadPinned: ref
+                    .read(chatSessionsProvider.notifier)
+                    .setThreadPinned,
               ),
         body: Stack(
           fit: StackFit.expand,
@@ -857,9 +863,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                   // avoids reparsing long Markdown answers
                                   // during quick scrolling.
                                   cacheExtent: 800,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 12,
+                                  // The list still extends behind the top
+                                  // fade, but at its minimum scroll extent the
+                                  // first bubble stops at the visible bottom
+                                  // of the two floating top buttons:
+                                  // 8 top offset + 48 Material tap surface.
+                                  padding: EdgeInsets.fromLTRB(
+                                    16,
+                                    topInset + 56,
+                                    16,
+                                    12,
                                   ),
                                   itemCount: messages.length,
                                   itemBuilder: (context, index) {

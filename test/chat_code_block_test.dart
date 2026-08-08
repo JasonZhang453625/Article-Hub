@@ -1,0 +1,59 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:memora/features/chat/chat_bubble.dart';
+import 'package:memora/features/chat/chat_message.dart';
+import 'package:memora/shared/providers/settings_providers.dart';
+
+void main() {
+  testWidgets('renders fenced code in a labeled, copyable code card', (
+    tester,
+  ) async {
+    String? copiedCode;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedCode = (call.arguments as Map<Object?, Object?>)['text']
+                as String?;
+          }
+          return null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [languageIndexProvider.overrideWithValue(1)],
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              message: ChatMessage(
+                role: MessageRole.assistant,
+                text: '```dart\nvoid main() {}\n```',
+              ),
+              articlesById: const {},
+              onFeedback: (_) {},
+              onCitationClick: (_) {},
+              onSuggestionTap: (_) {},
+              onRetry: (_) {},
+              onSave: (_) async {},
+              onBrowseKnowledge: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('DART'), findsOneWidget);
+    expect(find.byIcon(Icons.content_copy_rounded), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.content_copy_rounded));
+    await tester.pump();
+
+    expect(copiedCode, 'void main() {}');
+    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+  });
+}

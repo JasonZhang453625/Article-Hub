@@ -11,6 +11,8 @@ class ChatHistoryDrawer extends StatelessWidget {
   final Future<void> Function() onNewThread;
   final Future<void> Function(String threadId) onSelectThread;
   final Future<void> Function(String threadId) onDeleteThread;
+  final Future<void> Function(String threadId, String title) onRenameThread;
+  final Future<void> Function(String threadId, bool isPinned) onSetThreadPinned;
 
   const ChatHistoryDrawer({
     super.key,
@@ -21,6 +23,8 @@ class ChatHistoryDrawer extends StatelessWidget {
     required this.onNewThread,
     required this.onSelectThread,
     required this.onDeleteThread,
+    required this.onRenameThread,
+    required this.onSetThreadPinned,
   });
 
   @override
@@ -64,77 +68,163 @@ class ChatHistoryDrawer extends StatelessWidget {
                 label: Text(s.chatNew),
               ),
             ),
-            const SizedBox(height: 12),
-            const Divider(height: 1),
+            const SizedBox(height: 6),
             Expanded(
-              child: threads.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(
-                          s.chatNoHistory,
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
+              child: ClipRect(
+                child: threads.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            s.chatNoHistory,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: threads.length,
-                      itemBuilder: (context, index) {
-                        final thread = threads[index];
-                        final isActive = thread.id == activeThreadId;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          child: ListTile(
-                            key: ValueKey('chat-thread-${thread.id}'),
-                            selected: isActive,
-                            selectedTileColor:
-                                theme.colorScheme.secondaryContainer,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            leading: Icon(
-                              isActive
-                                  ? Icons.chat_rounded
-                                  : Icons.chat_bubble_outline_rounded,
-                            ),
-                            title: Text(
-                              thread.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: thread.lastMessagePreview.isEmpty
-                                ? null
-                                : Text(
-                                    thread.lastMessagePreview,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                      )
+                    : ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(
+                          context,
+                        ).copyWith(overscroll: false),
+                        child: ListView.builder(
+                          key: const ValueKey('chat-thread-list'),
+                          clipBehavior: Clip.hardEdge,
+                          physics: const ClampingScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          itemCount: threads.length,
+                          itemBuilder: (context, index) {
+                            final thread = threads[index];
+                            final isActive = thread.id == activeThreadId;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 1,
+                              ),
+                              child: ListTile(
+                                key: ValueKey('chat-thread-${thread.id}'),
+                                dense: true,
+                                visualDensity: const VisualDensity(
+                                  vertical: -1,
+                                ),
+                                selected: isActive,
+                                selectedTileColor:
+                                    theme.colorScheme.secondaryContainer,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                leading: Icon(
+                                  isActive
+                                      ? Icons.chat_rounded
+                                      : Icons.chat_bubble_outline_rounded,
+                                ),
+                                title: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        thread.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (thread.isPinned) ...[
+                                      const SizedBox(width: 6),
+                                      Icon(
+                                        Icons.push_pin_rounded,
+                                        key: ValueKey(
+                                          'chat-thread-pin-${thread.id}',
+                                        ),
+                                        size: 16,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                subtitle: thread.lastMessagePreview.isEmpty
+                                    ? null
+                                    : Text(
+                                        thread.lastMessagePreview,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                trailing: IconButton(
+                                  tooltip: s.chatDelete,
+                                  icon: const Icon(
+                                    Icons.delete_outline_rounded,
                                   ),
-                            trailing: IconButton(
-                              tooltip: s.chatDelete,
-                              icon: const Icon(Icons.delete_outline_rounded),
-                              onPressed: enabled
-                                  ? () => _confirmDelete(context, thread)
-                                  : null,
-                            ),
-                            onTap: enabled
-                                ? () => _selectThread(context, thread.id)
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
+                                  onPressed: enabled
+                                      ? () => _confirmDelete(context, thread)
+                                      : null,
+                                ),
+                                onTap: enabled
+                                    ? () => _selectThread(context, thread.id)
+                                    : null,
+                                onLongPress: enabled
+                                    ? () => _showThreadActions(context, thread)
+                                    : null,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showThreadActions(
+    BuildContext context,
+    ChatThread thread,
+  ) async {
+    final action = await showModalBottomSheet<_ChatThreadAction>(
+      context: context,
+      useSafeArea: true,
+      builder: (sheetContext) => Wrap(
+        children: [
+          ListTile(
+            key: const ValueKey('chat-thread-rename-action'),
+            leading: const Icon(Icons.edit_outlined),
+            title: Text(s.rename),
+            onTap: () => Navigator.pop(sheetContext, _ChatThreadAction.rename),
+          ),
+          ListTile(
+            key: const ValueKey('chat-thread-pin-action'),
+            leading: Icon(
+              thread.isPinned
+                  ? Icons.push_pin_outlined
+                  : Icons.push_pin_rounded,
+            ),
+            title: Text(thread.isPinned ? s.chatUnpin : s.chatPin),
+            onTap: () =>
+                Navigator.pop(sheetContext, _ChatThreadAction.togglePin),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || action == null) return;
+    switch (action) {
+      case _ChatThreadAction.rename:
+        await _renameThread(context, thread);
+        break;
+      case _ChatThreadAction.togglePin:
+        await onSetThreadPinned(thread.id, !thread.isPinned);
+        break;
+    }
+  }
+
+  Future<void> _renameThread(BuildContext context, ChatThread thread) async {
+    final title = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameChatThreadDialog(initialTitle: thread.title, s: s),
+    );
+    final normalized = title?.trim() ?? '';
+    if (normalized.isNotEmpty) {
+      await onRenameThread(thread.id, normalized);
+    }
   }
 
   Future<void> _startNewThread(BuildContext context) async {
@@ -166,5 +256,64 @@ class ChatHistoryDrawer extends StatelessWidget {
       ),
     );
     if (confirmed == true) await onDeleteThread(thread.id);
+  }
+}
+
+enum _ChatThreadAction { rename, togglePin }
+
+class _RenameChatThreadDialog extends StatefulWidget {
+  final String initialTitle;
+  final LocaleStrings s;
+
+  const _RenameChatThreadDialog({required this.initialTitle, required this.s});
+
+  @override
+  State<_RenameChatThreadDialog> createState() =>
+      _RenameChatThreadDialogState();
+}
+
+class _RenameChatThreadDialogState extends State<_RenameChatThreadDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialTitle)
+      ..selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: widget.initialTitle.length,
+      );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.s.rename),
+      content: TextField(
+        key: const ValueKey('chat-thread-rename-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 64,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (value) => Navigator.pop(context, value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(widget.s.cancel),
+        ),
+        FilledButton(
+          key: const ValueKey('chat-thread-rename-confirm'),
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: Text(widget.s.rename),
+        ),
+      ],
+    );
   }
 }

@@ -63,6 +63,17 @@ void main() {
       expect(assessment.hasCompleteArticleBody, isFalse);
     });
 
+    test('recognizes current X server-rendered target metadata', () {
+      final assessment = assessXPage(
+        _currentXLongArticleHtml,
+        'https://x.com/author/status/2048757569775378858',
+      );
+
+      expect(assessment.hasTargetArticle, isTrue);
+      expect(assessment.hasCompleteArticleBody, isTrue);
+      expect(assessment.content, contains('Opening structured evidence'));
+    });
+
     test('does not accept an X login shell without the target post', () {
       final assessment = assessXPage(
         '<html><body><main>Log in to see posts and conversations. '
@@ -170,6 +181,19 @@ const _normalXPostHtml = '''
   <a href="/author/status/1234567890">Permalink</a>
   <p>This is an ordinary short X post.</p>
 </article></main></body></html>
+''';
+
+const _currentXLongArticleHtml =
+    '''
+<html><body><article data-tweet-id="2048757569775378858"
+  itemid="https://x.com/i/status/2048757569775378858">
+  <meta content="2048757569775378858" itemprop="identifier">
+  <meta content="https://x.com/author/status/2048757569775378858"
+    itemprop="mainEntityOfPage">
+  <meta itemprop="articleBody" content="Opening structured evidence
+    $_substantiveText $_substantiveText $_substantiveText">
+  <div>Opening structured evidence</div>
+</article></body></html>
 ''';
 
 const _substantiveText =

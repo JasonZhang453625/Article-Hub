@@ -37,10 +37,7 @@ class HiveChatRepository implements ChatRepository {
   @override
   List<ChatThread> getThreads() {
     final threads = _requireThreads().values.toList(growable: false);
-    return threads.toList()..sort((a, b) {
-      final byUpdatedAt = b.updatedAt.compareTo(a.updatedAt);
-      return byUpdatedAt != 0 ? byUpdatedAt : b.id.compareTo(a.id);
-    });
+    return threads.toList()..sort(compareChatThreads);
   }
 
   @override
@@ -96,4 +93,10 @@ class HiveChatRepository implements ChatRepository {
     }
     return box;
   }
+}
+
+int compareChatThreads(ChatThread a, ChatThread b) {
+  if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+  final byUpdatedAt = b.updatedAt.compareTo(a.updatedAt);
+  return byUpdatedAt != 0 ? byUpdatedAt : b.id.compareTo(a.id);
 }

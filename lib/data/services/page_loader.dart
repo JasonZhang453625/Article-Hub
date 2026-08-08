@@ -74,11 +74,11 @@ bool fetchedPageHasUsableDocument(
 }
 
 bool fetchedPageHasUsableContentForUrl(FetchedPage page, String requestedUrl) {
-  if (!fetchedPageHasUsableDocument(page)) return false;
+  if (!page.isHtml || fetchedPageLooksBlocked(page)) return false;
 
   final finalUrlTarget = XStatusTarget.tryParse(page.finalUrl);
   final target = finalUrlTarget ?? XStatusTarget.tryParse(requestedUrl);
-  if (target == null) return true;
+  if (target == null) return fetchedPageHasUsableDocument(page);
 
   final assessment = assessXPage(
     page.body,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:markdown/markdown.dart' as md;
 
 import '../../data/models/passage.dart';
 import '../../shared/providers/locale_provider.dart';
@@ -137,8 +139,9 @@ class ChatBubble extends ConsumerWidget {
         MarkdownBody(
           data: message.text,
           selectable: true,
+          builders: {'pre': _CodeBlockBuilder()},
           styleSheet: MarkdownStyleSheet(
-            pPadding: const EdgeInsets.only(bottom: 4),
+            pPadding: const EdgeInsets.only(bottom: 8),
             p: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface,
               fontSize: 17,
@@ -161,13 +164,6 @@ class ChatBubble extends ConsumerWidget {
               backgroundColor: theme.colorScheme.surfaceContainerHighest,
               fontFamily: 'monospace',
               fontSize: 14,
-            ),
-            codeblockDecoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: theme.colorScheme.outline.withValues(alpha: 0.2),
-              ),
             ),
             blockquote: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
@@ -273,6 +269,160 @@ class ChatBubble extends ConsumerWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CodeBlockBuilder extends MarkdownElementBuilder {
+  @override
+  bool isBlockElement() => true;
+
+  @override
+  Widget? visitText(md.Text text, TextStyle? preferredStyle) {
+    // flutter_markdown 0.7.x keeps code text flowing through the inline
+    // pipeline when a custom `pre` builder is registered. Returning a widget
+    // (instead of null) consumes the text node so the inline stack drains and
+    // parsing completes; the actual code content is read from the element in
+    // visitElementAfterWithContext.
+    return const SizedBox.shrink();
+  }
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    md.Element? codeElement;
+    for (final child in element.children ?? const <md.Node>[]) {
+      if (child is md.Element && child.tag == 'code') {
+        codeElement = child;
+        break;
+      }
+    }
+    final code = _trimParserNewline(element.textContent);
+    return _CodeBlock(
+      language: _languageLabel(codeElement?.attributes['class']),
+      code: code,
+    );
+  }
+
+  static String _trimParserNewline(String value) {
+    return value.endsWith('\n')
+        ? value.substring(0, value.length - 1)
+        : value;
+  }
+
+  static String _languageLabel(String? className) {
+    final languageClass = className
+        ?.split(' ')
+        .map((value) => value.trim())
+        .firstWhere(
+          (value) => value.startsWith('language-'),
+          orElse: () => '',
+        );
+    final language = languageClass?.replaceFirst('language-', '') ?? '';
+    if (language.isEmpty) return 'TEXT';
+
+    switch (language.toLowerCase()) {
+      case 'csharp':
+      case 'cs':
+        return 'C#';
+      case 'cpp':
+      case 'c++':
+        return 'C++';
+      case 'javascript':
+      case 'js':
+        return 'JavaScript';
+      case 'typescript':
+      case 'ts':
+        return 'TypeScript';
+      default:
+        return language.toUpperCase();
+    }
+  }
+}
+
+class _CodeBlock extends StatefulWidget {
+  final String language;
+  final String code;
+
+  const _CodeBlock({required this.language, required this.code});
+
+  @override
+  State<_CodeBlock> createState() => _CodeBlockState();
+}
+
+class _CodeBlockState extends State<_CodeBlock> {
+  var _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.code));
+    if (mounted) setState(() => _copied = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final codeStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      color: colorScheme.onSurface,
+      fontFamily: 'monospace',
+      fontSize: 14,
+      height: 1.45,
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.25)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            color: colorScheme.surfaceContainerHigh,
+            padding: const EdgeInsets.only(left: 12, right: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.language,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _copy,
+                  tooltip: _copied ? '已复制' : '复制代码',
+                  icon: Icon(
+                    _copied ? Icons.check_rounded : Icons.content_copy_rounded,
+                    size: 18,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+          Scrollbar(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                widget.code,
+                style: codeStyle,
+                softWrap: false,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -196,7 +196,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
         );
         return null;
       }
-      if (textLength < 100) {
+      if (xTarget == null && textLength < 100) {
         developer.log(
           'background WebView body too short: $textLength chars, url: $url',
           name: 'memora.webview',
@@ -300,7 +300,26 @@ String _pageSnapshotScript(XStatusTarget? xTarget) {
             return false;
           }
         });
-      const target = articles.find(linksToTarget) ||
+      const metaIdentifiesTarget = (article) =>
+        Array.from(article.querySelectorAll('meta[itemprop]')).some((meta) => {
+          const itemProp = meta.getAttribute('itemprop');
+          const content = meta.getAttribute('content') || '';
+          if (itemProp === 'identifier') return content === statusId;
+          if (itemProp !== 'url' && itemProp !== 'mainEntityOfPage') {
+            return false;
+          }
+          try {
+            const path = new URL(content, location.href).pathname;
+            const marker = '/status/' + statusId;
+            return path.endsWith(marker) || path.includes(marker + '/');
+          } catch (_) {
+            return false;
+          }
+        });
+      const target = articles.find((article) =>
+        article.getAttribute('data-tweet-id') === statusId ||
+        metaIdentifiesTarget(article) ||
+        linksToTarget(article)) ||
         articles.find((article) =>
           article.querySelector('.x-article-body') ||
           article.querySelector('h1')) || null;
