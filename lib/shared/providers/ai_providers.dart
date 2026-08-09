@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/models/ai_image_input.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
+import '../../data/services/chat_model_capabilities.dart';
 import '../../data/services/conversation_feedback_service.dart';
 import '../../data/services/embedding_service.dart';
 import '../../data/services/hosted_ai_capabilities.dart';
@@ -59,13 +61,14 @@ final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
 
 final conversationFeedbackServiceProvider =
     Provider<ConversationFeedbackService>((ref) {
-  final service = ConversationFeedbackService(
-    getSession: () => ref.read(currentSessionProvider),
-    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
-  );
-  ref.onDispose(service.dispose);
-  return service;
-});
+      final service = ConversationFeedbackService(
+        getSession: () => ref.read(currentSessionProvider),
+        refreshSession: () =>
+            ref.read(authControllerProvider.notifier).refresh(),
+      );
+      ref.onDispose(service.dispose);
+      return service;
+    });
 
 /// Effective hosted mode is account-bound. A persisted hosted preference is
 /// deliberately ignored while signed out, so every capability falls back to
@@ -97,6 +100,23 @@ final hostedAiCapabilitiesProvider = FutureProvider<HostedAiCapabilities?>((
   } catch (_) {
     return _builtInCapabilities();
   }
+});
+
+/// Whether the currently selected chat model can receive native image blocks.
+/// Hosted capability metadata is authoritative when available; BYOK falls
+/// back to conservative model-family detection.
+final chatModelSupportsImageInputProvider = Provider<bool>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null) return false;
+  if (ref.watch(hostedAiEnabledProvider)) {
+    final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
+    return chatModelSupportsImageInput(
+      settings.hostedChatModel,
+      declaredVisionModels:
+          capabilities?.visionModels ?? AppSettings.hostedVisionModels,
+    );
+  }
+  return chatModelSupportsImageInput(settings.chatAiModel);
 });
 
 HostedAiCapabilities _builtInCapabilities() {
@@ -228,6 +248,9 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
   final logService = ref.watch(retrievalLogServiceProvider);
   final webSearch = ref.watch(webSearchServiceProvider);
   final hostedAgent = ref.watch(hostedAgentServiceProvider);
+  final MultimodalAiGateway? multimodalAi = ai is MultimodalAiGateway
+      ? ai as MultimodalAiGateway
+      : null;
 
   return RagConversationService(
     retrieve: retrieval.retrieve,
@@ -263,6 +286,25 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             maxTokens: maxTokens,
           );
         },
+    multimodalCompleteStream: multimodalAi == null
+        ? null
+        : ({
+            required String systemPrompt,
+            required String userMessage,
+            required List<AiImageInput> images,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) {
+            return multimodalAi.chatStreamWithImages(
+              systemPrompt: systemPrompt,
+              userMessage: userMessage,
+              images: images,
+              history: history,
+              temperature: temperature,
+              maxTokens: maxTokens,
+            );
+          },
     agentRunStream: hostedAgent == null
         ? null
         : ({

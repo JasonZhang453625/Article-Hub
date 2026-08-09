@@ -135,6 +135,29 @@ void main() {
     },
   );
 
+  test('extracts an X post from safe page metadata without article markup', () {
+    const page = FetchedPage(
+      statusCode: 200,
+      contentType: 'text/html; charset=utf-8',
+      body:
+          '<html><head><meta property="og:description" '
+          'content="A fallback post body from X metadata."></head>'
+          '<body><main>Rendered application shell</main></body></html>',
+      finalUrl: 'https://x.com/author/status/2048757569775378858',
+      source: PageLoadSource.http,
+    );
+
+    final extractor = ContentExtractor();
+    try {
+      expect(
+        extractor.fromFetchedPage(page),
+        'A fallback post body from X metadata.',
+      );
+    } finally {
+      extractor.dispose();
+    }
+  });
+
   test('does not extract an X long-article preview as full content', () {
     const page = FetchedPage(
       statusCode: 200,

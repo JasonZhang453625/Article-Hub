@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 export 'chat_context_window.dart' show ChatContextWindow, RagConversationTurn;
 
+import '../models/ai_image_input.dart';
 import '../models/passage.dart';
 import '../models/ai_thinking_level.dart';
 import 'chat_context_window.dart';
@@ -32,6 +33,16 @@ typedef RagCompletionStream =
     Stream<String> Function({
       required String systemPrompt,
       required String userMessage,
+      List<Map<String, String>> history,
+      double temperature,
+      int maxTokens,
+    });
+
+typedef RagMultimodalCompletionStream =
+    Stream<String> Function({
+      required String systemPrompt,
+      required String userMessage,
+      required List<AiImageInput> images,
       List<Map<String, String>> history,
       double temperature,
       int maxTokens,
@@ -82,6 +93,8 @@ class RagConversationRequest {
   final int contextTokenBudget;
   final int contextWindowTokens;
   final AiThinkingLevel thinkingLevel;
+  final String attachmentContext;
+  final List<AiImageInput> imageInputs;
 
   const RagConversationRequest({
     required this.question,
@@ -94,6 +107,8 @@ class RagConversationRequest {
     this.contextTokenBudget = 2200,
     this.contextWindowTokens = ChatContextWindow.defaultContextWindowTokens,
     this.thinkingLevel = AiThinkingLevel.none,
+    this.attachmentContext = '',
+    this.imageInputs = const [],
   });
 }
 
@@ -177,6 +192,7 @@ class RagConversationService {
   final RagRetrieve _retrieve;
   final RagCompletion _complete;
   final RagCompletionStream? _completeStream;
+  final RagMultimodalCompletionStream? _multimodalCompleteStream;
   final RagAgentCompletionStream? _agentCompleteStream;
   final RagAgentCompletionStreamWithRun? _agentRunStream;
   final RagCompletionError? _completionError;
@@ -194,6 +210,7 @@ class RagConversationService {
     required RagRetrieve retrieve,
     required RagCompletion complete,
     RagCompletionStream? completeStream,
+    RagMultimodalCompletionStream? multimodalCompleteStream,
     RagAgentCompletionStream? agentCompleteStream,
     RagAgentCompletionStreamWithRun? agentRunStream,
     RagCompletionError? completionError,
@@ -209,6 +226,7 @@ class RagConversationService {
   }) : _retrieve = retrieve,
        _complete = complete,
        _completeStream = completeStream,
+       _multimodalCompleteStream = multimodalCompleteStream,
        _agentCompleteStream = agentCompleteStream,
        _agentRunStream = agentRunStream,
        _completionError = completionError,
@@ -257,7 +275,13 @@ class RagConversationService {
     // sequence.
     final retrievalStopwatch = Stopwatch()..start();
     final retrievalFuture = _attemptRetrieval(rewrittenQuery, request.articles);
-    final agentCanSearch = request.webSearch && _agentCompleteStream != null;
+    final hasAttachments =
+        request.attachmentContext.trim().isNotEmpty ||
+        request.imageInputs.isNotEmpty;
+    final agentCanSearch =
+        request.webSearch &&
+        request.imageInputs.isEmpty &&
+        _agentCompleteStream != null;
     final webFuture = request.webSearch && !agentCanSearch && _webSearch != null
         ? _attemptWebSearch(rewrittenQuery)
         : Future.value((fatalError: null, results: const <WebSearchResult>[]));
@@ -279,7 +303,8 @@ class RagConversationService {
 
     if (retrievalAttempt.result == null &&
         webResults.isEmpty &&
-        !agentCanSearch) {
+        !agentCanSearch &&
+        !hasAttachments) {
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
         error: retrievalAttempt.error.toString(),
@@ -303,16 +328,20 @@ class RagConversationService {
 
     final useLocalContext = retrieval.articles.isNotEmpty;
     final useWebContext = webResults.isNotEmpty;
-    final method = _methodFor(
-      local: useLocalContext,
-      web: useWebContext,
-      retrievalMethod: retrieval.method,
+    final method = _methodWithAttachments(
+      _methodFor(
+        local: useLocalContext,
+        web: useWebContext,
+        retrievalMethod: retrieval.method,
+      ),
+      hasAttachments: hasAttachments,
     );
 
     if (!useLocalContext &&
         !useWebContext &&
         request.knowledgeOnly &&
-        !agentCanSearch) {
+        !agentCanSearch &&
+        !hasAttachments) {
       await _writeLog(
         logId: logId,
         question: question,
@@ -361,16 +390,30 @@ class RagConversationService {
             : '\n${request.languageHint}',
       });
       final maxTokens = request.detailedAnswer ? 2500 : 1000;
-      final baseUserMessage = await _prompts.load(userPromptPath, {
+      final baseQuestionMessage = await _prompts.load(userPromptPath, {
         'context': '',
         'question': question,
       });
+      final attachmentBlock = hasAttachments
+          ? await _prompts.load('chat/attachments.txt', {
+              'attachments': request.attachmentContext.trim().isEmpty
+                  ? 'Images are attached to this message.'
+                  : request.attachmentContext.trim(),
+            })
+          : '';
+      final baseUserMessage = [
+        baseQuestionMessage,
+        if (attachmentBlock.isNotEmpty) attachmentBlock,
+      ].join('\n\n');
       final fixedTokens = _contextWindow.estimateFixedPromptTokens(
         systemPrompt: systemPrompt,
         userMessage: baseUserMessage,
         maxOutputTokens: maxTokens,
       );
-      final availableContextTokens = request.contextWindowTokens - fixedTokens;
+      final availableContextTokens =
+          request.contextWindowTokens -
+          fixedTokens -
+          request.imageInputs.length * 600;
       if (availableContextTokens <= 0) {
         await _writeLog(
           logId: logId,
@@ -435,10 +478,14 @@ class RagConversationService {
         citationMap = context.citationMap;
         webUrls = const [];
       }
-      final userMessage = await _prompts.load(userPromptPath, {
+      final questionMessage = await _prompts.load(userPromptPath, {
         'context': contextText,
         'question': question,
       });
+      final userMessage = [
+        questionMessage,
+        if (attachmentBlock.isNotEmpty) attachmentBlock,
+      ].join('\n\n');
       final history = _contextWindow.selectForPrompt(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
@@ -457,16 +504,20 @@ class RagConversationService {
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
         idempotencyKey: idempotencyKey,
+        images: request.imageInputs,
       );
 
       final agentWebUrls = _agentCompleteStream == null
           ? const <String>[]
           : (_agentWebUrls?.call() ?? const <String>[]);
       final effectiveWebUrls = webUrls.isNotEmpty ? webUrls : agentWebUrls;
-      final effectiveMethod = _methodFor(
-        local: useLocalContext,
-        web: effectiveWebUrls.isNotEmpty,
-        retrievalMethod: retrieval.method,
+      final effectiveMethod = _methodWithAttachments(
+        _methodFor(
+          local: useLocalContext,
+          web: effectiveWebUrls.isNotEmpty,
+          retrievalMethod: retrieval.method,
+        ),
+        hasAttachments: hasAttachments,
       );
 
       final rawCompletionError = _completionError?.call()?.trim();
@@ -476,8 +527,8 @@ class RagConversationService {
       // do not turn a usable answer into a failed chat bubble. Other provider
       // errors (including a stream interruption after partial output) remain
       // visible to the user.
-      final completionError = hasAnswer &&
-              _isEmptyResponseError(rawCompletionError)
+      final completionError =
+          hasAnswer && _isEmptyResponseError(rawCompletionError)
           ? null
           : rawCompletionError;
       if (hasAnswer && completionError == null && rawCompletionError != null) {
@@ -574,7 +625,30 @@ class RagConversationService {
     void Function(HostedAgentEvent event)? onAgentEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
     String? idempotencyKey,
+    required List<AiImageInput> images,
   }) async {
+    if (images.isNotEmpty) {
+      final multimodalStream = _multimodalCompleteStream;
+      if (multimodalStream == null) {
+        throw StateError('The selected AI gateway cannot receive images.');
+      }
+      final buffer = StringBuffer();
+      await for (final delta in multimodalStream(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        images: images,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+
     final agentRunStream = _agentRunStream;
     if (agentRunStream != null) {
       final buffer = StringBuffer();
@@ -781,6 +855,13 @@ String _methodFor({
   if (local && web) return '${retrievalMethod.name}+web';
   if (web) return 'web';
   return retrievalMethod.name;
+}
+
+String _methodWithAttachments(String method, {required bool hasAttachments}) {
+  if (!hasAttachments) return method;
+  return method == RetrievalMethod.none.name
+      ? 'attachment'
+      : '$method+attachment';
 }
 
 List<String> _weakCandidates(String query, List<Article> articles) {

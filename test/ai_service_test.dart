@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:memora/data/models/ai_thinking_level.dart';
+import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/services/ai_service.dart';
 
@@ -667,6 +669,59 @@ void main() {
     expect(chunks, ['partial']);
     expect(ai.lastError, contains('ended before [DONE]'));
   });
+
+  test(
+    'multimodal chat emits OpenAI image blocks in the user message',
+    () async {
+      late Map<String, dynamic> payload;
+      final client = MockClient.streaming((request, bodyStream) async {
+        payload =
+            jsonDecode(await bodyStream.bytesToString())
+                as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream<List<int>>.fromIterable([
+            utf8.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'),
+            utf8.encode('data: [DONE]\n\n'),
+          ]),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final ai = AiService(
+        baseUrl: 'https://example.com/v1',
+        apiKey: 'test-key',
+        model: 'gpt-4o-mini',
+      );
+
+      final chunks = await http.runWithClient(
+        () => ai
+            .chatStreamWithImages(
+              systemPrompt: 'system',
+              userMessage: 'question',
+              images: [
+                AiImageInput(
+                  id: 'image-1',
+                  fileName: 'chart.png',
+                  mimeType: 'image/png',
+                  bytes: Uint8List.fromList([1, 2, 3]),
+                ),
+              ],
+            )
+            .toList(),
+        () => client,
+      );
+
+      final messages = payload['messages'] as List<dynamic>;
+      final content = (messages.last as Map)['content'] as List<dynamic>;
+      expect(chunks, ['ok']);
+      expect((content.first as Map)['type'], 'text');
+      expect((content.last as Map)['type'], 'image_url');
+      expect(
+        ((content.last as Map)['image_url'] as Map)['url'],
+        'data:image/png;base64,AQID',
+      );
+    },
+  );
 }
 
 http.Response _chatResponse(String content) {

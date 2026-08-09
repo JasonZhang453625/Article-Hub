@@ -22,6 +22,9 @@ class ChatToolsSheet extends StatelessWidget {
 
   final ValueChanged<bool> onToggleWebSearch;
   final ValueChanged<AiThinkingLevel> onThinkingChanged;
+  final VoidCallback? onAddImage;
+  final VoidCallback? onAddFile;
+  final VoidCallback? onOpenSkills;
 
   const ChatToolsSheet({
     super.key,
@@ -32,6 +35,9 @@ class ChatToolsSheet extends StatelessWidget {
     required this.thinkingAvailable,
     required this.onToggleWebSearch,
     required this.onThinkingChanged,
+    this.onAddImage,
+    this.onAddFile,
+    this.onOpenSkills,
   });
 
   @override
@@ -66,6 +72,31 @@ class ChatToolsSheet extends StatelessWidget {
                 ),
               ),
               Text(s.chatTools, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _ChatToolActionButton(
+                    key: const ValueKey('chat-tools-image-button'),
+                    icon: Icons.image_outlined,
+                    label: s.chatToolsImage,
+                    onTap: onAddImage,
+                  ),
+                  const SizedBox(width: 10),
+                  _ChatToolActionButton(
+                    key: const ValueKey('chat-tools-file-button'),
+                    icon: Icons.description_outlined,
+                    label: s.chatToolsFile,
+                    onTap: onAddFile,
+                  ),
+                  const SizedBox(width: 10),
+                  _ChatToolActionButton(
+                    key: const ValueKey('chat-tools-skill-button'),
+                    icon: Icons.auto_awesome_outlined,
+                    label: 'Skill',
+                    onTap: onOpenSkills,
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
               Container(
                 decoration: BoxDecoration(
@@ -131,6 +162,65 @@ class ChatToolsSheet extends StatelessWidget {
                 ),
               ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Same visual grammar as the three theme/language choices in Settings.
+class _ChatToolActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  const _ChatToolActionButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final enabled = onTap != null;
+    final isDark = theme.brightness == Brightness.dark;
+    final foreground = enabled
+        ? theme.colorScheme.onSurface.withValues(alpha: 0.66)
+        : theme.colorScheme.onSurface.withValues(alpha: 0.28);
+
+    return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark ? Colors.white12 : const Color(0xFFD7E3EA),
+              ),
+            ),
+            child: Column(
+              children: [
+                Icon(icon, size: 22, color: foreground),
+                const SizedBox(height: 6),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: foreground,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

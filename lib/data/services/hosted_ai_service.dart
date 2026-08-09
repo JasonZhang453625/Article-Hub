@@ -1,4 +1,5 @@
 import '../../config/backend_config.dart';
+import '../models/ai_image_input.dart';
 import '../models/ai_thinking_level.dart';
 import 'ai_service.dart';
 import 'auth_service.dart';
@@ -18,7 +19,7 @@ enum HostedAiPurpose {
 /// `/ai/chat/v1/chat/completions` and `/ai/summary/v1/chat/completions`, so this
 /// class can reuse [AiService]'s request building, chunking and structured
 /// parsing while the server applies independent quotas.
-class HostedAiService implements AiGateway {
+class HostedAiService implements AiGateway, MultimodalAiGateway {
   final AuthSession? Function() _getSession;
   final Future<AuthSession?> Function() _refreshSession;
   final String model;
@@ -196,6 +197,52 @@ class HostedAiService implements AiGateway {
       await for (final chunk in ai.chatStream(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+      )) {
+        emitted = true;
+        yield chunk;
+      }
+    }
+    _capture(ai);
+  }
+
+  @override
+  Stream<String> chatStreamWithImages({
+    required String systemPrompt,
+    required String userMessage,
+    required List<AiImageInput> images,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  }) async* {
+    lastError = null;
+    lastStatusCode = null;
+    final session = await _freshSession();
+    if (session == null) return;
+
+    var ai = _aiFor(session);
+    var emitted = false;
+    await for (final chunk in ai.chatStreamWithImages(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      images: images,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+    )) {
+      emitted = true;
+      yield chunk;
+    }
+
+    final retry = await _retryAfterUnauthorized(ai);
+    if (retry != null && !emitted) {
+      ai = retry;
+      await for (final chunk in ai.chatStreamWithImages(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        images: images,
         history: history,
         temperature: temperature,
         maxTokens: maxTokens,

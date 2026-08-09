@@ -84,9 +84,7 @@ bool fetchedPageHasUsableContentForUrl(FetchedPage page, String requestedUrl) {
     page.body,
     finalUrlTarget == null ? requestedUrl : page.finalUrl,
   );
-  if (!assessment.hasTargetArticle) return false;
-  if (!assessment.looksLikeLongArticle) return true;
-  return assessment.hasCompleteArticleBody;
+  return assessment.hasExtractableContent;
 }
 
 class ResilientPageLoader implements PageLoader {
@@ -121,15 +119,36 @@ class ResilientPageLoader implements PageLoader {
     }
 
     final recovered = await fallback.fetch(url);
-    if (recovered == null ||
-        !fetchedPageHasUsableContentForUrl(recovered, url)) {
+    if (recovered != null &&
+        fetchedPageHasUsableContentForUrl(recovered, url)) {
+      return recovered;
+    }
+
+    // X changes its DOM frequently. A successfully loaded original document
+    // is still useful for metadata and later extractor fallbacks, even when
+    // neither source matches the current X-specific content candidates.
+    if (direct != null && fetchedPageHasUsableDocument(direct)) {
       developer.log(
-        'HTTP and background WebView both failed, url: $url',
+        'returning loadable original HTML after X candidate fallback failed, '
+        'url: $url',
         name: 'memora.page_loader',
       );
-      return null;
+      return direct;
     }
-    return recovered;
+    if (recovered != null && fetchedPageHasUsableDocument(recovered)) {
+      developer.log(
+        'returning loadable WebView HTML without a preferred content candidate, '
+        'url: $url',
+        name: 'memora.page_loader',
+      );
+      return recovered;
+    }
+
+    developer.log(
+      'HTTP and background WebView both failed, url: $url',
+      name: 'memora.page_loader',
+    );
+    return null;
   }
 
   @override

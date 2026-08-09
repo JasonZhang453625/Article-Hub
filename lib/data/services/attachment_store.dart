@@ -3,9 +3,12 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../models/chat_attachment.dart';
+
 /// App-owned storage for imported local files (images, etc.).
 class AttachmentStore {
   static const rootFolderName = 'attachments';
+  static const chatFolderName = 'chat';
 
   Future<Directory> _root() async {
     final support = await getApplicationSupportDirectory();
@@ -66,6 +69,67 @@ class AttachmentStore {
     }
   }
 
+  /// Store one chat attachment in its own folder.
+  ///
+  /// A per-attachment folder makes draft removal and thread deletion precise:
+  /// no sibling message or article files can be removed accidentally.
+  Future<String> saveBytesForChatAttachment({
+    required String attachmentId,
+    required String fileName,
+    required List<int> bytes,
+  }) async {
+    if (!isValidChatAttachmentId(attachmentId)) {
+      throw ArgumentError.value(
+        attachmentId,
+        'attachmentId',
+        'Invalid chat attachment id',
+      );
+    }
+    final root = await _root();
+    final dir = Directory(p.join(root.path, chatFolderName, attachmentId));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    final safeName = _safeFileName(fileName);
+    final dest = File(p.join(dir.path, safeName));
+    await dest.writeAsBytes(bytes, flush: true);
+    return p.join(rootFolderName, chatFolderName, attachmentId, safeName);
+  }
+
+  /// Resolve a chat attachment only inside its app-owned UUID directory.
+  ///
+  /// Chat metadata can be restored from Hive/backup data, so it must not be
+  /// allowed to turn a relative path into an arbitrary local file read.
+  Future<File?> resolveChatAttachment({
+    required String attachmentId,
+    required String relativePath,
+  }) async {
+    if (!isValidChatAttachmentId(attachmentId) || relativePath.trim().isEmpty) {
+      return null;
+    }
+    final support = await getApplicationSupportDirectory();
+    final attachmentDir = p.normalize(
+      p.join(support.path, rootFolderName, chatFolderName, attachmentId),
+    );
+    final candidate = p.normalize(
+      p.isAbsolute(relativePath)
+          ? relativePath
+          : p.join(support.path, relativePath),
+    );
+    if (!p.isWithin(attachmentDir, candidate)) return null;
+    final file = File(candidate);
+    return await file.exists() ? file : null;
+  }
+
+  Future<void> deleteChatAttachment(String attachmentId) async {
+    if (!isValidChatAttachmentId(attachmentId)) return;
+    final root = await _root();
+    final dir = Directory(p.join(root.path, chatFolderName, attachmentId));
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  }
+
   /// Write raw [bytes] as a file under `attachments/{articleId}/`.
   ///
   /// Returns a relative path suitable for Hive storage.
@@ -79,11 +143,21 @@ class AttachmentStore {
     if (!await articleDir.exists()) {
       await articleDir.create(recursive: true);
     }
-    final safeName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final safeName = _safeFileName(fileName);
     final dest = File(p.join(articleDir.path, safeName));
     await dest.writeAsBytes(bytes, flush: true);
     return p.join(rootFolderName, articleId, safeName);
   }
+}
+
+String _safeFileName(String value) {
+  final sanitized = value
+      .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F]'), '_')
+      .trim();
+  if (sanitized.isEmpty || sanitized == '.' || sanitized == '..') {
+    return 'attachment';
+  }
+  return sanitized;
 }
 
 /// Guess a MIME type from a file path extension.

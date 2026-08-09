@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../data/models/passage.dart';
+import '../../data/models/chat_attachment.dart';
 import '../../shared/providers/locale_provider.dart';
 import 'chat_message.dart';
 import 'chat_citation_chips.dart';
@@ -104,7 +105,7 @@ class ChatBubble extends ConsumerWidget {
         child: Align(
           alignment: Alignment.centerRight,
           child: Container(
-            margin: const EdgeInsets.only(bottom: 18),
+            margin: const EdgeInsets.only(bottom: 25),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.82,
@@ -115,12 +116,26 @@ class ChatBubble extends ConsumerWidget {
                 18,
               ).copyWith(bottomRight: const Radius.circular(4)),
             ),
-            child: SelectableText(
-              message.text,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onPrimary,
-                fontSize: 16,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (message.attachments.isNotEmpty) ...[
+                  _ChatMessageAttachments(
+                    attachments: message.attachments,
+                    foregroundColor: theme.colorScheme.onPrimary,
+                  ),
+                  if (message.text.trim().isNotEmpty)
+                    const SizedBox(height: 10),
+                ],
+                if (message.text.trim().isNotEmpty)
+                  SelectableText(
+                    message.text,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onPrimary,
+                      fontSize: 16,
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -141,6 +156,7 @@ class ChatBubble extends ConsumerWidget {
           selectable: true,
           builders: {'pre': _CodeBlockBuilder()},
           styleSheet: MarkdownStyleSheet(
+            blockSpacing: 18,
             pPadding: const EdgeInsets.only(bottom: 12),
             horizontalRuleDecoration: const BoxDecoration(),
             p: theme.textTheme.bodyLarge?.copyWith(
@@ -275,6 +291,63 @@ class ChatBubble extends ConsumerWidget {
   }
 }
 
+class _ChatMessageAttachments extends StatelessWidget {
+  final List<ChatAttachment> attachments;
+  final Color foregroundColor;
+
+  const _ChatMessageAttachments({
+    required this.attachments,
+    required this.foregroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: attachments
+          .map(
+            (attachment) => Container(
+              key: ValueKey('chat-message-attachment-${attachment.id}'),
+              constraints: const BoxConstraints(maxWidth: 220),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: foregroundColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: foregroundColor.withValues(alpha: 0.24),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    attachment.isImage
+                        ? Icons.image_outlined
+                        : Icons.description_outlined,
+                    size: 18,
+                    color: foregroundColor,
+                  ),
+                  const SizedBox(width: 7),
+                  Flexible(
+                    child: Text(
+                      attachment.originalFileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.labelMedium?.copyWith(color: foregroundColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
 class _CodeBlockBuilder extends MarkdownElementBuilder {
   @override
   bool isBlockElement() => true;
@@ -311,19 +384,14 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
   }
 
   static String _trimParserNewline(String value) {
-    return value.endsWith('\n')
-        ? value.substring(0, value.length - 1)
-        : value;
+    return value.endsWith('\n') ? value.substring(0, value.length - 1) : value;
   }
 
   static String _languageLabel(String? className) {
     final languageClass = className
         ?.split(' ')
         .map((value) => value.trim())
-        .firstWhere(
-          (value) => value.startsWith('language-'),
-          orElse: () => '',
-        );
+        .firstWhere((value) => value.startsWith('language-'), orElse: () => '');
     final language = languageClass?.replaceFirst('language-', '') ?? '';
     if (language.isEmpty) return 'TEXT';
 
@@ -419,11 +487,7 @@ class _CodeBlockState extends State<_CodeBlock> {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.all(12),
-              child: Text(
-                widget.code,
-                style: codeStyle,
-                softWrap: false,
-              ),
+              child: Text(widget.code, style: codeStyle, softWrap: false),
             ),
           ),
         ],

@@ -2,12 +2,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/models/folder.dart';
 import '../../data/services/backup_service.dart';
+import '../../data/services/chat_attachment_pipeline.dart';
 import '../../data/services/content_extractor.dart';
 import '../../data/services/image_understanding_service.dart';
 import '../../data/services/metadata_service.dart';
 import '../../data/services/processing_queue.dart';
 import '../../data/services/processing_pipeline.dart';
 import 'article_providers.dart';
+import 'attachment_providers.dart';
 import 'filter_providers.dart';
 import 'folder_providers.dart';
 import 'ai_providers.dart';
@@ -44,6 +46,13 @@ final imageUnderstandingServiceProvider = Provider<ImageUnderstandingGateway?>((
   );
   ref.onDispose(service.dispose);
   return service;
+});
+
+final chatAttachmentPipelineProvider = Provider<ChatAttachmentPipeline>((ref) {
+  return ChatAttachmentPipeline(
+    store: ref.watch(attachmentStoreProvider),
+    vision: ref.watch(imageUnderstandingServiceProvider),
+  );
 });
 
 final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {

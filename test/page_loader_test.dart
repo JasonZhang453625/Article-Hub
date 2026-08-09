@@ -132,7 +132,29 @@ void main() {
     });
 
     test(
-      'incomplete X long article remains a failure after fallback',
+      'X metadata fallback is usable without a matching article selector',
+      () async {
+        final primary = _FakeLoader(
+          page: _xMetadataOnlyPage(PageLoadSource.http),
+        );
+        final fallback = _FakeLoader(page: _usablePage(PageLoadSource.webView));
+        final loader = ResilientPageLoader(
+          primary: primary,
+          fallback: fallback,
+          ownsLoaders: false,
+        );
+
+        final result = await loader.fetch(
+          'https://x.com/author/status/2048757569775378858',
+        );
+
+        expect(result?.source, PageLoadSource.http);
+        expect(fallback.fetchCount, 0);
+      },
+    );
+
+    test(
+      'keeps a loadable X page when fallback has no better content candidate',
       () async {
         final loader = ResilientPageLoader(
           primary: _FakeLoader(page: _xLongArticlePreview(PageLoadSource.http)),
@@ -142,10 +164,11 @@ void main() {
           ownsLoaders: false,
         );
 
-        expect(
-          await loader.fetch('https://x.com/i/status/2048757569775378858'),
-          isNull,
+        final result = await loader.fetch(
+          'https://x.com/i/status/2048757569775378858',
         );
+
+        expect(result?.source, PageLoadSource.http);
       },
     );
 
@@ -302,6 +325,22 @@ FetchedPage _xCurrentServerRenderedPost(PageLoadSource source) {
       <meta content="A short original post" itemprop="articleBody">
       <div>A short original post</div>
     </article></body></html>''',
+    finalUrl: 'https://x.com/author/status/2048757569775378858',
+    source: source,
+  );
+}
+
+FetchedPage _xMetadataOnlyPage(PageLoadSource source) {
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body:
+        '<html><head><meta property="og:description" '
+        'content="A fallback post body from X metadata."></head>'
+        '<body><main>Rendered application shell with enough surrounding '
+        'content to be a loadable document, including navigation labels, '
+        'layout placeholders, and other non-article interface text.</main>'
+        '</body></html>',
     finalUrl: 'https://x.com/author/status/2048757569775378858',
     source: source,
   );

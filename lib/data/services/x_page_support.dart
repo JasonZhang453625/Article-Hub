@@ -51,6 +51,9 @@ class XPageAssessment {
     this.title,
     this.content,
   });
+
+  bool get hasExtractableContent =>
+      content != null && content!.trim().isNotEmpty;
 }
 
 XPageAssessment assessXPage(String htmlBody, String url) {
@@ -68,12 +71,16 @@ XPageAssessment assessXPage(String htmlBody, String url) {
   final document = html_parser.parse(htmlBody);
   final article = _findTargetArticle(document, target.statusId);
   if (article == null) {
-    return const XPageAssessment(
+    final metadataContent = _pageMetadataContent(document);
+    return XPageAssessment(
       isXStatusPage: true,
       hasTargetArticle: false,
       looksLikeLongArticle: false,
       hasCompleteArticleBody: false,
-      reason: 'x_target_article_missing',
+      reason: metadataContent == null
+          ? 'x_target_article_missing'
+          : 'x_page_metadata_fallback',
+      content: metadataContent,
     );
   }
 
@@ -87,13 +94,8 @@ XPageAssessment assessXPage(String htmlBody, String url) {
   );
   final hasArticleCover =
       article.querySelector('img[alt="Article cover image"]') != null;
-  final hasStructuredLongBody =
-      structuredBody.length >= xLongArticleMinimumTextLength;
   final looksLikeLongArticle =
-      explicitBody != null ||
-      heading.isNotEmpty ||
-      hasArticleCover ||
-      hasStructuredLongBody;
+      explicitBody != null || heading.isNotEmpty || hasArticleCover;
 
   final body = explicitBody ?? article;
   final blocks = _contentBlocks(body, excludeHeading: explicitBody == null);
@@ -116,16 +118,12 @@ XPageAssessment assessXPage(String htmlBody, String url) {
       explicitBody != null &&
       bodyText.length >= xLongArticleMinimumTextLength &&
       (blocks.length >= 2 || bodyText.length >= 500);
-  final isStructuredBodyComplete = hasStructuredLongBody;
   final isSemanticFallbackComplete =
       explicitBody == null &&
       heading.isNotEmpty &&
       blocks.length >= xLongArticleSemanticFallbackMinimumBlocks &&
       bodyText.length >= xLongArticleSemanticFallbackMinimumTextLength;
-  final complete =
-      isExplicitBodyComplete ||
-      isStructuredBodyComplete ||
-      isSemanticFallbackComplete;
+  final complete = isExplicitBodyComplete || isSemanticFallbackComplete;
 
   if (!complete) {
     return XPageAssessment(
@@ -140,7 +138,7 @@ XPageAssessment assessXPage(String htmlBody, String url) {
 
   final content = [
     if (heading.isNotEmpty) heading,
-    if (isStructuredBodyComplete) structuredBody else bodyText,
+    if (structuredBody.isNotEmpty) structuredBody else bodyText,
   ].where((part) => part.trim().isNotEmpty).join('\n\n');
   return XPageAssessment(
     isXStatusPage: true,
@@ -227,6 +225,39 @@ bool _urlContainsStatus(String? value, String statusId) {
   if (value == null) return false;
   final path = Uri.tryParse(value)?.path ?? value;
   return RegExp('/status/$statusId(?:/|\$)').hasMatch(path);
+}
+
+String? _pageMetadataContent(Document document) {
+  final candidates = [
+    _metaContent(document, 'og:description'),
+    _metaContent(document, 'twitter:description'),
+    _metaContent(document, 'description'),
+  ];
+  for (final candidate in candidates) {
+    final text = _cleanInline(candidate ?? '');
+    if (_isUsableXMetadataText(text)) return text;
+  }
+  return null;
+}
+
+String? _metaContent(Document document, String name) {
+  final element =
+      document.querySelector('meta[property="$name"]') ??
+      document.querySelector('meta[name="$name"]');
+  return element?.attributes['content'];
+}
+
+bool _isUsableXMetadataText(String text) {
+  if (text.length < 20) return false;
+  final lower = text.toLowerCase();
+  const pageChrome = [
+    'log in',
+    'sign up',
+    'see new posts',
+    "what's happening",
+    'x. it',
+  ];
+  return !pageChrome.any(lower.contains);
 }
 
 List<String> _contentBlocks(Element root, {required bool excludeHeading}) {

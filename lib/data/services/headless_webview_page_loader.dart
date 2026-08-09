@@ -159,18 +159,18 @@ class HeadlessWebViewPageLoader implements PageLoader {
           var canStabilize = length >= 100;
           if (xTarget != null) {
             xReadiness = XWebViewReadiness.fromSnapshot(snapshot);
-            length = xReadiness.observedTextLength;
-            canStabilize = xReadiness.hasUsableTarget;
+            if (xReadiness.hasUsableTarget) {
+              length = xReadiness.observedTextLength;
+              canStabilize = true;
 
-            // A normal X post can appear before X finishes deciding whether
-            // the target opens into a long-form article. Give X a short grace
-            // period before accepting the normal-post path. Long articles are
-            // accepted as soon as their dedicated body is ready and stable.
-            final normalPostGraceElapsed =
-                DateTime.now().difference(domStartedAt) >=
-                const Duration(seconds: 3);
-            if (!xReadiness.longArticleHint && !normalPostGraceElapsed) {
-              canStabilize = false;
+              // Give X a short grace period before accepting a normal post:
+              // it may still expand into a long-form article.
+              final normalPostGraceElapsed =
+                  DateTime.now().difference(domStartedAt) >=
+                  const Duration(seconds: 3);
+              if (!xReadiness.longArticleHint && !normalPostGraceElapsed) {
+                canStabilize = false;
+              }
             }
           }
 
@@ -188,15 +188,7 @@ class HeadlessWebViewPageLoader implements PageLoader {
       }
 
       final textLength = snapshot?['textLength'] as int? ?? 0;
-      if (xTarget != null &&
-          (xReadiness == null || !xReadiness.hasUsableTarget)) {
-        developer.log(
-          'background WebView X target article did not become ready, url: $url',
-          name: 'memora.webview',
-        );
-        return null;
-      }
-      if (xTarget == null && textLength < 100) {
+      if (textLength < 100) {
         developer.log(
           'background WebView body too short: $textLength chars, url: $url',
           name: 'memora.webview',

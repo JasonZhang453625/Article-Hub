@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
 import 'package:memora/data/models/chat_message_record.dart';
+import 'package:memora/data/models/chat_attachment.dart';
 import 'package:memora/data/models/chat_thread.dart';
 import 'package:memora/data/repositories/chat_repository.dart';
 
@@ -119,29 +120,75 @@ void main() {
     expect(chatTitleFromMessage(repeated('记', 40)), endsWith('…'));
   });
 
-  test('round-trips interrupted status and durable run metadata through Hive', () async {
-    final now = DateTime.utc(2026, 7, 30);
-    await repository.putThread(
-      ChatThread(id: 't1', title: 'T', createdAt: now, updatedAt: now),
-    );
-    await repository.putMessage(
-      ChatMessageRecord(
-        id: 'm1',
-        threadId: 't1',
-        role: ChatMessageRole.assistant,
-        content: 'partial server answer',
-        createdAt: now,
-        query: 'Question',
-        status: ChatMessageStatus.sending,
-        aiRunId: 'run-9',
-        aiRunEventSeq: 4,
-      ),
-    );
+  test(
+    'round-trips interrupted status and durable run metadata through Hive',
+    () async {
+      final now = DateTime.utc(2026, 7, 30);
+      await repository.putThread(
+        ChatThread(id: 't1', title: 'T', createdAt: now, updatedAt: now),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'm1',
+          threadId: 't1',
+          role: ChatMessageRole.assistant,
+          content: 'partial server answer',
+          createdAt: now,
+          query: 'Question',
+          status: ChatMessageStatus.sending,
+          aiRunId: 'run-9',
+          aiRunEventSeq: 4,
+        ),
+      );
 
-    final restored = repository.getMessage('m1');
-    expect(restored!.status, ChatMessageStatus.sending);
-    expect(restored.query, 'Question');
-    expect(restored.aiRunId, 'run-9');
-    expect(restored.aiRunEventSeq, 4);
-  });
+      final restored = repository.getMessage('m1');
+      expect(restored!.status, ChatMessageStatus.sending);
+      expect(restored.query, 'Question');
+      expect(restored.aiRunId, 'run-9');
+      expect(restored.aiRunEventSeq, 4);
+    },
+  );
+
+  test(
+    'round-trips attachment metadata and prepared context through Hive',
+    () async {
+      final now = DateTime.utc(2026, 8, 9);
+      await repository.putThread(
+        ChatThread(
+          id: 't2',
+          title: 'Attachment',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'm2',
+          threadId: 't2',
+          role: ChatMessageRole.user,
+          content: 'Read this',
+          createdAt: now,
+          attachments: const [
+            ChatAttachment(
+              id: 'attachment-1',
+              kind: ChatAttachmentKind.file,
+              localPath: 'attachments/chat/attachment-1/note.txt',
+              mimeType: 'text/plain',
+              originalFileName: 'note.txt',
+              byteLength: 4,
+              sha256:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            ),
+          ],
+          attachmentContext: 'File contents',
+          attachmentContextIncludesImages: false,
+        ),
+      );
+
+      final restored = repository.getMessage('m2')!;
+      expect(restored.attachments.single.originalFileName, 'note.txt');
+      expect(restored.attachmentContext, 'File contents');
+      expect(restored.attachmentContextIncludesImages, isFalse);
+    },
+  );
 }

@@ -70,8 +70,19 @@ void main() {
       );
 
       expect(assessment.hasTargetArticle, isTrue);
-      expect(assessment.hasCompleteArticleBody, isTrue);
+      expect(assessment.hasExtractableContent, isTrue);
       expect(assessment.content, contains('Opening structured evidence'));
+    });
+
+    test('uses safe page metadata when current X markup has no article', () {
+      final assessment = assessXPage(
+        _metadataOnlyXPostHtml,
+        'https://x.com/author/status/2048757569775378858',
+      );
+
+      expect(assessment.hasTargetArticle, isFalse);
+      expect(assessment.hasExtractableContent, isTrue);
+      expect(assessment.content, 'A fallback post body from X metadata.');
     });
 
     test('does not accept an X login shell without the target post', () {
@@ -194,6 +205,12 @@ const _currentXLongArticleHtml =
     $_substantiveText $_substantiveText $_substantiveText">
   <div>Opening structured evidence</div>
 </article></body></html>
+''';
+
+const _metadataOnlyXPostHtml = '''
+<html><head>
+  <meta property="og:description" content="A fallback post body from X metadata.">
+</head><body><main>Rendered application shell</main></body></html>
 ''';
 
 const _substantiveText =

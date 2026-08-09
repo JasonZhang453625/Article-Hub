@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/hosted_ai_service.dart';
 
@@ -201,6 +203,61 @@ void main() {
     expect(calls, 1);
     expect(service.lastError, contains('Try again tomorrow'));
   });
+
+  test(
+    'hosted multimodal chat keeps the chat endpoint and account token',
+    () async {
+      late Uri requestUri;
+      late String? authorization;
+      late Map<String, dynamic> payload;
+      final client = MockClient.streaming((request, bodyStream) async {
+        requestUri = request.url;
+        authorization = request.headers['authorization'];
+        payload =
+            jsonDecode(await bodyStream.bytesToString())
+                as Map<String, dynamic>;
+        return http.StreamedResponse(
+          Stream<List<int>>.fromIterable([
+            utf8.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'),
+            utf8.encode('data: [DONE]\n\n'),
+          ]),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final session = _session(_jwt('vision'));
+      final service = HostedAiService(
+        getSession: () => session,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        purpose: HostedAiPurpose.chat,
+      );
+
+      final chunks = await http.runWithClient(
+        () => service
+            .chatStreamWithImages(
+              systemPrompt: 'S',
+              userMessage: 'Q',
+              images: [
+                AiImageInput(
+                  id: 'image',
+                  fileName: 'image.png',
+                  mimeType: 'image/png',
+                  bytes: Uint8List.fromList([1]),
+                ),
+              ],
+            )
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks, ['ok']);
+      expect(requestUri.path, '/ai/chat/v1/chat/completions');
+      expect(authorization, 'Bearer ${session.accessToken}');
+      final messages = payload['messages'] as List<dynamic>;
+      expect((messages.last as Map)['content'], isA<List<dynamic>>());
+    },
+  );
 }
 
 AuthSession _session(String accessToken) => AuthSession(

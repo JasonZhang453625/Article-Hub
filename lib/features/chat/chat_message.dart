@@ -1,4 +1,5 @@
 import '../../data/models/chat_message_record.dart';
+import '../../data/models/chat_attachment.dart';
 
 enum MessageRole { user, assistant }
 
@@ -14,6 +15,7 @@ class ChatMessage {
   final String? query;
   final ChatMessageStatus status;
   final List<String> webUrls;
+  final List<ChatAttachment> attachments;
   int? feedback;
 
   ChatMessage({
@@ -28,6 +30,7 @@ class ChatMessage {
     this.query,
     this.status = ChatMessageStatus.completed,
     this.webUrls = const [],
+    this.attachments = const [],
   });
 
   bool get isPending => status == ChatMessageStatus.sending;
@@ -49,6 +52,7 @@ class ChatMessage {
       query: record.query,
       status: record.status,
       webUrls: record.webUrls,
+      attachments: record.attachments,
     )..feedback = record.feedback;
   }
 }

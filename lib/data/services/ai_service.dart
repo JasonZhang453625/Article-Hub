@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import '../models/ai_image_input.dart';
 import '../models/ai_thinking_level.dart';
 import '../models/memory_document.dart';
 import 'prompt_service.dart';
@@ -86,7 +87,20 @@ abstract interface class AiGateway {
   });
 }
 
-class AiService implements AiGateway {
+/// Optional extension for OpenAI-compatible gateways that can place image
+/// blocks in the current user message.
+abstract interface class MultimodalAiGateway {
+  Stream<String> chatStreamWithImages({
+    required String systemPrompt,
+    required String userMessage,
+    required List<AiImageInput> images,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  });
+}
+
+class AiService implements AiGateway, MultimodalAiGateway {
   static const int _singlePassLimit = 15000;
   static const int _chunkSize = 12000;
   static const int _summaryMaxTokens = 4000;
@@ -498,17 +512,76 @@ class AiService implements AiGateway {
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
+  }) {
+    return _chatStreamInternal(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      images: const [],
+    );
+  }
+
+  @override
+  Stream<String> chatStreamWithImages({
+    required String systemPrompt,
+    required String userMessage,
+    required List<AiImageInput> images,
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+  }) {
+    return _chatStreamInternal(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      images: images,
+    );
+  }
+
+  Stream<String> _chatStreamInternal({
+    required String systemPrompt,
+    required String userMessage,
+    required List<Map<String, String>> history,
+    required double temperature,
+    required int maxTokens,
+    required List<AiImageInput> images,
   }) async* {
     if (!isConfigured) {
       lastError = 'AI service is not configured';
       return;
     }
 
+    if (images.any(
+      (image) =>
+          !image.mimeType.toLowerCase().startsWith('image/') ||
+          image.bytes.isEmpty,
+    )) {
+      lastError = 'One or more image inputs are invalid';
+      return;
+    }
+
     final uri = _chatUri();
-    final messages = <Map<String, String>>[
+    final userContent = images.isEmpty
+        ? userMessage
+        : <Map<String, dynamic>>[
+            {'type': 'text', 'text': userMessage},
+            for (final image in images)
+              {
+                'type': 'image_url',
+                'image_url': {
+                  'url':
+                      'data:${image.mimeType.toLowerCase()};base64,${base64Encode(image.bytes)}',
+                },
+              },
+          ];
+    final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': systemPrompt},
       ...history,
-      {'role': 'user', 'content': userMessage},
+      {'role': 'user', 'content': userContent},
     ];
     final payload = <String, dynamic>{
       'model': model,

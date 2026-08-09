@@ -1,5 +1,7 @@
 import 'package:hive/hive.dart';
 
+import 'chat_attachment.dart';
+
 enum ChatMessageRole { system, user, assistant }
 
 enum ChatMessageStatus { sending, completed, failed, interrupted }
@@ -35,6 +37,17 @@ class ChatMessageRecord {
   /// connectivity.
   final int? aiRunEventSeq;
 
+  /// Files owned by this message. User messages may have attachments;
+  /// assistant messages normally keep this empty.
+  final List<ChatAttachment> attachments;
+
+  /// Bounded text extracted from files and, when required, the vision-model
+  /// interpretation. It is cached for retry and bounded follow-up context,
+  /// but is not rendered in the bubble.
+  final String? attachmentContext;
+
+  final bool attachmentContextIncludesImages;
+
   const ChatMessageRecord({
     required this.id,
     required this.threadId,
@@ -53,6 +66,9 @@ class ChatMessageRecord {
     this.webUrls = const [],
     this.aiRunId,
     this.aiRunEventSeq,
+    this.attachments = const [],
+    this.attachmentContext,
+    this.attachmentContextIncludesImages = false,
   });
 
   ChatMessageRecord copyWith({
@@ -69,6 +85,9 @@ class ChatMessageRecord {
     List<String>? webUrls,
     String? aiRunId,
     int? aiRunEventSeq,
+    List<ChatAttachment>? attachments,
+    String? attachmentContext,
+    bool? attachmentContextIncludesImages,
   }) {
     return ChatMessageRecord(
       id: id,
@@ -88,6 +107,11 @@ class ChatMessageRecord {
       webUrls: webUrls ?? this.webUrls,
       aiRunId: aiRunId ?? this.aiRunId,
       aiRunEventSeq: aiRunEventSeq ?? this.aiRunEventSeq,
+      attachments: attachments ?? this.attachments,
+      attachmentContext: attachmentContext ?? this.attachmentContext,
+      attachmentContextIncludesImages:
+          attachmentContextIncludesImages ??
+          this.attachmentContextIncludesImages,
     );
   }
 
@@ -138,13 +162,16 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       webUrls: _stringList(fields[14]),
       aiRunId: fields[15] as String?,
       aiRunEventSeq: (fields[16] as num?)?.toInt(),
+      attachments: chatAttachmentsFromStored(fields[17]),
+      attachmentContext: fields[18] as String?,
+      attachmentContextIncludesImages: fields[19] as bool? ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(17)
+      ..writeByte(20)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -178,7 +205,13 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(15)
       ..write(obj.aiRunId)
       ..writeByte(16)
-      ..write(obj.aiRunEventSeq);
+      ..write(obj.aiRunEventSeq)
+      ..writeByte(17)
+      ..write(obj.attachments.map((item) => item.toJson()).toList())
+      ..writeByte(18)
+      ..write(obj.attachmentContext)
+      ..writeByte(19)
+      ..write(obj.attachmentContextIncludesImages);
   }
 }
 

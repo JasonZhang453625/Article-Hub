@@ -323,7 +323,18 @@ class LocaleStrings {
   final String chatKbPlusGeneral;
   final String chatApply;
   final String chatTools;
+  final String chatToolsImage;
+  final String chatToolsFile;
+  final String chatToolsSkillComingSoon;
   final String chatToolsWebSearch;
+  final String chatAttachmentDefaultPrompt;
+  final String chatAttachmentRemove;
+  final String chatAttachmentTooMany;
+  final String chatAttachmentTooLarge;
+  final String chatAttachmentUnsupported;
+  final String chatAttachmentReadFailed;
+  final String chatAttachmentVisionRequired;
+  final String chatAttachmentPdfNoText;
   final String chatThinkingStrength;
   final String chatThinkingNone;
   final String chatThinkingLow;
@@ -664,7 +675,18 @@ class LocaleStrings {
     required this.chatKbPlusGeneral,
     required this.chatApply,
     required this.chatTools,
+    required this.chatToolsImage,
+    required this.chatToolsFile,
+    required this.chatToolsSkillComingSoon,
     required this.chatToolsWebSearch,
+    required this.chatAttachmentDefaultPrompt,
+    required this.chatAttachmentRemove,
+    required this.chatAttachmentTooMany,
+    required this.chatAttachmentTooLarge,
+    required this.chatAttachmentUnsupported,
+    required this.chatAttachmentReadFailed,
+    required this.chatAttachmentVisionRequired,
+    required this.chatAttachmentPdfNoText,
     required this.chatThinkingStrength,
     required this.chatThinkingNone,
     required this.chatThinkingLow,
@@ -1058,7 +1080,20 @@ class LocaleStrings {
     chatKbPlusGeneral: 'KB + General',
     chatApply: 'Apply',
     chatTools: 'Tools',
+    chatToolsImage: 'Image',
+    chatToolsFile: 'File',
+    chatToolsSkillComingSoon: 'The Skill entry is reserved and coming soon.',
     chatToolsWebSearch: 'Web Search',
+    chatAttachmentDefaultPrompt: 'Please analyze these attachments.',
+    chatAttachmentRemove: 'Remove attachment',
+    chatAttachmentTooMany: 'You can attach up to 9 items per message.',
+    chatAttachmentTooLarge: 'The selected attachments are too large.',
+    chatAttachmentUnsupported: 'This file type is not supported yet.',
+    chatAttachmentReadFailed: 'The attachment could not be read.',
+    chatAttachmentVisionRequired:
+        'Configure an image-understanding model before using images with this chat model.',
+    chatAttachmentPdfNoText:
+        'This PDF has no usable text layer. Scanned PDF recognition is not supported yet.',
     chatThinkingStrength: 'Thinking strength',
     chatThinkingNone: 'None',
     chatThinkingLow: 'Low',
@@ -1403,7 +1438,18 @@ class LocaleStrings {
     chatKbPlusGeneral: '知识库 + 通用',
     chatApply: '应用',
     chatTools: '工具',
+    chatToolsImage: '图片',
+    chatToolsFile: '文件',
+    chatToolsSkillComingSoon: 'Skill 入口已预留，功能即将上线。',
     chatToolsWebSearch: '联网搜索',
+    chatAttachmentDefaultPrompt: '请分析这些附件。',
+    chatAttachmentRemove: '移除附件',
+    chatAttachmentTooMany: '每条消息最多添加 9 个附件。',
+    chatAttachmentTooLarge: '所选附件体积过大。',
+    chatAttachmentUnsupported: '暂不支持这种文件类型。',
+    chatAttachmentReadFailed: '无法读取这个附件。',
+    chatAttachmentVisionRequired: '当前对话模型不支持识图，请先配置识图模型。',
+    chatAttachmentPdfNoText: '这个 PDF 没有可提取的文字层，暂不支持扫描版 PDF 识别。',
     chatThinkingStrength: '思考强度',
     chatThinkingNone: '无',
     chatThinkingLow: '低',

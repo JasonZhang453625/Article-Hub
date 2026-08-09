@@ -46,10 +46,6 @@ class ContentExtractor {
   String? _extractText(String htmlBody, {required String pageUrl}) {
     final xAssessment = assessXPage(htmlBody, pageUrl);
     if (xAssessment.isXStatusPage) {
-      if (!xAssessment.hasTargetArticle) return null;
-      if (xAssessment.looksLikeLongArticle) {
-        return xAssessment.hasCompleteArticleBody ? xAssessment.content : null;
-      }
       return xAssessment.content;
     }
 

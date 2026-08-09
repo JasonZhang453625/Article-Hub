@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/models/chat_message_record.dart';
+import '../../data/models/chat_attachment.dart';
 import '../../data/models/chat_thread.dart';
 import '../../data/models/ai_thinking_level.dart';
 import '../../data/repositories/chat_repository.dart';
+import 'attachment_providers.dart';
 import 'article_providers.dart';
 
 final chatRepositoryProvider = FutureProvider<ChatRepository>((ref) async {
@@ -196,7 +198,10 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     );
   }
 
-  Future<PersistedUserMessage> addUserMessage(String content) async {
+  Future<PersistedUserMessage> addUserMessage(
+    String content, {
+    List<ChatAttachment> attachments = const [],
+  }) async {
     await _ensureLoaded();
     final current = _current;
     final now = DateTime.now().toUtc();
@@ -216,6 +221,7 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
       role: ChatMessageRole.user,
       content: content,
       createdAt: now,
+      attachments: List.unmodifiable(attachments),
     );
     await _repo.putMessage(message);
 
@@ -418,7 +424,21 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   Future<void> deleteThread(String threadId) async {
     await _ensureLoaded();
     final current = _current;
+    final attachments = _repo
+        .getMessages(threadId)
+        .expand((message) => message.attachments)
+        .toList(growable: false);
     await _repo.deleteThread(threadId);
+    if (attachments.isNotEmpty) {
+      try {
+        await _ref
+            .read(chatAttachmentServiceProvider)
+            .deletePersisted(attachments);
+      } catch (_) {
+        // Chat history is already deleted. Orphan cleanup is best-effort and
+        // must not resurrect the thread when local file removal fails.
+      }
+    }
     final threads = current.threads
         .where((thread) => thread.id != threadId)
         .toList(growable: false);

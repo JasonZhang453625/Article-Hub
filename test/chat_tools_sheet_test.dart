@@ -5,6 +5,43 @@ import 'package:memora/features/chat/chat_tools_sheet.dart';
 import 'package:memora/shared/utils/locale_strings.dart';
 
 void main() {
+  testWidgets('shows image, file and Skill actions in one top row', (
+    tester,
+  ) async {
+    final actions = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatToolsSheet(
+            s: LocaleStrings.of(2),
+            webSearchEnabled: false,
+            webSearchAvailable: true,
+            thinkingLevel: AiThinkingLevel.none,
+            thinkingAvailable: false,
+            onToggleWebSearch: (_) {},
+            onThinkingChanged: (_) {},
+            onAddImage: () => actions.add('image'),
+            onAddFile: () => actions.add('file'),
+            onOpenSkills: () => actions.add('skill'),
+          ),
+        ),
+      ),
+    );
+
+    for (final entry in const [
+      (ValueKey('chat-tools-image-button'), 'image'),
+      (ValueKey('chat-tools-file-button'), 'file'),
+      (ValueKey('chat-tools-skill-button'), 'skill'),
+    ]) {
+      await tester.tap(find.byKey(entry.$1));
+      await tester.pump();
+      expect(actions.last, entry.$2);
+    }
+    expect(find.text('Image'), findsOneWidget);
+    expect(find.text('File'), findsOneWidget);
+    expect(find.text('Skill'), findsOneWidget);
+  });
+
   testWidgets('web tool switch updates optimistically on the next frame', (
     tester,
   ) async {

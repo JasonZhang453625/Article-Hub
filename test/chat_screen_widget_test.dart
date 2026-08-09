@@ -279,10 +279,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     await tester.tap(find.byKey(const ValueKey('chat-sidebar-button')));
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Chat History'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('chat-sidebar-close-button')));
+    await tester.tap(
+      find.byKey(const ValueKey('chat-sidebar-close-button')),
+    );
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await streamController.close();
     await tester.pumpAndSettle();
@@ -684,6 +688,17 @@ void main() {
     final gradient = (fade.decoration as BoxDecoration).gradient!;
     expect(gradient.colors.first, Colors.black);
     expect(gradient.colors.last.a, 0);
+
+    for (final key in const [
+      ValueKey('chat-sidebar-surface'),
+      ValueKey('chat-settings-surface'),
+    ]) {
+      final surface = tester.widget<Material>(find.byKey(key));
+      expect(surface.color, Colors.black);
+      final shape = surface.shape! as CircleBorder;
+      expect(shape.side.color, const Color(0xFFB8C0C8));
+      expect(shape.side.width, 1);
+    }
   });
 
   testWidgets(
