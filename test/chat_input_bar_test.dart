@@ -106,4 +106,30 @@ void main() {
     );
     expect(removed, drafts.last);
   });
+
+  testWidgets('loading generation exposes a Stop action', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    var stops = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatInputBar(
+            controller: controller,
+            loading: true,
+            s: LocaleStrings.of(2),
+            onSend: () {},
+            onStop: () => stops++,
+            onOpenTools: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('chat-stop-icon')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    expect(stops, 1);
+  });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/services.dart' show rootBundle;
 
 class PromptService {
   static const _basePath = 'assets/prompts';
+  static final RegExp _placeholder = RegExp(r'\{\{([A-Za-z][A-Za-z0-9_]*)\}\}');
 
   final Map<String, String> _cache = {};
 
@@ -13,12 +14,10 @@ class PromptService {
       _cache[fullPath] = content;
     }
 
-    if (vars != null && vars.isNotEmpty) {
-      for (final entry in vars.entries) {
-        content = content!.replaceAll('{{${entry.key}}}', entry.value);
-      }
-    }
-
-    return content!;
+    if (vars == null || vars.isEmpty) return content;
+    return content.replaceAllMapped(_placeholder, (match) {
+      final key = match.group(1)!;
+      return vars.containsKey(key) ? vars[key]! : match.group(0)!;
+    });
   }
 }

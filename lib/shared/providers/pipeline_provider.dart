@@ -49,10 +49,7 @@ final imageUnderstandingServiceProvider = Provider<ImageUnderstandingGateway?>((
 });
 
 final chatAttachmentPipelineProvider = Provider<ChatAttachmentPipeline>((ref) {
-  return ChatAttachmentPipeline(
-    store: ref.watch(attachmentStoreProvider),
-    vision: ref.watch(imageUnderstandingServiceProvider),
-  );
+  return ChatAttachmentPipeline(store: ref.watch(attachmentStoreProvider));
 });
 
 final processingPipelineProvider = Provider<ProcessingPipeline>((ref) {

@@ -409,6 +409,20 @@ String aiLanguagePrompt(int languageIndex) {
   }
 }
 
+/// Returns the language instruction for chat, where there may be no article.
+String aiChatLanguagePrompt(int languageIndex) {
+  switch (languageIndex) {
+    case 1:
+      return 'You MUST respond in Chinese (简体中文).';
+    case 2:
+      return 'You MUST respond in English.';
+    default:
+      return "Respond in the same language as the user's current question. "
+          'If the question is in Chinese, respond in Chinese. '
+          'If it is in English, respond in English.';
+  }
+}
+
 final hideInboxTabProvider = Provider<bool>((ref) {
   return ref
       .watch(settingsProvider)

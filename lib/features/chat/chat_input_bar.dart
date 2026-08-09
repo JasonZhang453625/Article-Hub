@@ -8,6 +8,7 @@ class ChatInputBar extends StatelessWidget {
   final bool loading;
   final LocaleStrings s;
   final VoidCallback onSend;
+  final VoidCallback? onStop;
   final FocusNode? focusNode;
   final List<ChatAttachmentDraft> attachments;
   final ValueChanged<ChatAttachmentDraft>? onRemoveAttachment;
@@ -22,6 +23,7 @@ class ChatInputBar extends StatelessWidget {
     required this.s,
     required this.onSend,
     required this.onOpenTools,
+    this.onStop,
     this.focusNode,
     this.attachments = const [],
     this.onRemoveAttachment,
@@ -118,8 +120,14 @@ class ChatInputBar extends StatelessWidget {
                   const SizedBox(width: 4),
                   IconButton.filled(
                     key: const ValueKey('chat-send-button'),
-                    onPressed: loading ? null : onSend,
-                    icon: loading
+                    tooltip: loading && onStop != null ? s.cancel : null,
+                    onPressed: loading ? onStop : onSend,
+                    icon: loading && onStop != null
+                        ? const Icon(
+                            Icons.stop_rounded,
+                            key: ValueKey('chat-stop-icon'),
+                          )
+                        : loading
                         ? const SizedBox(
                             width: 20,
                             height: 20,

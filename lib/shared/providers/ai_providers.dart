@@ -310,6 +310,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
         : ({
             required String systemPrompt,
             required String userMessage,
+            required String userQuestion,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -321,6 +322,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             return hostedAgent.chatStream(
               systemPrompt: systemPrompt,
               userMessage: userMessage,
+              userQuestion: userQuestion,
               history: history,
               temperature: temperature,
               maxTokens: maxTokens,
@@ -330,7 +332,10 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               idempotencyKey: idempotencyKey,
             );
           },
-    completionError: () => hostedAgent?.lastError ?? ai.lastError,
+    completionError: () => ai.lastError,
+    agentCompletionError: hostedAgent == null
+        ? null
+        : () => hostedAgent.lastError,
     configureThinking: (level) {
       ai.thinkingLevel = level;
       if (hostedAgent != null) hostedAgent.thinkingLevel = level;

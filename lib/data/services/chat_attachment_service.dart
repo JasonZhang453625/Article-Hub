@@ -187,8 +187,12 @@ class ChatAttachmentService {
   }
 
   Future<void> deletePersisted(Iterable<ChatAttachment> attachments) async {
-    for (final attachment in attachments) {
-      await _store.deleteChatAttachment(attachment.id);
+    await deletePersistedIds(attachments.map((attachment) => attachment.id));
+  }
+
+  Future<void> deletePersistedIds(Iterable<String> attachmentIds) async {
+    for (final attachmentId in attachmentIds) {
+      await _store.deleteChatAttachment(attachmentId);
     }
   }
 

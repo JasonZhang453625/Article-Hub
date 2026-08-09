@@ -5,18 +5,77 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
-import 'package:memora/data/services/retrieval_service.dart';
 
 void main() {
-  test('attachments are valid evidence in knowledge-only mode', () async {
-    List<AiImageInput>? receivedImages;
+  test(
+    'attachments bypass retrieval and go directly to the chat model',
+    () async {
+      List<AiImageInput>? receivedImages;
+      String? receivedUserMessage;
+      String? receivedSystemPrompt;
+      final service = RagConversationService(
+        retrieve: (_, _) async => fail('attachments must not enter retrieval'),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('text completion should not be used'),
+        multimodalCompleteStream:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              required List<AiImageInput> images,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async* {
+              receivedImages = images;
+              receivedUserMessage = userMessage;
+              receivedSystemPrompt = systemPrompt;
+              yield 'The chart increased.';
+            },
+        saveLog: (_) async {},
+        promptService: _AttachmentPromptService(),
+        webSearch: (_, {topK = 5}) async =>
+            fail('attachments must not enter web search'),
+      );
+      final image = AiImageInput(
+        id: 'image-1',
+        fileName: 'chart.png',
+        mimeType: 'image/png',
+        bytes: Uint8List.fromList([1, 2, 3]),
+      );
+
+      final result = await service.ask(
+        RagConversationRequest(
+          question: 'What changed?',
+          articles: const [],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+          webSearch: true,
+          attachmentContext: '### Images\n- chart.png',
+          imageInputs: [image],
+        ),
+      );
+
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(result.answer, 'The chart increased.');
+      expect(result.method, 'attachment');
+      expect(receivedImages, [image]);
+      expect(receivedUserMessage, contains('chart.png'));
+      expect(receivedSystemPrompt, contains('Direct attachment mode'));
+      expect(receivedUserMessage, isNot(contains('Knowledge context')));
+    },
+  );
+
+  test('text attachments also bypass retrieval and web search', () async {
     String? receivedUserMessage;
     final service = RagConversationService(
-      retrieve: (_, _) async => const RetrievalResult(
-        articles: [],
-        method: RetrievalMethod.none,
-        duration: Duration.zero,
-      ),
+      retrieve: (_, _) async => fail('attachments must not enter retrieval'),
       complete:
           ({
             required String systemPrompt,
@@ -24,47 +83,40 @@ void main() {
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
-          }) async => fail('text completion should not be used'),
-      multimodalCompleteStream:
+          }) async => fail('stream completion should be used'),
+      completeStream:
           ({
             required String systemPrompt,
             required String userMessage,
-            required List<AiImageInput> images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
           }) async* {
-            receivedImages = images;
             receivedUserMessage = userMessage;
-            yield 'The chart increased.';
+            yield 'The file contains release notes.';
           },
       saveLog: (_) async {},
       promptService: _AttachmentPromptService(),
-    );
-    final image = AiImageInput(
-      id: 'image-1',
-      fileName: 'chart.png',
-      mimeType: 'image/png',
-      bytes: Uint8List.fromList([1, 2, 3]),
+      webSearch: (_, {topK = 5}) async =>
+          fail('attachments must not enter web search'),
     );
 
     final result = await service.ask(
-      RagConversationRequest(
-        question: 'What changed?',
-        articles: const [],
-        knowledgeOnly: true,
+      const RagConversationRequest(
+        question: 'Summarize the file.',
+        articles: [],
+        knowledgeOnly: false,
         detailedAnswer: false,
         languageHint: '',
-        attachmentContext: '### Images\n- chart.png',
-        imageInputs: [image],
+        webSearch: true,
+        attachmentContext: '### File: notes.md\nRelease 2.1.21 fixes chat.',
       ),
     );
 
     expect(result.outcome, RagConversationOutcome.answer);
-    expect(result.answer, 'The chart increased.');
     expect(result.method, 'attachment');
-    expect(receivedImages, [image]);
-    expect(receivedUserMessage, contains('chart.png'));
+    expect(result.answer, 'The file contains release notes.');
+    expect(receivedUserMessage, contains('Release 2.1.21 fixes chat.'));
   });
 }
 
@@ -72,9 +124,9 @@ class _AttachmentPromptService extends PromptService {
   @override
   Future<String> load(String path, [Map<String, String>? vars]) async {
     return switch (path) {
-      'chat/system.txt' => 'Answer the user.',
-      'chat/user.txt' =>
-        'Context: ${vars?['context'] ?? ''}\nQuestion: ${vars?['question'] ?? ''}',
+      'chat/attachments_direct_system.txt' =>
+        'Direct attachment mode. ${vars?['lengthRule'] ?? ''}',
+      'chat/length_concise.txt' => 'Be concise.',
       'chat/attachments.txt' => 'Attachments:\n${vars?['attachments'] ?? ''}',
       _ => path,
     };

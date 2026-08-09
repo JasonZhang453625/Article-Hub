@@ -14,6 +14,7 @@ import '../../data/services/ai_service.dart';
 import '../../data/services/chat_attachment_pipeline.dart';
 import '../../data/services/chat_attachment_service.dart';
 import '../../data/services/hosted_agent_service.dart';
+import '../../data/services/rag_citation.dart';
 import '../../data/services/rag_conversation_service.dart';
 import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/attachment_providers.dart';
@@ -33,6 +34,19 @@ import 'chat_settings_sheet.dart';
 import 'chat_tools_sheet.dart';
 
 enum _ChatToolAction { image, file, skill }
+
+class _AnswerRunControl {
+  final int localRunId;
+  String? threadId;
+  String? messageId;
+  String? requestKey;
+  String? serverRunId;
+  bool cancelRequested = false;
+  bool agentRequestStarted = false;
+  bool durableRunExpected = false;
+
+  _AnswerRunControl(this.localRunId);
+}
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -61,23 +75,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// Monotonic token identifying the current answer run. A late result from an
   /// older run must never overwrite a newer retry.
   int _answerRunId = 0;
+  final Map<int, _AnswerRunControl> _answerRunControls = {};
 
   /// Hosted server runs are resumed one at a time because the service keeps
   /// the latest event/source metadata on the instance.
+  static const int _maxPendingServerRunResumeRetries = 3;
   bool _resumingServerRuns = false;
+  bool _pendingServerRunResumeRequested = false;
+  int _pendingServerRunResumeFailures = 0;
+  Timer? _pendingServerRunResumeRetryTimer;
+  final Set<String> _liveServerRunIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_resumePendingServerRuns());
+      _schedulePendingServerRunResume();
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pendingServerRunResumeRetryTimer?.cancel();
     if (_attachmentDrafts.isNotEmpty) {
       unawaited(
         ref
@@ -101,6 +122,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Future<void> _pickAttachments({required bool images}) async {
+    if (images && !ref.read(chatModelSupportsImageInputProvider)) {
+      showAppSnackBar(
+        context,
+        message: ref.read(stringsProvider).chatAttachmentVisionRequired,
+      );
+      return;
+    }
     final service = ref.read(chatAttachmentServiceProvider);
     final remainingSlots = maxChatAttachments - _attachmentDrafts.length;
     final usedBytes = _attachmentDrafts.fold<int>(
@@ -168,14 +196,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // Reconnect to a durable hosted run after the OS has paused the app or
       // the network connection has been recreated. The server task itself is
       // independent of this lifecycle callback.
-      unawaited(_resumePendingServerRuns());
+      _schedulePendingServerRunResume();
     }
   }
 
   Future<void> _send([String? overrideQuery]) async {
     final typedQuery = overrideQuery ?? _controller.text.trim();
     final drafts = List<ChatAttachmentDraft>.of(_attachmentDrafts);
-    if (typedQuery.isEmpty && drafts.isEmpty || _loading) return;
+    if (typedQuery.isEmpty && drafts.isEmpty ||
+        _loading ||
+        _resumingServerRuns) {
+      return;
+    }
     final s = ref.read(stringsProvider);
     final query = typedQuery.isEmpty
         ? s.chatAttachmentDefaultPrompt
@@ -193,6 +225,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       _attachmentDrafts.removeWhere(drafts.contains);
     });
     final runId = ++_answerRunId;
+    final runControl = _AnswerRunControl(runId);
+    _answerRunControls[runId] = runControl;
     final sessions = ref.read(chatSessionsProvider.notifier);
     ChatMessageRecord? pending;
     PersistedUserMessage? persistedUser;
@@ -203,6 +237,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             .map((draft) => draft.attachment)
             .toList(growable: false),
       );
+      runControl.threadId = persistedUser.threadId;
       if (mounted) {
         if (overrideQuery == null) _controller.clear();
       }
@@ -210,11 +245,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         threadId: persistedUser.threadId,
         query: query,
       );
+      runControl
+        ..messageId = pending.id
+        ..requestKey = pending.aiRunRequestKey;
+      if (runControl.cancelRequested || runId != _answerRunId) {
+        await _finishUnstartedCancellation(runControl);
+        return;
+      }
       await _runAnswer(
         pending: pending,
         userMessage: persistedUser.message,
         history: history,
-        runId: runId,
+        runControl: runControl,
       );
     } catch (error, stackTrace) {
       if (persistedUser == null && mounted && drafts.isNotEmpty) {
@@ -227,6 +269,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         runId: runId,
       );
     } finally {
+      _answerRunControls.remove(runId);
       _finishLoading(runId);
     }
   }
@@ -235,11 +278,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// question or creating a second assistant bubble.
   Future<void> _retry(ChatMessage message) async {
     final query = message.query ?? '';
-    if (query.isEmpty || _loading) return;
+    if (query.isEmpty || _loading || _resumingServerRuns) return;
     final chatState = ref.read(chatSessionsProvider).valueOrNull;
     if (chatState == null) return;
     final record = _findMessage(chatState.messages, message.id);
-    if (record == null || record.role != ChatMessageRole.assistant) return;
+    if (record == null ||
+        record.role != ChatMessageRole.assistant ||
+        record.errorCode == 'hosted_cancel_requested') {
+      return;
+    }
     final recordIndex = chatState.messages.indexOf(record);
     ChatMessageRecord? sourceUserMessage;
     for (var index = recordIndex - 1; index >= 0; index--) {
@@ -266,14 +313,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       _loading = true;
     });
     final runId = ++_answerRunId;
-    final retried = record.retrying();
+    final retried = record.retrying(aiRunRequestKey: const Uuid().v4());
+    final runControl = _AnswerRunControl(runId)
+      ..threadId = retried.threadId
+      ..messageId = retried.id
+      ..requestKey = retried.aiRunRequestKey;
+    _answerRunControls[runId] = runControl;
     try {
       await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
+      if (runControl.cancelRequested || runId != _answerRunId) {
+        await _finishUnstartedCancellation(runControl);
+        return;
+      }
       await _runAnswer(
         pending: retried,
         userMessage: sourceUserMessage,
         history: history,
-        runId: runId,
+        runControl: runControl,
       );
     } catch (error, stackTrace) {
       _handleRunFailure(
@@ -283,6 +339,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         runId: runId,
       );
     } finally {
+      _answerRunControls.remove(runId);
       _finishLoading(runId);
     }
   }
@@ -296,8 +353,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required ChatMessageRecord pending,
     required ChatMessageRecord userMessage,
     required List<RagConversationTurn> history,
-    required int runId,
+    required _AnswerRunControl runControl,
   }) async {
+    final runId = runControl.localRunId;
     final sessions = ref.read(chatSessionsProvider.notifier);
     var activePending = pending;
     final settings = ref.read(settingsProvider).valueOrNull;
@@ -343,12 +401,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         preparedAttachments = await ref
             .read(chatAttachmentPipelineProvider)
             .prepare(
-              requestId: pending.id,
               attachments: userMessage.attachments,
               useNativeImageInput: ref.read(
                 chatModelSupportsImageInputProvider,
               ),
-              locale: activeSettings.languageIndex == 2 ? 'en-US' : 'zh-CN',
               cachedTextContext: userMessage.attachmentContext,
               cachedIncludesImageUnderstanding:
                   userMessage.attachmentContextIncludesImages,
@@ -367,6 +423,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           );
         }
       } catch (error) {
+        if (runControl.cancelRequested || runId != _answerRunId) {
+          await _finishUnstartedCancellation(runControl);
+          return;
+        }
         await finish(
           pending.copyWith(
             content: _localizedAttachmentError(s, error),
@@ -400,6 +460,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     var answerStarted = false;
     var lastPartialPersist = DateTime.fromMillisecondsSinceEpoch(0);
     var partialPersistChain = Future<void>.value();
+    String? liveServerRunId;
+
+    bool durableRunStillPending() {
+      if (liveServerRunId == null) return false;
+      final status = ref.read(hostedAgentServiceProvider)?.lastRunStatus;
+      return status != 'completed' &&
+          status != 'failed' &&
+          status != 'cancelled';
+    }
+
+    Future<void> keepDurableRunPending(String partialAnswer) async {
+      final hostedAgent = ref.read(hostedAgentServiceProvider);
+      await finish(
+        activePending.copyWith(
+          content: partialAnswer.isEmpty
+              ? activePending.content
+              : partialAnswer,
+          status: ChatMessageStatus.sending,
+          aiRunEventSeq: hostedAgent?.lastEventSeq ?? 0,
+          webUrls: hostedAgent?.lastWebUrls ?? activePending.webUrls,
+        ),
+      );
+    }
 
     void publishDelta(String delta) {
       if (!mounted || runId != _answerRunId || delta.isEmpty) return;
@@ -422,6 +505,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       lastPartialPersist = now;
       partialPersistChain = partialPersistChain.then((_) async {
+        if (runControl.cancelRequested || runId != _answerRunId) return;
         try {
           await sessions.updateMessage(partial);
         } catch (_) {
@@ -467,6 +551,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       );
     }
 
+    if (runControl.cancelRequested || runId != _answerRunId) {
+      await _finishUnstartedCancellation(runControl);
+      return;
+    }
+    runControl.durableRunExpected =
+        ref.read(hostedAgentServiceProvider) != null &&
+        preparedAttachments.imageInputs.isEmpty;
+    runControl.agentRequestStarted = true;
+
     try {
       final result = await conversation.askWithProgress(
         RagConversationRequest(
@@ -475,7 +568,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           articles: completedArticles,
           knowledgeOnly: activeSettings.chatKnowledgeSourceIndex == 0,
           detailedAnswer: activeSettings.chatAnswerLengthIndex == 1,
-          languageHint: aiLanguagePrompt(activeSettings.languageIndex),
+          languageHint: aiChatLanguagePrompt(activeSettings.languageIndex),
           webSearch: ref.read(chatWebSearchEnabledProvider),
           thinkingLevel: ref.read(chatThinkingLevelProvider),
           attachmentContext: preparedAttachments.textContext,
@@ -484,23 +577,59 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         onDelta: publishDelta,
         onAgentEvent: publishAgentEvent,
         onRunCreated: (serverRunId) async {
-          if (runId != _answerRunId) return;
-          activePending = activePending.copyWith(
-            aiRunId: serverRunId,
-            aiRunEventSeq: 0,
-            status: ChatMessageStatus.sending,
+          runControl.serverRunId = serverRunId;
+          liveServerRunId = serverRunId;
+          _liveServerRunIds.add(serverRunId);
+          final attached = await sessions.attachServerRun(
+            messageId: pending.id,
+            expectedRequestKey: pending.aiRunRequestKey,
+            runId: serverRunId,
           );
-          // Persist the server id before the first answer event. If Android
-          // kills the process immediately afterwards, the next launch can
-          // still reconnect instead of treating this as an orphaned request.
-          await sessions.updateMessage(activePending);
+          if (attached == null) {
+            // Delete/retry won the repository CAS. Never resurrect or
+            // overwrite that state: persist a deletion compensation when the
+            // thread is gone, otherwise cancel this superseded run directly.
+            runControl.cancelRequested = true;
+            try {
+              if (!sessions.containsThread(pending.threadId)) {
+                await sessions.queueDeletedThreadRunCancellation(
+                  threadId: pending.threadId,
+                  runId: serverRunId,
+                );
+              } else {
+                await ref.read(hostedAgentRunCancellerProvider)(serverRunId);
+              }
+            } catch (error, stackTrace) {
+              developer.log(
+                'late hosted run cancellation failed',
+                name: 'memora.chat',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            }
+            return;
+          }
+          activePending = attached;
+          // Persisting the server id is the onRunCreated commit point. If Stop
+          // raced with it, the request marker is also CAS-protected and is
+          // retried after process restart until the backend acknowledges it.
+          if (runControl.cancelRequested || runId != _answerRunId) {
+            await sessions.requestServerRunCancellation(
+              messageId: pending.id,
+              expectedRequestKey: pending.aiRunRequestKey,
+              runId: serverRunId,
+            );
+          }
         },
-        idempotencyKey: pending.id,
+        idempotencyKey: pending.aiRunRequestKey ?? pending.id,
       );
       await partialPersistChain;
       if (runId != _answerRunId) {
         // This run was superseded by a newer retry while
         // the request was in flight — discard its outcome.
+        if (runControl.serverRunId == null) {
+          await _finishUnstartedCancellation(runControl);
+        }
         return;
       }
       switch (result.outcome) {
@@ -531,6 +660,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           break;
         case RagConversationOutcome.error:
           final answer = (result.answer ?? streamedAnswer.toString()).trim();
+          if (durableRunStillPending()) {
+            await keepDurableRunPending(answer);
+            break;
+          }
           final friendlyError = localizedAiErrorMessage(s, result.error);
           await finish(
             activePending.copyWith(
@@ -547,9 +680,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
     } catch (error) {
       await partialPersistChain;
-      if (runId != _answerRunId) return;
-      final friendlyError = localizedAiErrorMessage(s, error);
+      if (runId != _answerRunId) {
+        if (runControl.serverRunId == null) {
+          await _finishUnstartedCancellation(runControl);
+        }
+        return;
+      }
       final answer = streamedAnswer.toString().trim();
+      if (durableRunStillPending()) {
+        await keepDurableRunPending(answer);
+        return;
+      }
+      final friendlyError = localizedAiErrorMessage(s, error);
       await finish(
         activePending.copyWith(
           content: answer.isEmpty ? friendlyError : '$answer\n\n$friendlyError',
@@ -557,28 +699,100 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           errorCode: 'unexpected_error',
         ),
       );
+    } finally {
+      final serverRunId = liveServerRunId;
+      if (serverRunId != null) {
+        _liveServerRunIds.remove(serverRunId);
+        _schedulePendingServerRunResume();
+      }
     }
   }
 
+  /// Queues a durable-run recovery attempt without ever running it beside a
+  /// live answer request. Keeping the request latched is important: settings
+  /// and authentication can still be loading on the first frame, and a live
+  /// POST has no server run id until its create response arrives.
+  void _schedulePendingServerRunResume() {
+    if (!mounted) return;
+    // A real lifecycle/provider/live-run transition is a fresh signal. Let it
+    // retry immediately even if an earlier automatic backoff was exhausted.
+    _pendingServerRunResumeRetryTimer?.cancel();
+    _pendingServerRunResumeRetryTimer = null;
+    _pendingServerRunResumeFailures = 0;
+    _pendingServerRunResumeRequested = true;
+    unawaited(_resumePendingServerRuns());
+  }
+
+  void _schedulePendingServerRunResumeRetry() {
+    if (!mounted ||
+        _pendingServerRunResumeRetryTimer != null ||
+        _pendingServerRunResumeFailures >= _maxPendingServerRunResumeRetries) {
+      return;
+    }
+    _pendingServerRunResumeFailures++;
+    final delay = Duration(
+      milliseconds: 300 * (1 << (_pendingServerRunResumeFailures - 1)),
+    );
+    _pendingServerRunResumeRetryTimer = Timer(delay, () {
+      _pendingServerRunResumeRetryTimer = null;
+      if (!mounted) return;
+      unawaited(_resumePendingServerRuns());
+    });
+  }
+
   Future<void> _resumePendingServerRuns() async {
-    if (!mounted || _resumingServerRuns) return;
+    if (!mounted || _resumingServerRuns || !_pendingServerRunResumeRequested) {
+      return;
+    }
+    // [_loading] is set before any persistence or network await in send/retry,
+    // closing the window before onRunCreated can add a server id. The queued
+    // request is deliberately retained and drained by [_finishLoading].
+    if (_loading || _liveServerRunIds.isNotEmpty) return;
     final hostedAgent = ref.read(hostedAgentServiceProvider);
+    // The provider is temporarily null while settings/auth are loading. A
+    // provider listener in build will retry when it becomes available.
     if (hostedAgent == null) return;
 
     _resumingServerRuns = true;
+    _pendingServerRunResumeRequested = false;
+    var recoveryFailed = false;
     try {
       final sessions = ref.read(chatSessionsProvider.notifier);
+      await sessions.retryPendingRunCancellations();
       final pending = await sessions.pendingServerMessages();
       for (final message in pending) {
         final runId = message.aiRunId;
-        if (!mounted || runId == null || runId.trim().isEmpty) continue;
-        await _resumeOneServerRun(
-          message,
-          runId: runId,
-          hostedAgent: hostedAgent,
-        );
+        if (!mounted ||
+            runId == null ||
+            runId.trim().isEmpty ||
+            _liveServerRunIds.contains(runId)) {
+          continue;
+        }
+        try {
+          await _resumeOneServerRun(
+            message,
+            runId: runId,
+            hostedAgent: hostedAgent,
+          );
+        } catch (_) {
+          // One unavailable or locally unpersistable run must not starve the
+          // other conversations in this recovery batch. _resumeOneServerRun
+          // already logs the precise failure and leaves this message pending.
+          recoveryFailed = true;
+        }
+      }
+      if (recoveryFailed) {
+        _pendingServerRunResumeRequested = true;
+        _schedulePendingServerRunResumeRetry();
+      } else {
+        _pendingServerRunResumeFailures = 0;
+        _pendingServerRunResumeRetryTimer?.cancel();
+        _pendingServerRunResumeRetryTimer = null;
       }
     } catch (error, stackTrace) {
+      recoveryFailed = true;
+      _pendingServerRunResumeRequested = true;
+      _schedulePendingServerRunResumeRetry();
       developer.log(
         'failed to resume hosted chat runs',
         name: 'memora.chat',
@@ -587,6 +801,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       );
     } finally {
       _resumingServerRuns = false;
+      if (mounted && _pendingServerRunResumeRequested && !recoveryFailed) {
+        unawaited(_resumePendingServerRuns());
+      }
     }
   }
 
@@ -596,21 +813,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required HostedAgentService hostedAgent,
   }) async {
     final sessions = ref.read(chatSessionsProvider.notifier);
-    final buffer = StringBuffer();
+    final buffer = StringBuffer(message.content);
 
     bool isStillCurrent() {
-      final current = ref.read(chatSessionsProvider).valueOrNull;
-      final record = current == null
-          ? null
-          : _findMessage(current.messages, message.id);
-      return record?.aiRunId == runId &&
-          record?.status == ChatMessageStatus.sending;
+      return sessions.isPendingServerRun(messageId: message.id, runId: runId);
     }
 
     try {
-      await for (final delta in hostedAgent.resumeStream(runId)) {
+      await for (final delta in hostedAgent.resumeStream(
+        runId,
+        afterEventSeq: message.aiRunEventSeq ?? 0,
+      )) {
         if (!isStillCurrent()) return;
         if (delta.isEmpty) continue;
+        if (hostedAgent.lastChunkIsFullAnswer) buffer.clear();
         buffer.write(delta);
         await sessions.updateMessage(
           message.copyWith(
@@ -625,6 +841,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!isStillCurrent()) return;
       final answer = buffer.toString().trim();
       final s = ref.read(stringsProvider);
+      if (hostedAgent.lastRunStatus == 'failed' ||
+          hostedAgent.lastRunStatus == 'cancelled') {
+        final friendly = localizedAiErrorMessage(
+          s,
+          hostedAgent.lastError ?? 'Hosted Agent failed.',
+        );
+        await sessions.updateMessage(
+          message.copyWith(
+            content: answer.isEmpty ? friendly : '$answer\n\n$friendly',
+            status: ChatMessageStatus.failed,
+            errorCode: hostedAgent.lastRunStatus == 'cancelled'
+                ? 'hosted_run_cancelled'
+                : 'hosted_run_failed',
+            aiRunEventSeq: hostedAgent.lastEventSeq,
+          ),
+        );
+        return;
+      }
       if (answer.isEmpty) {
         final error = localizedAiErrorMessage(
           s,
@@ -640,15 +874,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         );
         return;
       }
+      final citedWebUrls = extractValidWebCitations(
+        response: answer,
+        urls: hostedAgent.lastWebUrls,
+      );
       await sessions.updateMessage(
         message.copyWith(
           content: answer,
           status: ChatMessageStatus.completed,
-          webUrls: hostedAgent.lastWebUrls,
+          webUrls: citedWebUrls,
+          method: citedWebUrls.isEmpty
+              ? message.method
+              : (message.method ?? 'web'),
           aiRunEventSeq: hostedAgent.lastEventSeq,
         ),
       );
-    } catch (error, stackTrace) {
+    } on HostedAgentResumeException catch (error, stackTrace) {
       developer.log(
         'hosted chat run resume failed',
         name: 'memora.chat',
@@ -656,18 +897,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         stackTrace: stackTrace,
       );
       if (!isStillCurrent()) return;
+      if (error.retryable) rethrow;
       final friendly = localizedAiErrorMessage(
         ref.read(stringsProvider),
         error,
       );
       await sessions.updateMessage(
         message.copyWith(
-          content: friendly,
+          content: buffer.isEmpty
+              ? friendly
+              : '${buffer.toString()}\n\n$friendly',
           status: ChatMessageStatus.failed,
-          errorCode: 'hosted_run_failed',
+          errorCode: error.statusCode == 404
+              ? 'hosted_run_not_found'
+              : 'hosted_run_failed',
           aiRunEventSeq: hostedAgent.lastEventSeq,
         ),
       );
+    } catch (error, stackTrace) {
+      // Local persistence failures and unexpected client errors are not
+      // evidence that the durable server run failed. Keep the persisted run
+      // pending and let the outer bounded backoff retry it.
+      developer.log(
+        'hosted chat run persistence/recovery failed',
+        name: 'memora.chat',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
   }
 
@@ -736,12 +993,76 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  Future<void> _stopGeneration() async {
+    if (!_loading) return;
+    final stoppingRunId = _answerRunId;
+    final control = _answerRunControls[stoppingRunId];
+    if (control == null) return;
+
+    control.cancelRequested = true;
+    // Invalidate every UI/result callback before the first persistence or
+    // network await. The still-running future retains [control] so a late
+    // onRunCreated callback can attach-and-cancel or tombstone the server run.
+    _answerRunId++;
+    // A HostedAgentService observer intentionally carries `last*` state for
+    // one run. Give any subsequent send a fresh observer while the cancelled
+    // stream drains on its captured instance, so late terminal events cannot
+    // contaminate the next answer's status or citations.
+    ref.invalidate(hostedAgentServiceProvider);
+    if (mounted) setState(() => _loading = false);
+
+    final messageId = control.messageId;
+    if (messageId == null) return;
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    await sessions.markRunCancellationRequested(
+      messageId: messageId,
+      expectedRequestKey: control.requestKey,
+    );
+    final serverRunId = control.serverRunId;
+    if (serverRunId != null) {
+      await sessions.requestServerRunCancellation(
+        messageId: messageId,
+        expectedRequestKey: control.requestKey,
+        runId: serverRunId,
+      );
+    } else if (!control.agentRequestStarted || !control.durableRunExpected) {
+      await sessions.completeUncreatedRunCancellation(
+        messageId: messageId,
+        expectedRequestKey: control.requestKey,
+      );
+    }
+  }
+
+  Future<void> _finishUnstartedCancellation(_AnswerRunControl control) async {
+    final messageId = control.messageId;
+    if (messageId == null) return;
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    await sessions.markRunCancellationRequested(
+      messageId: messageId,
+      expectedRequestKey: control.requestKey,
+    );
+    final serverRunId = control.serverRunId;
+    if (serverRunId != null) {
+      await sessions.requestServerRunCancellation(
+        messageId: messageId,
+        expectedRequestKey: control.requestKey,
+        runId: serverRunId,
+      );
+      return;
+    }
+    await sessions.completeUncreatedRunCancellation(
+      messageId: messageId,
+      expectedRequestKey: control.requestKey,
+    );
+  }
+
   void _finishLoading(int runId) {
     // Only the current run may release the loading flag; a stale run must not
     // unlock the input while a retry is already in progress.
     if (runId != _answerRunId) return;
     if (mounted) {
       setState(() => _loading = false);
+      _schedulePendingServerRunResume();
     }
   }
 
@@ -1001,8 +1322,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     await ref.read(chatSessionsProvider.notifier).selectThread(threadId);
   }
 
+  Future<void> _deleteThread(String threadId) async {
+    final controls = _answerRunControls.values
+        .where((control) => control.threadId == threadId)
+        .toList(growable: false);
+    for (final control in controls) {
+      control.cancelRequested = true;
+    }
+    if (controls.any((control) => control.localRunId == _answerRunId)) {
+      _answerRunId++;
+      ref.invalidate(hostedAgentServiceProvider);
+      if (mounted) setState(() => _loading = false);
+    }
+
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    // Persist Stop intent before the repository deletion. If onRunCreated won
+    // first, deleteThread captures its run id in the tombstone; if deletion
+    // wins, the callback's atomic attach fails and queues the late id there.
+    for (final control in controls) {
+      final messageId = control.messageId;
+      if (messageId == null) continue;
+      await sessions.markRunCancellationRequested(
+        messageId: messageId,
+        expectedRequestKey: control.requestKey,
+      );
+    }
+    await sessions.deleteThread(threadId);
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<HostedAgentService?>(hostedAgentServiceProvider, (
+      previous,
+      next,
+    ) {
+      if (next != null && !identical(previous, next)) {
+        _schedulePendingServerRunResume();
+      }
+    });
+    ref.listen<AsyncValue<ChatSessionState>>(chatSessionsProvider, (
+      previous,
+      next,
+    ) {
+      if (next.hasValue && previous?.hasValue != true) {
+        _schedulePendingServerRunResume();
+      }
+    });
     final articles = ref.watch(articlesProvider).valueOrNull ?? [];
     final articlesById = {for (final article in articles) article.id: article};
     final hasKnowledge = articles.any(
@@ -1016,14 +1381,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             .map(ChatMessage.fromRecord)
             .toList(growable: false) ??
         const <ChatMessage>[];
-    final hasPendingServerRun = messages.any(
-      (message) => message.isPending && message.id.isNotEmpty,
-    );
-    if (chatState != null && hasPendingServerRun) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_resumePendingServerRuns());
-      });
-    }
     final chatUnavailable = chatAsync.hasError || chatAsync.isLoading;
     // Browsing tools and chat history is safe while an answer is in flight:
     // the pending record is persisted by id, so switching views does not
@@ -1057,9 +1414,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   enabled: drawerEnabled,
                   onNewThread: _startNewThread,
                   onSelectThread: _selectThread,
-                  onDeleteThread: ref
-                      .read(chatSessionsProvider.notifier)
-                      .deleteThread,
+                  onDeleteThread: _deleteThread,
                   onRenameThread: ref
                       .read(chatSessionsProvider.notifier)
                       .renameThread,
@@ -1174,11 +1529,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   ChatInputBar(
                     controller: _controller,
                     focusNode: _inputFocusNode,
-                    loading: _loading || hasPendingServerRun || chatUnavailable,
+                    loading: _loading || chatUnavailable,
                     s: s,
                     attachments: _attachmentDrafts,
                     onRemoveAttachment: _removeAttachment,
                     onSend: () => _send(),
+                    onStop: _loading
+                        ? () => unawaited(_stopGeneration())
+                        : null,
                     onOpenTools: _showChatTools,
                   ),
                 ],
@@ -1248,7 +1606,7 @@ String _localizedAttachmentError(LocaleStrings s, Object error) {
     'too_many' => s.chatAttachmentTooMany,
     'too_large' || 'total_too_large' => s.chatAttachmentTooLarge,
     'unsupported_type' => s.chatAttachmentUnsupported,
-    'vision_not_configured' => s.chatAttachmentVisionRequired,
+    'chat_model_no_image_input' => s.chatAttachmentVisionRequired,
     'pdf_no_text' => s.chatAttachmentPdfNoText,
     _ => s.chatAttachmentReadFailed,
   };

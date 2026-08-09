@@ -1091,7 +1091,7 @@ class LocaleStrings {
     chatAttachmentUnsupported: 'This file type is not supported yet.',
     chatAttachmentReadFailed: 'The attachment could not be read.',
     chatAttachmentVisionRequired:
-        'Configure an image-understanding model before using images with this chat model.',
+        'The current chat model cannot understand images. Switch to a vision-capable chat model first.',
     chatAttachmentPdfNoText:
         'This PDF has no usable text layer. Scanned PDF recognition is not supported yet.',
     chatThinkingStrength: 'Thinking strength',
@@ -1448,7 +1448,7 @@ class LocaleStrings {
     chatAttachmentTooLarge: '所选附件体积过大。',
     chatAttachmentUnsupported: '暂不支持这种文件类型。',
     chatAttachmentReadFailed: '无法读取这个附件。',
-    chatAttachmentVisionRequired: '当前对话模型不支持识图，请先配置识图模型。',
+    chatAttachmentVisionRequired: '当前对话模型不支持识图，请先切换到支持图片的对话模型。',
     chatAttachmentPdfNoText: '这个 PDF 没有可提取的文字层，暂不支持扫描版 PDF 识别。',
     chatThinkingStrength: '思考强度',
     chatThinkingNone: '无',

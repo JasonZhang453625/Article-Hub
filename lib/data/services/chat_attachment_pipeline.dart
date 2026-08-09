@@ -5,11 +5,9 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 import '../models/ai_image_input.dart';
-import '../models/article_attachment.dart';
 import '../models/chat_attachment.dart';
 import 'attachment_store.dart';
 import 'chat_attachment_service.dart';
-import 'image_understanding_service.dart';
 import 'pdf_content_extractor.dart';
 
 const int maxChatAttachmentContextCharacters = 12000;
@@ -31,21 +29,14 @@ class PreparedChatAttachments {
 class ChatAttachmentPipeline {
   final AttachmentStore _store;
   final PdfContentExtractor _pdf;
-  final ImageUnderstandingGateway? _vision;
 
-  ChatAttachmentPipeline({
-    AttachmentStore? store,
-    PdfContentExtractor? pdf,
-    ImageUnderstandingGateway? vision,
-  }) : _store = store ?? AttachmentStore(),
-       _pdf = pdf ?? PdfContentExtractor(),
-       _vision = vision;
+  ChatAttachmentPipeline({AttachmentStore? store, PdfContentExtractor? pdf})
+    : _store = store ?? AttachmentStore(),
+      _pdf = pdf ?? PdfContentExtractor();
 
   Future<PreparedChatAttachments> prepare({
-    required String requestId,
     required List<ChatAttachment> attachments,
     required bool useNativeImageInput,
-    required String locale,
     String? cachedTextContext,
     bool cachedIncludesImageUnderstanding = false,
   }) async {
@@ -53,7 +44,16 @@ class ChatAttachmentPipeline {
 
     final images = attachments.where((item) => item.isImage).toList();
     final files = attachments.where((item) => !item.isImage).toList();
-    final cached = cachedTextContext?.trim() ?? '';
+    if (images.isNotEmpty && !useNativeImageInput) {
+      throw const ChatAttachmentException('chat_model_no_image_input');
+    }
+
+    // Older builds could cache a separate vision model's description here.
+    // Do not replay that fallback into a direct-to-chat-model request; rebuild
+    // the file context and send the original image bytes instead.
+    final cached = cachedIncludesImageUnderstanding
+        ? ''
+        : cachedTextContext?.trim() ?? '';
     final sections = <String>[];
     if (cached.isNotEmpty) sections.add(cached);
 
@@ -64,8 +64,7 @@ class ChatAttachmentPipeline {
     }
 
     final imageInputs = <AiImageInput>[];
-    var includesImageUnderstanding = cachedIncludesImageUnderstanding;
-    if (images.isNotEmpty && useNativeImageInput) {
+    if (images.isNotEmpty) {
       for (final image in images) {
         final bytes = await _verifiedBytes(image);
         imageInputs.add(
@@ -82,44 +81,12 @@ class ChatAttachmentPipeline {
           '### Images\n${images.map((item) => '- ${item.originalFileName}').join('\n')}',
         );
       }
-    } else if (images.isNotEmpty && !cachedIncludesImageUnderstanding) {
-      final vision = _vision;
-      if (vision == null) {
-        throw const ChatAttachmentException('vision_not_configured');
-      }
-      final uploads = <ImageUnderstandingUpload>[];
-      for (var index = 0; index < images.length; index++) {
-        final image = images[index];
-        uploads.add(
-          ImageUnderstandingUpload(
-            attachment: ArticleAttachment(
-              id: image.id,
-              order: index,
-              localPath: image.localPath,
-              mimeType: image.mimeType,
-              originalFileName: image.originalFileName,
-              byteLength: image.byteLength,
-              sha256: image.sha256,
-            ),
-            bytes: await _verifiedBytes(image),
-          ),
-        );
-      }
-      final document = await vision.understand(
-        articleId: 'chat-$requestId',
-        images: uploads,
-        locale: locale,
-      );
-      sections.add(
-        '### Image understanding\n${document.combinedMarkdown.trim()}',
-      );
-      includesImageUnderstanding = true;
     }
 
     return PreparedChatAttachments(
       textContext: _boundedContext(sections.join('\n\n')),
       imageInputs: List.unmodifiable(imageInputs),
-      includesImageUnderstanding: includesImageUnderstanding,
+      includesImageUnderstanding: false,
     );
   }
 

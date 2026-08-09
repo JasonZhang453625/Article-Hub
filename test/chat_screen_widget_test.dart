@@ -1150,6 +1150,7 @@ class _FakeProcessingPipeline extends ProcessingPipeline {
 class _InMemoryChatRepository implements ChatRepository {
   final Map<String, ChatThread> _threads;
   final Map<String, ChatMessageRecord> _messages;
+  final Map<String, PendingChatThreadDeletion> _deletions = {};
   final bool failTerminalAssistantWrites;
 
   _InMemoryChatRepository(
@@ -1190,6 +1191,27 @@ class _InMemoryChatRepository implements ChatRepository {
   }
 
   @override
+  Future<ChatThread?> updateThreadIfExists(
+    String id, {
+    String? title,
+    bool? isPinned,
+    DateTime? activityAt,
+    String? lastMessagePreview,
+  }) async {
+    final current = _threads[id];
+    if (current == null) return null;
+    var updated = current.copyWith(title: title, isPinned: isPinned);
+    if (activityAt != null && !activityAt.isBefore(current.updatedAt)) {
+      updated = updated.copyWith(
+        updatedAt: activityAt,
+        lastMessagePreview: lastMessagePreview,
+      );
+    }
+    _threads[id] = updated;
+    return updated;
+  }
+
+  @override
   Future<void> putMessage(ChatMessageRecord message) async {
     if (failTerminalAssistantWrites &&
         message.role == ChatMessageRole.assistant &&
@@ -1200,8 +1222,144 @@ class _InMemoryChatRepository implements ChatRepository {
   }
 
   @override
-  Future<void> deleteThread(String id) async {
+  Future<ChatMessageRecord?> attachAiRunToPendingMessage({
+    required String messageId,
+    required String? expectedRequestKey,
+    required String runId,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        !_threads.containsKey(current.threadId) ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        (current.status != ChatMessageStatus.sending &&
+            current.errorCode != 'hosted_cancel_requested')) {
+      return null;
+    }
+    final updated = current.copyWith(aiRunId: runId, aiRunEventSeq: 0);
+    try {
+      await putMessage(updated);
+    } on StateError {
+      return null;
+    }
+    return updated;
+  }
+
+  @override
+  Future<ChatMessageRecord?> requestAiRunCancellation({
+    required String messageId,
+    required String? expectedRequestKey,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null || current.aiRunRequestKey != expectedRequestKey) {
+      return null;
+    }
+    final updated = current.copyWith(
+      status: ChatMessageStatus.interrupted,
+      errorCode: 'hosted_cancel_requested',
+    );
+    _messages[messageId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<ChatMessageRecord?> completeUncreatedAiRunCancellation({
+    required String messageId,
+    required String? expectedRequestKey,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        current.aiRunId != null) {
+      return null;
+    }
+    final updated = current.copyWith(
+      status: ChatMessageStatus.interrupted,
+      errorCode: 'hosted_run_cancelled',
+    );
+    _messages[messageId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<void> deleteMessage(String id) async {
+    _messages.remove(id);
+  }
+
+  @override
+  List<PendingChatThreadDeletion> getPendingThreadDeletions() =>
+      List.unmodifiable(_deletions.values);
+
+  @override
+  Future<PendingChatThreadDeletion> queueAiRunCancellation(
+    String threadId,
+    String runId,
+  ) async {
+    final existing = _deletions[threadId];
+    final runIds = {...?existing?.aiRunIdsToCancel, runId}.toList()..sort();
+    final updated = PendingChatThreadDeletion(
+      threadId: threadId,
+      attachmentIds: existing?.attachmentIds ?? const [],
+      aiRunIdsToCancel: runIds,
+      dataDeleted: true,
+      revision: (existing?.revision ?? 0) + 1,
+    );
+    _deletions[threadId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<PendingChatThreadDeletion?> completeAiRunCancellation(
+    String threadId,
+    String runId,
+  ) async {
+    final existing = _deletions[threadId];
+    if (existing == null) return null;
+    final updated = PendingChatThreadDeletion(
+      threadId: threadId,
+      attachmentIds: existing.attachmentIds,
+      aiRunIdsToCancel: existing.aiRunIdsToCancel
+          .where((id) => id != runId)
+          .toList(),
+      dataDeleted: existing.dataDeleted,
+      revision: existing.revision + 1,
+      canAcknowledge: existing.canAcknowledge,
+    );
+    _deletions[threadId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<void> completeThreadDeletion(
+    String id, {
+    required int expectedRevision,
+  }) async {
+    _deletions.remove(id);
+  }
+
+  @override
+  Future<PendingChatThreadDeletion> deleteThread(String id) async {
+    final runIds =
+        _messages.values
+            .where(
+              (message) =>
+                  message.threadId == id &&
+                  message.aiRunId != null &&
+                  (message.status == ChatMessageStatus.sending ||
+                      message.errorCode == 'hosted_cancel_requested'),
+            )
+            .map((message) => message.aiRunId!)
+            .toSet()
+            .toList()
+          ..sort();
     _threads.remove(id);
     _messages.removeWhere((_, message) => message.threadId == id);
+    final deletion = PendingChatThreadDeletion(
+      threadId: id,
+      aiRunIdsToCancel: runIds,
+      dataDeleted: true,
+      revision: 1,
+    );
+    _deletions[id] = deletion;
+    return deletion;
   }
 }

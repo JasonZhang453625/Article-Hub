@@ -457,10 +457,12 @@ void main() {
   });
 
   test(
-    'hosted Agent owns web tool selection instead of eager client search',
+    'production Agent run owns web search instead of eager client search',
     () async {
       var directSearches = 0;
       bool? agentWebPermission;
+      String? createdRunId;
+      String? receivedIdempotencyKey;
       final logs = <RetrievalLog>[];
       final service = RagConversationService(
         retrieve: (query, articles) async => const RetrievalResult(
@@ -481,17 +483,22 @@ void main() {
               temperature = 0.3,
               maxTokens = 800,
             }) async => fail('plain completion must not produce the answer'),
-        agentCompleteStream:
+        agentRunStream:
             ({
               required systemPrompt,
               required userMessage,
+              required userQuestion,
               history = const [],
               temperature = 0.3,
               maxTokens = 800,
               required webSearch,
               onEvent,
+              onRunCreated,
+              idempotencyKey,
             }) async* {
               agentWebPermission = webSearch;
+              receivedIdempotencyKey = idempotencyKey;
+              await onRunCreated?.call('run-production');
               yield 'Agent searched when useful [w1].';
             },
         agentWebUrls: () => const ['https://example.com/live'],
@@ -499,7 +506,7 @@ void main() {
         promptService: _WebPromptService(),
       );
 
-      final result = await service.ask(
+      final result = await service.askWithProgress(
         const RagConversationRequest(
           question: 'what changed today?',
           articles: [],
@@ -508,10 +515,14 @@ void main() {
           languageHint: '',
           webSearch: true,
         ),
+        onRunCreated: (runId) => createdRunId = runId,
+        idempotencyKey: 'message-1',
       );
 
       expect(directSearches, 0);
       expect(agentWebPermission, isTrue);
+      expect(createdRunId, 'run-production');
+      expect(receivedIdempotencyKey, 'message-1');
       expect(result.outcome, RagConversationOutcome.answer);
       expect(result.method, 'web');
       expect(result.webUrls, ['https://example.com/live']);
