@@ -75,6 +75,7 @@ class ChatAttachmentService {
   Future<List<ChatAttachmentDraft>> pickImages({
     int remainingSlots = maxChatAttachments,
     int remainingBytes = maxChatAttachmentTotalBytes,
+    int maxFileBytes = maxChatAttachmentBytes,
   }) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -88,6 +89,7 @@ class ChatAttachmentService {
       kind: ChatAttachmentKind.image,
       remainingSlots: remainingSlots,
       remainingBytes: remainingBytes,
+      maxFileBytes: maxFileBytes,
     );
   }
 
@@ -115,6 +117,7 @@ class ChatAttachmentService {
     required ChatAttachmentKind kind,
     int remainingSlots = maxChatAttachments,
     int remainingBytes = maxChatAttachmentTotalBytes,
+    int maxFileBytes = maxChatAttachmentBytes,
   }) async {
     if (files.length > remainingSlots) {
       throw const ChatAttachmentException('too_many');
@@ -139,7 +142,7 @@ class ChatAttachmentService {
         if (bytes.isEmpty) {
           throw ChatAttachmentException('empty_file', fileName: file.name);
         }
-        if (bytes.length > maxChatAttachmentBytes) {
+        if (bytes.length > maxFileBytes) {
           throw ChatAttachmentException('too_large', fileName: file.name);
         }
         selectedBytes += bytes.length;

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -130,15 +131,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       return;
     }
     final service = ref.read(chatAttachmentServiceProvider);
-    final remainingSlots = maxChatAttachments - _attachmentDrafts.length;
+    final usesHostedAgent = ref.read(hostedAgentServiceProvider) != null;
+    final agentImageCapabilities = images && usesHostedAgent
+        ? ref.read(hostedAgentImageInputCapabilitiesProvider)
+        : null;
+    final globalRemainingSlots = maxChatAttachments - _attachmentDrafts.length;
+    final usedImageSlots = _attachmentDrafts
+        .where((draft) => draft.attachment.isImage)
+        .length;
+    final imageSlotLimit = agentImageCapabilities == null
+        ? maxChatAttachments
+        : math.min(agentImageCapabilities.maxImages, maxHostedAgentImages);
+    final remainingSlots = images
+        ? math.min(globalRemainingSlots, imageSlotLimit - usedImageSlots)
+        : globalRemainingSlots;
     final usedBytes = _attachmentDrafts.fold<int>(
       0,
       (total, draft) => total + draft.attachment.byteLength,
     );
+    final usedImageBytes = _attachmentDrafts
+        .where((draft) => draft.attachment.isImage)
+        .fold<int>(0, (total, draft) => total + draft.attachment.byteLength);
+    final globalRemainingBytes = maxChatAttachmentTotalBytes - usedBytes;
+    final imageByteLimit = agentImageCapabilities == null
+        ? maxChatAttachmentTotalBytes
+        : math.min(
+            agentImageCapabilities.maxTotalImageBytes,
+            maxHostedAgentImageTotalBytes,
+          );
+    final remainingImageBytes = math.min(
+      globalRemainingBytes,
+      imageByteLimit - usedImageBytes,
+    );
     if (remainingSlots <= 0) {
       showAppSnackBar(
         context,
-        message: ref.read(stringsProvider).chatAttachmentTooMany,
+        message: images && usesHostedAgent
+            ? ref.read(stringsProvider).chatAgentImageTooMany
+            : ref.read(stringsProvider).chatAttachmentTooMany,
+      );
+      return;
+    }
+    if (images && remainingImageBytes <= 0) {
+      showAppSnackBar(
+        context,
+        message: usesHostedAgent
+            ? ref.read(stringsProvider).chatAgentImageTooLarge
+            : ref.read(stringsProvider).chatAttachmentTooLarge,
       );
       return;
     }
@@ -146,11 +185,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final picked = images
           ? await service.pickImages(
               remainingSlots: remainingSlots,
-              remainingBytes: maxChatAttachmentTotalBytes - usedBytes,
+              remainingBytes: remainingImageBytes,
+              maxFileBytes: agentImageCapabilities == null
+                  ? maxChatAttachmentBytes
+                  : math.min(
+                      agentImageCapabilities.maxImageBytes,
+                      maxHostedAgentImageBytes,
+                    ),
             )
           : await service.pickFiles(
               remainingSlots: remainingSlots,
-              remainingBytes: maxChatAttachmentTotalBytes - usedBytes,
+              remainingBytes: globalRemainingBytes,
             );
       if (!mounted) {
         await service.discardDrafts(picked);
@@ -163,7 +208,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!mounted) return;
       showAppSnackBar(
         context,
-        message: _localizedAttachmentError(ref.read(stringsProvider), error),
+        message: _localizedAttachmentError(
+          ref.read(stringsProvider),
+          error,
+          hostedImages: images && usesHostedAgent,
+        ),
       );
     }
   }
@@ -212,6 +261,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final query = typedQuery.isEmpty
         ? s.chatAttachmentDefaultPrompt
         : typedQuery;
+
+    final hostedAgent = ref.read(hostedAgentServiceProvider);
+    final hostedImages =
+        hostedAgent != null && drafts.any((draft) => draft.attachment.isImage);
+    if (hostedImages) {
+      final capabilities = ref.read(hostedAgentImageInputCapabilitiesProvider);
+      try {
+        if (capabilities == null) {
+          throw const ChatAttachmentException('chat_model_no_image_input');
+        }
+        validateNativeImageAttachmentEnvelope(
+          drafts.map((draft) => draft.attachment),
+          maxImages: math.min(capabilities.maxImages, maxHostedAgentImages),
+          maxImageBytes: math.min(
+            capabilities.maxImageBytes,
+            maxHostedAgentImageBytes,
+          ),
+          maxTotalImageBytes: math.min(
+            capabilities.maxTotalImageBytes,
+            maxHostedAgentImageTotalBytes,
+          ),
+          allowedMimeTypes: capabilities.mimeTypes.intersection(
+            hostedAgentImageMimeTypes,
+          ),
+        );
+      } catch (error) {
+        showAppSnackBar(
+          context,
+          message: _localizedAttachmentError(s, error, hostedImages: true),
+        );
+        return;
+      }
+    }
 
     // Dismiss the keyboard as soon as a message is sent.
     FocusScope.of(context).unfocus();
@@ -395,6 +477,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         )
         .toList();
 
+    final usesHostedAgent = ref.read(hostedAgentServiceProvider) != null;
+    final agentImageCapabilities = usesHostedAgent
+        ? ref.read(hostedAgentImageInputCapabilitiesProvider)
+        : null;
     var preparedAttachments = const PreparedChatAttachments();
     if (userMessage.attachments.isNotEmpty) {
       try {
@@ -405,6 +491,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               useNativeImageInput: ref.read(
                 chatModelSupportsImageInputProvider,
               ),
+              maxNativeImages: agentImageCapabilities != null
+                  ? math.min(
+                      agentImageCapabilities.maxImages,
+                      maxHostedAgentImages,
+                    )
+                  : maxChatAttachments,
+              maxNativeImageBytes: agentImageCapabilities != null
+                  ? math.min(
+                      agentImageCapabilities.maxImageBytes,
+                      maxHostedAgentImageBytes,
+                    )
+                  : maxChatAttachmentBytes,
+              maxNativeImageTotalBytes: agentImageCapabilities != null
+                  ? math.min(
+                      agentImageCapabilities.maxTotalImageBytes,
+                      maxHostedAgentImageTotalBytes,
+                    )
+                  : maxChatAttachmentTotalBytes,
+              allowedNativeImageMimeTypes: agentImageCapabilities?.mimeTypes
+                  .intersection(hostedAgentImageMimeTypes),
               cachedTextContext: userMessage.attachmentContext,
               cachedIncludesImageUnderstanding:
                   userMessage.attachmentContextIncludesImages,
@@ -429,7 +535,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         }
         await finish(
           pending.copyWith(
-            content: _localizedAttachmentError(s, error),
+            content: _localizedAttachmentError(
+              s,
+              error,
+              hostedImages:
+                  usesHostedAgent &&
+                  userMessage.attachments.any(
+                    (attachment) => attachment.isImage,
+                  ),
+            ),
             status: ChatMessageStatus.failed,
             errorCode: 'attachment_preparation_failed',
           ),
@@ -555,9 +669,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await _finishUnstartedCancellation(runControl);
       return;
     }
-    runControl.durableRunExpected =
-        ref.read(hostedAgentServiceProvider) != null &&
-        preparedAttachments.imageInputs.isEmpty;
+    runControl.durableRunExpected = usesHostedAgent;
     runControl.agentRequestStarted = true;
 
     try {
@@ -1008,6 +1120,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // one run. Give any subsequent send a fresh observer while the cancelled
     // stream drains on its captured instance, so late terminal events cannot
     // contaminate the next answer's status or citations.
+    final hostedAgent = ref.read(hostedAgentServiceProvider);
+    hostedAgent?.cancelPendingCreate();
     ref.invalidate(hostedAgentServiceProvider);
     if (mounted) setState(() => _loading = false);
 
@@ -1598,13 +1712,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 }
 
-String _localizedAttachmentError(LocaleStrings s, Object error) {
+String _localizedAttachmentError(
+  LocaleStrings s,
+  Object error, {
+  bool hostedImages = false,
+}) {
   if (error is! ChatAttachmentException) {
     return localizedAiErrorMessage(s, error);
   }
   final message = switch (error.code) {
-    'too_many' => s.chatAttachmentTooMany,
-    'too_large' || 'total_too_large' => s.chatAttachmentTooLarge,
+    'too_many' =>
+      hostedImages ? s.chatAgentImageTooMany : s.chatAttachmentTooMany,
+    'too_large' || 'total_too_large' =>
+      hostedImages ? s.chatAgentImageTooLarge : s.chatAttachmentTooLarge,
     'unsupported_type' => s.chatAttachmentUnsupported,
     'chat_model_no_image_input' => s.chatAttachmentVisionRequired,
     'pdf_no_text' => s.chatAttachmentPdfNoText,

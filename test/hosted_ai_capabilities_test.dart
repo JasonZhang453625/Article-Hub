@@ -9,13 +9,23 @@ import 'package:memora/data/services/hosted_ai_capabilities.dart';
 
 void main() {
   group('HostedAiCapabilities.fromJson', () {
-    test('parses chat, summary and vision model lists', () {
+    test('parses text, vision, and Agent image capabilities', () {
       final capabilities = HostedAiCapabilities.fromJson({
-        'chat': {'models': ['mimo-v2.5', 'deepseek-v4-flash'], 'available': true},
-        'summary': {'models': ['mimo-v2.5-pro'], 'available': true},
+        'chat': {
+          'models': ['mimo-v2.5', 'deepseek-v4-flash'],
+          'available': true,
+        },
+        'summary': {
+          'models': ['mimo-v2.5-pro'],
+          'available': true,
+        },
         'image': {
           'providers': [
-            {'provider': 'mimo', 'models': ['mimo-v2.5'], 'available': true},
+            {
+              'provider': 'mimo',
+              'models': ['mimo-v2.5'],
+              'available': true,
+            },
             {
               'provider': 'sensenova',
               'models': ['sensenova-6.7-flash-lite'],
@@ -23,14 +33,33 @@ void main() {
             },
           ],
         },
+        'agent': {
+          'available': true,
+          'protocolVersion': 2,
+          'imageInput': {
+            'models': ['mimo-v2.5'],
+            'mimeTypes': ['image/png', 'image/jpeg'],
+            'maxImages': 4,
+            'maxImageBytes': 5242880,
+            'maxTotalImageBytes': 12582912,
+            'maxBodyBytes': 18874368,
+          },
+        },
       });
 
-      expect(capabilities.chatModels,
-          ['mimo-v2.5', 'deepseek-v4-flash']);
+      expect(capabilities.chatModels, ['mimo-v2.5', 'deepseek-v4-flash']);
       expect(capabilities.summaryModels, ['mimo-v2.5-pro']);
       // Unavailable providers must not contribute models.
       expect(capabilities.visionModels, ['mimo-v2.5']);
       expect(capabilities.hasServerChatModels, isTrue);
+      expect(capabilities.agentAvailable, isTrue);
+      expect(capabilities.agentProtocolVersion, 2);
+      expect(capabilities.agentImageInput?.models, ['mimo-v2.5']);
+      expect(capabilities.agentImageInput?.maxImages, 4);
+      expect(
+        hostedAgentImageInputForModel(capabilities, 'MIMO-V2.5'),
+        same(capabilities.agentImageInput),
+      );
     });
 
     test('handles malformed payloads without throwing', () {
@@ -43,6 +72,49 @@ void main() {
       expect(capabilities.summaryModels, isEmpty);
       expect(capabilities.visionModels, isEmpty);
       expect(capabilities.hasServerChatModels, isFalse);
+      expect(capabilities.agentAvailable, isFalse);
+      expect(capabilities.agentImageInput, isNull);
+    });
+
+    test('fails closed for Agent protocol v1 and unsupported models', () {
+      final protocolV1 = HostedAiCapabilities.fromJson({
+        'agent': {
+          'available': true,
+          'protocolVersion': 1,
+          'imageInput': {
+            'models': ['mimo-v2.5'],
+            'mimeTypes': ['image/png'],
+            'maxImages': 4,
+            'maxImageBytes': 5242880,
+            'maxTotalImageBytes': 12582912,
+            'maxBodyBytes': 18874368,
+          },
+        },
+      });
+      final protocolV2 = HostedAiCapabilities.fromJson({
+        'agent': {
+          'available': true,
+          'protocolVersion': 2,
+          'imageInput': {
+            'models': ['mimo-v2.5'],
+            'mimeTypes': ['image/png'],
+            'maxImages': 2,
+            'maxImageBytes': 1024,
+            'maxTotalImageBytes': 2048,
+            'maxBodyBytes': 4096,
+          },
+        },
+      });
+
+      expect(hostedAgentImageInputForModel(protocolV1, 'mimo-v2.5'), isNull);
+      expect(
+        hostedAgentImageInputForModel(protocolV2, 'deepseek-v4-flash'),
+        isNull,
+      );
+      expect(
+        hostedAgentImageInputForModel(protocolV2, 'mimo-v2.5')?.maxImages,
+        2,
+      );
     });
   });
 
@@ -75,8 +147,14 @@ void main() {
         expect(request.headers['Authorization'], 'Bearer test-token');
         return http.Response(
           jsonEncode({
-            'chat': {'models': ['mimo-v2.5', 'deepseek-v4-flash'], 'available': true},
-            'summary': {'models': ['mimo-v2.5', 'deepseek-v4-flash'], 'available': true},
+            'chat': {
+              'models': ['mimo-v2.5', 'deepseek-v4-flash'],
+              'available': true,
+            },
+            'summary': {
+              'models': ['mimo-v2.5', 'deepseek-v4-flash'],
+              'available': true,
+            },
             'image': {'providers': []},
           }),
           200,
@@ -89,10 +167,7 @@ void main() {
         client: client,
       );
       final capabilities = await service.fetch();
-      expect(
-        capabilities.chatModels,
-        ['mimo-v2.5', 'deepseek-v4-flash'],
-      );
+      expect(capabilities.chatModels, ['mimo-v2.5', 'deepseek-v4-flash']);
     });
 
     test('returns empty capabilities when signed out', () async {

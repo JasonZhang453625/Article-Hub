@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:memora/data/models/ai_thinking_level.dart';
+import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 
@@ -85,6 +88,197 @@ void main() {
       ]);
       expect(service.lastWebUrls, ['https://example.com/docs']);
       expect(service.lastError, isNull);
+    },
+  );
+
+  test('sends native image blocks through the durable Agent run', () async {
+    Map<String, dynamic>? payload;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-image","status":"queued"}'),
+          ),
+          202,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-image",'
+            '"answer":"A chart.","sources":[]}\n\n',
+          ),
+        ),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final session = _session(_jwt('image'));
+    final service = HostedAgentService(
+      getSession: () => session,
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+      imageInputEnabled: true,
+    );
+    final bytes = Uint8List.fromList([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+    ]);
+
+    final chunks = await http.runWithClient(
+      () => service
+          .chatStream(
+            systemPrompt: 'system',
+            userMessage: 'Describe this image.',
+            userQuestion: 'Describe this image.',
+            images: [
+              AiImageInput(
+                id: 'image-1',
+                fileName: 'chart.png',
+                mimeType: 'image/png',
+                bytes: bytes,
+              ),
+            ],
+          )
+          .toList(),
+      () => client,
+    );
+
+    final messages = payload?['messages'] as List<dynamic>;
+    final user = Map<String, dynamic>.from(messages.last as Map);
+    final content = (user['content'] as List<dynamic>)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    expect(chunks, ['A chart.']);
+    expect(content.first, {'type': 'text', 'text': 'Describe this image.'});
+    expect(content.last, {
+      'type': 'image',
+      'data': base64.encode(bytes),
+      'mimeType': 'image/png',
+    });
+  });
+
+  test('Stop closes an in-flight create upload without replaying it', () async {
+    final client = _CloseAwareClient();
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('cancel-create')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+      imageInputEnabled: true,
+    );
+
+    final completion = http.runWithClient(
+      () => service
+          .chatStream(
+            systemPrompt: 'system',
+            userMessage: 'Describe this image.',
+            userQuestion: 'Describe this image.',
+            images: [
+              AiImageInput(
+                id: 'image-1',
+                fileName: 'chart.png',
+                mimeType: 'image/png',
+                bytes: Uint8List.fromList([
+                  0x89,
+                  0x50,
+                  0x4e,
+                  0x47,
+                  0x0d,
+                  0x0a,
+                  0x1a,
+                  0x0a,
+                ]),
+              ),
+            ],
+            idempotencyKey: 'stable-image-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+
+    await client.started.future;
+    service.cancelPendingCreate();
+
+    expect(await completion, isEmpty);
+    expect(client.sendCount, 1);
+    expect(client.closed, isTrue);
+    expect(service.lastRunId, isNull);
+    expect(service.lastError, 'Hosted Agent request was cancelled.');
+  });
+
+  test(
+    'rejects images unless Agent protocol capability was negotiated',
+    () async {
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('no-image-capability')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+      );
+
+      await expectLater(
+        service
+            .chatStream(
+              systemPrompt: 'system',
+              userMessage: 'image',
+              userQuestion: 'image',
+              images: [
+                AiImageInput(
+                  id: 'image-1',
+                  fileName: 'image.png',
+                  mimeType: 'image/png',
+                  bytes: Uint8List.fromList([1]),
+                ),
+              ],
+            )
+            .toList(),
+        throwsA(
+          isA<HostedAgentInputException>().having(
+            (error) => error.code,
+            'code',
+            'image_input_not_negotiated',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'rejects a request above the advertised body limit before POST',
+    () async {
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('small-body-cap')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        maxBodyBytes: 64,
+      );
+
+      await expectLater(
+        service
+            .chatStream(
+              systemPrompt: 'system prompt that exceeds the tiny cap',
+              userMessage: 'question that also exceeds the tiny cap',
+              userQuestion: 'question',
+              idempotencyKey: 'small-body-cap',
+            )
+            .toList(),
+        throwsA(
+          isA<HostedAgentInputException>().having(
+            (error) => error.code,
+            'code',
+            'request_too_large',
+          ),
+        ),
+      );
     },
   );
 
@@ -1113,4 +1307,29 @@ String _jwt(String marker) {
     ),
   );
   return 'header.${payload.replaceAll('=', '')}.signature';
+}
+
+class _CloseAwareClient extends http.BaseClient {
+  final started = Completer<void>();
+  final _response = Completer<http.StreamedResponse>();
+  int sendCount = 0;
+  bool closed = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    sendCount++;
+    if (!started.isCompleted) started.complete();
+    return _response.future;
+  }
+
+  @override
+  void close() {
+    if (closed) return;
+    closed = true;
+    if (!_response.isCompleted) {
+      _response.completeError(
+        http.ClientException('request closed before response'),
+      );
+    }
+  }
 }

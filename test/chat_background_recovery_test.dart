@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memora/data/models/chat_message_record.dart';
 import 'package:memora/data/models/chat_thread.dart';
+import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/repositories/article_repository.dart';
@@ -140,6 +141,7 @@ void main() {
             required String systemPrompt,
             required String userMessage,
             required String userQuestion,
+            required images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -151,6 +153,7 @@ void main() {
             systemPrompt: systemPrompt,
             userMessage: userMessage,
             userQuestion: userQuestion,
+            images: images,
             history: history,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -286,6 +289,7 @@ void main() {
             required String systemPrompt,
             required String userMessage,
             required String userQuestion,
+            required images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -297,6 +301,7 @@ void main() {
             systemPrompt: systemPrompt,
             userMessage: userMessage,
             userQuestion: userQuestion,
+            images: images,
             history: history,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -960,6 +965,7 @@ class _GatedHostedAgentService extends HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
@@ -1011,6 +1017,7 @@ class _TransportInterruptedHostedAgentService extends HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
@@ -1154,6 +1161,7 @@ class _PreCreateGatedHostedAgentService extends HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,

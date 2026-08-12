@@ -331,6 +331,8 @@ class LocaleStrings {
   final String chatAttachmentRemove;
   final String chatAttachmentTooMany;
   final String chatAttachmentTooLarge;
+  final String chatAgentImageTooMany;
+  final String chatAgentImageTooLarge;
   final String chatAttachmentUnsupported;
   final String chatAttachmentReadFailed;
   final String chatAttachmentVisionRequired;
@@ -683,6 +685,8 @@ class LocaleStrings {
     required this.chatAttachmentRemove,
     required this.chatAttachmentTooMany,
     required this.chatAttachmentTooLarge,
+    required this.chatAgentImageTooMany,
+    required this.chatAgentImageTooLarge,
     required this.chatAttachmentUnsupported,
     required this.chatAttachmentReadFailed,
     required this.chatAttachmentVisionRequired,
@@ -1088,6 +1092,9 @@ class LocaleStrings {
     chatAttachmentRemove: 'Remove attachment',
     chatAttachmentTooMany: 'You can attach up to 9 items per message.',
     chatAttachmentTooLarge: 'The selected attachments are too large.',
+    chatAgentImageTooMany: 'Memora Agent supports up to 4 images per message.',
+    chatAgentImageTooLarge:
+        'Each Agent image must be at most 5 MiB, and all images at most 12 MiB.',
     chatAttachmentUnsupported: 'This file type is not supported yet.',
     chatAttachmentReadFailed: 'The attachment could not be read.',
     chatAttachmentVisionRequired:
@@ -1446,6 +1453,8 @@ class LocaleStrings {
     chatAttachmentRemove: '移除附件',
     chatAttachmentTooMany: '每条消息最多添加 9 个附件。',
     chatAttachmentTooLarge: '所选附件体积过大。',
+    chatAgentImageTooMany: 'Memora Agent 每条消息最多支持 4 张图片。',
+    chatAgentImageTooLarge: '每张图片最多 5 MiB，全部图片合计最多 12 MiB。',
     chatAttachmentUnsupported: '暂不支持这种文件类型。',
     chatAttachmentReadFailed: '无法读取这个附件。',
     chatAttachmentVisionRequired: '当前对话模型不支持识图，请先切换到支持图片的对话模型。',

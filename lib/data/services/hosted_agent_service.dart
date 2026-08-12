@@ -4,9 +4,21 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../config/backend_config.dart';
+import '../models/ai_image_input.dart';
 import '../models/ai_thinking_level.dart';
 import 'ai_service.dart';
 import 'auth_service.dart';
+
+const int maxHostedAgentImages = 4;
+const int maxHostedAgentImageBytes = 5 * 1024 * 1024;
+const int maxHostedAgentImageTotalBytes = 12 * 1024 * 1024;
+const int maxHostedAgentBodyBytes = 18 * 1024 * 1024;
+const Set<String> hostedAgentImageMimeTypes = {
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+};
 
 class HostedAgentSource {
   final String id;
@@ -75,6 +87,16 @@ class HostedAgentCancelException implements Exception {
     this.statusCode,
     required this.retryable,
   });
+
+  @override
+  String toString() => message;
+}
+
+class HostedAgentInputException implements Exception {
+  final String code;
+  final String message;
+
+  const HostedAgentInputException({required this.code, required this.message});
 
   @override
   String toString() => message;
@@ -226,6 +248,12 @@ class HostedAgentService {
   final Future<AuthSession?> Function() _refreshSession;
   final String model;
   final Duration timeout;
+  final int maxImages;
+  final int maxImageBytes;
+  final int maxTotalImageBytes;
+  final int maxBodyBytes;
+  final Set<String> allowedImageMimeTypes;
+  final bool imageInputEnabled;
 
   String? lastError;
   int? lastStatusCode;
@@ -236,6 +264,8 @@ class HostedAgentService {
   String? lastRunStatus;
   bool lastChunkIsFullAnswer = false;
   bool _lastRunResultWasEmpty = false;
+  http.Client? _activeCreateClient;
+  bool _createCancelled = false;
   AiThinkingLevel thinkingLevel;
 
   HostedAgentService({
@@ -244,6 +274,12 @@ class HostedAgentService {
     required this.model,
     this.timeout = AiService.defaultTimeout,
     this.thinkingLevel = AiThinkingLevel.none,
+    this.maxImages = maxHostedAgentImages,
+    this.maxImageBytes = maxHostedAgentImageBytes,
+    this.maxTotalImageBytes = maxHostedAgentImageTotalBytes,
+    this.maxBodyBytes = maxHostedAgentBodyBytes,
+    this.allowedImageMimeTypes = hostedAgentImageMimeTypes,
+    this.imageInputEnabled = false,
   }) : _getSession = getSession,
        _refreshSession = refreshSession;
 
@@ -265,6 +301,18 @@ class HostedAgentService {
     ).cancelRun(runId);
   }
 
+  /// Stops an in-flight `POST /ai/runs` upload owned by this observer.
+  ///
+  /// A server run may already have been committed even when its 202 response
+  /// has not reached the device. The stable Idempotency-Key remains the source
+  /// of truth for subsequent reconciliation; closing this transport only
+  /// prevents a superseded large upload from continuing to occupy memory and
+  /// a socket in the current process.
+  void cancelPendingCreate() {
+    _createCancelled = true;
+    _activeCreateClient?.close();
+  }
+
   Future<AuthSession?> _freshSession() async {
     var session = _getSession();
     if (session == null) {
@@ -283,11 +331,51 @@ class HostedAgentService {
     return session;
   }
 
+  void _validateImages(List<AiImageInput> images) {
+    if (images.isNotEmpty && !imageInputEnabled) {
+      throw const HostedAgentInputException(
+        code: 'image_input_not_negotiated',
+        message: 'Hosted Agent image input is not available.',
+      );
+    }
+    if (images.length > maxImages) {
+      throw HostedAgentInputException(
+        code: 'too_many_images',
+        message: 'Hosted Agent accepts at most $maxImages images per message.',
+      );
+    }
+    var totalBytes = 0;
+    for (final image in images) {
+      final mimeType = image.mimeType.trim().toLowerCase();
+      if (!allowedImageMimeTypes.contains(mimeType)) {
+        throw HostedAgentInputException(
+          code: 'unsupported_image_type',
+          message: 'Hosted Agent does not support image type $mimeType.',
+        );
+      }
+      if (image.bytes.isEmpty || image.bytes.length > maxImageBytes) {
+        throw HostedAgentInputException(
+          code: 'image_too_large',
+          message:
+              'Hosted Agent image ${image.fileName} exceeds the configured limit.',
+        );
+      }
+      totalBytes += image.bytes.length;
+    }
+    if (totalBytes > maxTotalImageBytes) {
+      throw const HostedAgentInputException(
+        code: 'images_too_large',
+        message: 'Hosted Agent images exceed the configured combined limit.',
+      );
+    }
+  }
+
   /// Creates a durable hosted run and yields its answer events.
   Stream<String> chatStream({
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
@@ -305,12 +393,24 @@ class HostedAgentService {
     var session = await _freshSession();
     if (session == null) return;
 
+    _validateImages(images);
+    final userContent = images.isEmpty
+        ? userMessage
+        : <Map<String, dynamic>>[
+            {'type': 'text', 'text': userMessage},
+            for (final image in images)
+              {
+                'type': 'image',
+                'data': base64.encode(image.bytes),
+                'mimeType': image.mimeType.trim().toLowerCase(),
+              },
+          ];
     final requestBody = <String, dynamic>{
       'model': model,
       'messages': [
         {'role': 'system', 'content': systemPrompt},
         ...history,
-        {'role': 'user', 'content': userMessage},
+        {'role': 'user', 'content': userContent},
       ],
       'user_question': userQuestion,
       'temperature': temperature,
@@ -325,9 +425,15 @@ class HostedAgentService {
     var refreshedCreateSession = false;
     final canReplayCreate = idempotencyKey?.trim().isNotEmpty == true;
     for (var attempt = 0; attempt < 3; attempt++) {
+      if (_createCancelled) {
+        lastError = 'Hosted Agent request was cancelled.';
+        return;
+      }
       try {
         created = await _createRun(session!, requestBody, idempotencyKey);
         break;
+      } on HostedAgentInputException {
+        rethrow;
       } on _RunHttpException catch (error) {
         lastStatusCode = error.statusCode;
         lastError = 'HTTP ${error.statusCode}: ${_responseError(error.body)}';
@@ -342,10 +448,18 @@ class HostedAgentService {
         }
         return;
       } on TimeoutException {
+        if (_createCancelled) {
+          lastError = 'Hosted Agent request was cancelled.';
+          return;
+        }
         lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';
         if (canReplayCreate && attempt < 2) continue;
         return;
       } on http.ClientException catch (error) {
+        if (_createCancelled) {
+          lastError = 'Hosted Agent request was cancelled.';
+          return;
+        }
         lastError = 'Hosted Agent request failed: $error';
         if (canReplayCreate && attempt < 2) continue;
         return;
@@ -354,6 +468,10 @@ class HostedAgentService {
         if (canReplayCreate && attempt < 2) continue;
         return;
       } catch (error) {
+        if (_createCancelled) {
+          lastError = 'Hosted Agent request was cancelled.';
+          return;
+        }
         lastError = 'Hosted Agent request failed: $error';
         return;
       }
@@ -551,7 +669,18 @@ class HostedAgentService {
     String? idempotencyKey,
   ) async {
     final client = http.Client();
+    _activeCreateClient = client;
     try {
+      if (_createCancelled) {
+        throw http.ClientException('Hosted Agent request was cancelled.');
+      }
+      final encodedBody = utf8.encode(jsonEncode(body));
+      if (encodedBody.length > maxBodyBytes) {
+        throw const HostedAgentInputException(
+          code: 'request_too_large',
+          message: 'Hosted Agent request exceeds the advertised body limit.',
+        );
+      }
       final request = http.Request('POST', BackendConfig.uri('/ai/runs'))
         ..headers.addAll({
           'Authorization': 'Bearer ${session.accessToken}',
@@ -560,7 +689,7 @@ class HostedAgentService {
           if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
             'Idempotency-Key': idempotencyKey.trim(),
         })
-        ..body = jsonEncode(body);
+        ..bodyBytes = encodedBody;
       final response = await client.send(request).timeout(timeout);
       lastStatusCode = response.statusCode;
       final text = await response.stream.bytesToString().timeout(timeout);
@@ -573,6 +702,9 @@ class HostedAgentService {
       }
       return decoded;
     } finally {
+      if (identical(_activeCreateClient, client)) {
+        _activeCreateClient = null;
+      }
       client.close();
     }
   }
@@ -839,6 +971,7 @@ class HostedAgentService {
   }
 
   void _resetRunState() {
+    _createCancelled = false;
     lastError = null;
     lastStatusCode = null;
     lastRunId = null;

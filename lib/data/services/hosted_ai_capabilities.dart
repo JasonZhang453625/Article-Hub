@@ -15,11 +15,17 @@ class HostedAiCapabilities {
   final List<String> chatModels;
   final List<String> summaryModels;
   final List<String> visionModels;
+  final bool agentAvailable;
+  final int agentProtocolVersion;
+  final HostedAgentImageInputCapabilities? agentImageInput;
 
   const HostedAiCapabilities({
     required this.chatModels,
     required this.summaryModels,
     required this.visionModels,
+    this.agentAvailable = false,
+    this.agentProtocolVersion = 1,
+    this.agentImageInput,
   });
 
   factory HostedAiCapabilities.fromJson(Map<String, dynamic> json) {
@@ -34,6 +40,11 @@ class HostedAiCapabilities {
       chatModels: models(json['chat']),
       summaryModels: models(json['summary']),
       visionModels: _visionModels(json['image']),
+      agentAvailable: _agentAvailable(json['agent']),
+      agentProtocolVersion: _agentProtocolVersion(json['agent']),
+      agentImageInput: HostedAgentImageInputCapabilities.fromAgentSection(
+        json['agent'],
+      ),
     );
   }
 
@@ -54,6 +65,15 @@ class HostedAiCapabilities {
     return models;
   }
 
+  static int _agentProtocolVersion(dynamic agentSection) {
+    if (agentSection is! Map) return 1;
+    final value = agentSection['protocolVersion'];
+    return value is int && value > 0 ? value : 1;
+  }
+
+  static bool _agentAvailable(dynamic agentSection) =>
+      agentSection is Map && agentSection['available'] == true;
+
   /// Falls back to the built-in list when the server response is empty or
   /// malformed, so the settings screen never shows an empty dropdown.
   bool get hasServerChatModels => chatModels.isNotEmpty;
@@ -61,6 +81,91 @@ class HostedAiCapabilities {
   bool get hasServerSummaryModels => summaryModels.isNotEmpty;
 
   bool get hasServerVisionModels => visionModels.isNotEmpty;
+}
+
+class HostedAgentImageInputCapabilities {
+  final List<String> models;
+  final Set<String> mimeTypes;
+  final int maxImages;
+  final int maxImageBytes;
+  final int maxTotalImageBytes;
+  final int maxBodyBytes;
+
+  const HostedAgentImageInputCapabilities({
+    required this.models,
+    required this.mimeTypes,
+    required this.maxImages,
+    required this.maxImageBytes,
+    required this.maxTotalImageBytes,
+    required this.maxBodyBytes,
+  });
+
+  factory HostedAgentImageInputCapabilities.fromJson(
+    Map<dynamic, dynamic> json,
+  ) {
+    final models = _stringList(json['models']);
+    final mimeTypes = _stringList(json['mimeTypes'])
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return HostedAgentImageInputCapabilities(
+      models: models,
+      mimeTypes: Set.unmodifiable(mimeTypes),
+      maxImages: _positiveInt(json['maxImages']),
+      maxImageBytes: _positiveInt(json['maxImageBytes']),
+      maxTotalImageBytes: _positiveInt(json['maxTotalImageBytes']),
+      maxBodyBytes: _positiveInt(json['maxBodyBytes']),
+    );
+  }
+
+  static HostedAgentImageInputCapabilities? fromAgentSection(
+    dynamic agentSection,
+  ) {
+    if (agentSection is! Map) return null;
+    final imageInput = agentSection['imageInput'];
+    if (imageInput is! Map) return null;
+    final parsed = HostedAgentImageInputCapabilities.fromJson(imageInput);
+    if (parsed.models.isEmpty ||
+        parsed.mimeTypes.isEmpty ||
+        parsed.maxImages == 0 ||
+        parsed.maxImageBytes == 0 ||
+        parsed.maxTotalImageBytes == 0 ||
+        parsed.maxBodyBytes == 0) {
+      return null;
+    }
+    return parsed;
+  }
+
+  static List<String> _stringList(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static int _positiveInt(dynamic value) =>
+      value is int && value > 0 ? value : 0;
+}
+
+HostedAgentImageInputCapabilities? hostedAgentImageInputForModel(
+  HostedAiCapabilities? capabilities,
+  String model,
+) {
+  final normalizedModel = model.trim().toLowerCase();
+  final imageInput = capabilities?.agentImageInput;
+  if (capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < 2 ||
+      imageInput == null ||
+      normalizedModel.isEmpty ||
+      !imageInput.models.any(
+        (candidate) => candidate.trim().toLowerCase() == normalizedModel,
+      )) {
+    return null;
+  }
+  return imageInput;
 }
 
 /// Fetches hosted-AI capabilities from the backend.
@@ -129,8 +234,7 @@ class HostedAiCapabilitiesException implements Exception {
 /// again. The list is deliberately not persisted: it is advisory UI data and
 /// the backend is the source of truth.
 class HostedAiCapabilitiesCache {
-  static final HostedAiCapabilitiesCache instance =
-      HostedAiCapabilitiesCache();
+  static final HostedAiCapabilitiesCache instance = HostedAiCapabilitiesCache();
 
   HostedAiCapabilities? _value;
   DateTime? _fetchedAt;

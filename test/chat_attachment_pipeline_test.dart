@@ -117,6 +117,56 @@ void main() {
     expect(prepared.imageInputs.single.bytes, [4, 3, 2, 1]);
     expect(prepared.includesImageUnderstanding, isFalse);
   });
+
+  test(
+    'enforces the hosted Agent image envelope before reading bytes',
+    () async {
+      final pipeline = ChatAttachmentPipeline(store: store);
+      final first = await attachment(
+        id: 'first',
+        name: 'first.png',
+        mimeType: 'image/png',
+        kind: ChatAttachmentKind.image,
+        bytes: [1, 2],
+      );
+      final second = await attachment(
+        id: 'second',
+        name: 'second.webp',
+        mimeType: 'image/webp',
+        kind: ChatAttachmentKind.image,
+        bytes: [3, 4],
+      );
+
+      await expectLater(
+        pipeline.prepare(
+          attachments: [first, second],
+          useNativeImageInput: true,
+          maxNativeImages: 1,
+        ),
+        throwsA(
+          isA<ChatAttachmentException>().having(
+            (error) => error.code,
+            'code',
+            'too_many',
+          ),
+        ),
+      );
+      await expectLater(
+        pipeline.prepare(
+          attachments: [first, second],
+          useNativeImageInput: true,
+          maxNativeImageTotalBytes: 3,
+        ),
+        throwsA(
+          isA<ChatAttachmentException>().having(
+            (error) => error.code,
+            'code',
+            'total_too_large',
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _MappedAttachmentStore extends AttachmentStore {

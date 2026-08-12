@@ -105,16 +105,22 @@ final hostedAiCapabilitiesProvider = FutureProvider<HostedAiCapabilities?>((
 /// Whether the currently selected chat model can receive native image blocks.
 /// Hosted capability metadata is authoritative when available; BYOK falls
 /// back to conservative model-family detection.
+final hostedAgentImageInputCapabilitiesProvider =
+    Provider<HostedAgentImageInputCapabilities?>((ref) {
+      final settings = ref.watch(settingsProvider).valueOrNull;
+      if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
+      final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
+      return hostedAgentImageInputForModel(
+        capabilities,
+        settings.hostedChatModel,
+      );
+    });
+
 final chatModelSupportsImageInputProvider = Provider<bool>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null) return false;
   if (ref.watch(hostedAiEnabledProvider)) {
-    final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
-    return chatModelSupportsImageInput(
-      settings.hostedChatModel,
-      declaredVisionModels:
-          capabilities?.visionModels ?? AppSettings.hostedVisionModels,
-    );
+    return ref.watch(hostedAgentImageInputCapabilitiesProvider) != null;
   }
   return chatModelSupportsImageInput(settings.chatAiModel);
 });
@@ -162,12 +168,40 @@ final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
   if (settings.hostedChatModel.trim().isEmpty) return null;
+  final imageCapabilities = ref.watch(
+    hostedAgentImageInputCapabilitiesProvider,
+  );
   return HostedAgentService(
     getSession: () => ref.read(currentSessionProvider),
     refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
     model: settings.hostedChatModel.trim(),
+    maxImages: imageCapabilities == null
+        ? maxHostedAgentImages
+        : _lowerLimit(imageCapabilities.maxImages, maxHostedAgentImages),
+    maxImageBytes: imageCapabilities == null
+        ? maxHostedAgentImageBytes
+        : _lowerLimit(
+            imageCapabilities.maxImageBytes,
+            maxHostedAgentImageBytes,
+          ),
+    maxTotalImageBytes: imageCapabilities == null
+        ? maxHostedAgentImageTotalBytes
+        : _lowerLimit(
+            imageCapabilities.maxTotalImageBytes,
+            maxHostedAgentImageTotalBytes,
+          ),
+    maxBodyBytes: imageCapabilities == null
+        ? maxHostedAgentBodyBytes
+        : _lowerLimit(imageCapabilities.maxBodyBytes, maxHostedAgentBodyBytes),
+    allowedImageMimeTypes: imageCapabilities == null
+        ? hostedAgentImageMimeTypes
+        : imageCapabilities.mimeTypes.intersection(hostedAgentImageMimeTypes),
+    imageInputEnabled: imageCapabilities != null,
   );
 });
+
+int _lowerLimit(int advertised, int localHardLimit) =>
+    advertised < localHardLimit ? advertised : localHardLimit;
 
 final summaryAiGatewayProvider = Provider<AiGateway?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
@@ -311,6 +345,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             required String systemPrompt,
             required String userMessage,
             required String userQuestion,
+            required List<AiImageInput> images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -323,6 +358,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               systemPrompt: systemPrompt,
               userMessage: userMessage,
               userQuestion: userQuestion,
+              images: images,
               history: history,
               temperature: temperature,
               maxTokens: maxTokens,

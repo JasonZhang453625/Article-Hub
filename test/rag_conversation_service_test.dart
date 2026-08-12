@@ -260,6 +260,7 @@ void main() {
             required systemPrompt,
             required userMessage,
             required userQuestion,
+            required images,
             history = const [],
             temperature = 0.3,
             maxTokens = 800,
@@ -309,6 +310,7 @@ void main() {
             required systemPrompt,
             required userMessage,
             required userQuestion,
+            required images,
             history = const [],
             temperature = 0.3,
             maxTokens = 800,
@@ -338,7 +340,9 @@ void main() {
     expect(result.error, 'HTTP 503: Agent unavailable');
   });
 
-  test('multimodal success ignores a stale Agent error', () async {
+  test('hosted multimodal completion uses the durable Agent', () async {
+    List<AiImageInput>? receivedImages;
+    bool? receivedWebSearch;
     final service = RagConversationService(
       retrieve: (query, articles) async => const RetrievalResult(
         articles: [],
@@ -361,12 +365,13 @@ void main() {
             history = const [],
             temperature = 0.3,
             maxTokens = 800,
-          }) => Stream<String>.value('Image answer.'),
+          }) => fail('direct multimodal stream must not receive hosted images'),
       agentRunStream:
           ({
             required systemPrompt,
             required userMessage,
             required userQuestion,
+            required images,
             history = const [],
             temperature = 0.3,
             maxTokens = 800,
@@ -374,11 +379,14 @@ void main() {
             onEvent,
             onRunCreated,
             idempotencyKey,
-          }) async* {
-            fail('Agent stream must not receive an image request');
+          }) {
+            receivedImages = images;
+            receivedWebSearch = webSearch;
+            return Stream<String>.value('Image Agent answer [w1].');
           },
-      completionError: () => null,
-      agentCompletionError: () => 'HTTP 503: stale Agent error',
+      completionError: () => 'HTTP 503: stale direct-chat error',
+      agentCompletionError: () => null,
+      agentWebUrls: () => const ['https://example.com/image-search-source'],
       saveLog: (_) async {},
       promptService: _FakePromptService(),
     );
@@ -390,6 +398,7 @@ void main() {
         knowledgeOnly: false,
         detailedAnswer: false,
         languageHint: '',
+        webSearch: true,
         imageInputs: [
           AiImageInput(
             id: 'image-1',
@@ -402,7 +411,11 @@ void main() {
     );
 
     expect(result.outcome, RagConversationOutcome.answer);
-    expect(result.answer, 'Image answer.');
+    expect(result.answer, 'Image Agent answer [w1].');
+    expect(receivedImages, hasLength(1));
+    expect(receivedImages!.single.id, 'image-1');
+    expect(receivedWebSearch, isTrue);
+    expect(result.webUrls, ['https://example.com/image-search-source']);
     expect(result.error, isNull);
   });
 

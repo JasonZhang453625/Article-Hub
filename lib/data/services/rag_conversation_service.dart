@@ -65,6 +65,7 @@ typedef RagAgentCompletionStreamWithRun =
       required String systemPrompt,
       required String userMessage,
       required String userQuestion,
+      required List<AiImageInput> images,
       List<Map<String, String>> history,
       double temperature,
       int maxTokens,
@@ -281,7 +282,7 @@ class RagConversationService {
         request.imageInputs.isNotEmpty;
     if (hasAttachments) {
       _configureThinking?.call(request.thinkingLevel);
-      return _askWithAttachmentsDirectly(
+      return _askWithAttachments(
         request,
         question: question,
         logId: logId,
@@ -621,10 +622,14 @@ class RagConversationService {
     }
   }
 
-  /// Sends user-supplied attachments straight to the selected chat model.
-  /// This path deliberately performs no query rewrite, local retrieval, web
-  /// search, context packing, or citation extraction.
-  Future<RagConversationResult> _askWithAttachmentsDirectly(
+  /// Runs the bounded attachment prompt without client-side retrieval or web
+  /// prefetch. Hosted Pi runs still receive the user's web-search permission,
+  /// so the Agent can invoke its server-side tool when appropriate.
+  /// Hosted answers use the durable Pi Agent, including native image blocks;
+  /// BYOK answers remain direct model completions. This path deliberately
+  /// performs no query rewrite, local retrieval, web search, context packing,
+  /// or citation extraction.
+  Future<RagConversationResult> _askWithAttachments(
     RagConversationRequest request, {
     required String question,
     required String logId,
@@ -687,7 +692,8 @@ class RagConversationService {
         contextWindowTokens: effectiveContextWindow,
       );
       final usesAgentCompletion =
-          request.imageInputs.isEmpty && _hasAgentCompletion;
+          _agentRunStream != null ||
+          request.imageInputs.isEmpty && _agentCompleteStream != null;
       final response = await _completeWithProgress(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
@@ -695,13 +701,16 @@ class RagConversationService {
         history: history.map((turn) => turn.toMessage()).toList(),
         temperature: 0.3,
         maxTokens: maxTokens,
-        webSearch: false,
+        webSearch: request.webSearch,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
         idempotencyKey: idempotencyKey,
         images: request.imageInputs,
       );
+      final agentWebUrls = usesAgentCompletion
+          ? (_agentWebUrls?.call() ?? const <String>[])
+          : const <String>[];
 
       final completionErrorReader = usesAgentCompletion
           ? (_agentCompletionError ?? _completionError)
@@ -719,13 +728,15 @@ class RagConversationService {
         );
       }
 
-      await _writeLog(
-        logId: logId,
-        question: question,
-        rewrittenQuery: question,
-        method: method,
-      );
       if (!hasAnswer || completionError != null && completionError.isNotEmpty) {
+        await _writeLog(
+          logId: logId,
+          question: question,
+          rewrittenQuery: question,
+          method: method,
+          webCandidateUrls: agentWebUrls,
+          webCitedUrls: const [],
+        );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
           answer: hasAnswer ? response : null,
@@ -737,12 +748,25 @@ class RagConversationService {
           logId: logId,
         );
       }
+      final citedWebUrls = extractValidWebCitations(
+        response: response,
+        urls: agentWebUrls,
+      );
+      await _writeLog(
+        logId: logId,
+        question: question,
+        rewrittenQuery: question,
+        method: method,
+        webCandidateUrls: agentWebUrls,
+        webCitedUrls: citedWebUrls,
+      );
       return RagConversationResult(
         outcome: RagConversationOutcome.answer,
         answer: response,
         rewrittenQuery: question,
         method: method,
         logId: logId,
+        webUrls: List.unmodifiable(citedWebUrls),
       );
     } catch (error) {
       await _writeLog(
@@ -775,6 +799,30 @@ class RagConversationService {
     String? idempotencyKey,
     required List<AiImageInput> images,
   }) async {
+    final agentRunStream = _agentRunStream;
+    if (agentRunStream != null) {
+      final buffer = StringBuffer();
+      await for (final delta in agentRunStream(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        userQuestion: userQuestion,
+        images: images,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+        webSearch: webSearch,
+        onEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+
     if (images.isNotEmpty) {
       final multimodalStream = _multimodalCompleteStream;
       if (multimodalStream == null) {
@@ -788,29 +836,6 @@ class RagConversationService {
         history: history,
         temperature: temperature,
         maxTokens: maxTokens,
-      )) {
-        if (delta.isEmpty) continue;
-        buffer.write(delta);
-        onDelta?.call(delta);
-      }
-      final response = buffer.toString();
-      return response.trim().isEmpty ? null : response;
-    }
-
-    final agentRunStream = _agentRunStream;
-    if (agentRunStream != null) {
-      final buffer = StringBuffer();
-      await for (final delta in agentRunStream(
-        systemPrompt: systemPrompt,
-        userMessage: userMessage,
-        userQuestion: userQuestion,
-        history: history,
-        temperature: temperature,
-        maxTokens: maxTokens,
-        webSearch: webSearch,
-        onEvent: onAgentEvent,
-        onRunCreated: onRunCreated,
-        idempotencyKey: idempotencyKey,
       )) {
         if (delta.isEmpty) continue;
         buffer.write(delta);

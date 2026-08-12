@@ -488,6 +488,7 @@ void main() {
               required systemPrompt,
               required userMessage,
               required userQuestion,
+              required images,
               history = const [],
               temperature = 0.3,
               maxTokens = 800,
