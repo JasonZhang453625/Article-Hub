@@ -32,15 +32,17 @@ void main() {
         {
           'lengthRule': 'Keep the answer concise.',
           'langHint': 'Answer in English.',
+          'toolRule': '- Do not use local or web search.',
         },
       );
 
       expect(rendered, contains('你是「记忆海」的对话助手。'));
-      expect(rendered, contains('不要执行本地知识库检索或联网搜索'));
+      expect(rendered, contains('- Do not use local or web search.'));
       expect(rendered, contains('Keep the answer concise.'));
       expect(rendered, contains('Answer in English.'));
       expect(rendered, isNot(contains('{{lengthRule}}')));
       expect(rendered, isNot(contains('{{langHint}}')));
+      expect(rendered, isNot(contains('{{toolRule}}')));
     },
   );
 

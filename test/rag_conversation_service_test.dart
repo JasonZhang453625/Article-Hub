@@ -343,6 +343,7 @@ void main() {
   test('hosted multimodal completion uses the durable Agent', () async {
     List<AiImageInput>? receivedImages;
     bool? receivedWebSearch;
+    String? receivedSystemPrompt;
     final service = RagConversationService(
       retrieve: (query, articles) async => const RetrievalResult(
         articles: [],
@@ -382,6 +383,7 @@ void main() {
           }) {
             receivedImages = images;
             receivedWebSearch = webSearch;
+            receivedSystemPrompt = systemPrompt;
             return Stream<String>.value('Image Agent answer [w1].');
           },
       completionError: () => 'HTTP 503: stale direct-chat error',
@@ -415,6 +417,7 @@ void main() {
     expect(receivedImages, hasLength(1));
     expect(receivedImages!.single.id, 'image-1');
     expect(receivedWebSearch, isTrue);
+    expect(receivedSystemPrompt, contains('ALLOW_WEB_SEARCH'));
     expect(result.webUrls, ['https://example.com/image-search-source']);
     expect(result.error, isNull);
   });
@@ -746,6 +749,12 @@ class _FakePromptService extends PromptService {
     if (path == 'chat/user.txt') {
       return 'Context:\n${vars?['context'] ?? ''}\n'
           'Question: ${vars?['question'] ?? ''}';
+    }
+    if (path == 'chat/attachments_direct_system.txt') {
+      final toolRule = vars?['toolRule'] ?? '';
+      return toolRule.contains('web_search')
+          ? 'Attachment system ALLOW_WEB_SEARCH $toolRule'
+          : 'Attachment system NO_WEB_SEARCH $toolRule';
     }
     return path;
   }

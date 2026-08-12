@@ -68,12 +68,14 @@ void main() {
       expect(receivedImages, [image]);
       expect(receivedUserMessage, contains('chart.png'));
       expect(receivedSystemPrompt, contains('Direct attachment mode'));
+      expect(receivedSystemPrompt, contains('不要执行本地知识库检索或联网搜索'));
       expect(receivedUserMessage, isNot(contains('Knowledge context')));
     },
   );
 
   test('text attachments also bypass retrieval and web search', () async {
     String? receivedUserMessage;
+    String? receivedSystemPrompt;
     final service = RagConversationService(
       retrieve: (_, _) async => fail('attachments must not enter retrieval'),
       complete:
@@ -93,6 +95,7 @@ void main() {
             int maxTokens = 800,
           }) async* {
             receivedUserMessage = userMessage;
+            receivedSystemPrompt = systemPrompt;
             yield 'The file contains release notes.';
           },
       saveLog: (_) async {},
@@ -117,6 +120,7 @@ void main() {
     expect(result.method, 'attachment');
     expect(result.answer, 'The file contains release notes.');
     expect(receivedUserMessage, contains('Release 2.1.21 fixes chat.'));
+    expect(receivedSystemPrompt, contains('不要执行本地知识库检索或联网搜索'));
   });
 }
 
@@ -125,7 +129,8 @@ class _AttachmentPromptService extends PromptService {
   Future<String> load(String path, [Map<String, String>? vars]) async {
     return switch (path) {
       'chat/attachments_direct_system.txt' =>
-        'Direct attachment mode. ${vars?['lengthRule'] ?? ''}',
+        'Direct attachment mode. ${vars?['toolRule'] ?? ''} '
+            '${vars?['lengthRule'] ?? ''}',
       'chat/length_concise.txt' => 'Be concise.',
       'chat/attachments.txt' => 'Attachments:\n${vars?['attachments'] ?? ''}',
       _ => path,

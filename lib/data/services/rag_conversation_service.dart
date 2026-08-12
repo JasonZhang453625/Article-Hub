@@ -640,6 +640,10 @@ class RagConversationService {
   }) async {
     const method = 'attachment';
     try {
+      final usesAgentCompletion =
+          _agentRunStream != null ||
+          request.imageInputs.isEmpty && _agentCompleteStream != null;
+      final agentCanSearch = request.webSearch && usesAgentCompletion;
       final lengthRulePath = request.detailedAnswer
           ? 'chat/length_detailed.txt'
           : 'chat/length_concise.txt';
@@ -650,6 +654,9 @@ class RagConversationService {
             'langHint': request.languageHint.isEmpty
                 ? ''
                 : '\n${request.languageHint}',
+            'toolRule': agentCanSearch
+                ? '- 不要执行本地知识库检索。当用户问题需要当前、变动、小众或明确要求的网络信息时，可以使用服务端 web_search；搜索结果必须用 [w1]、[w2] …引用，不得编造引用。'
+                : '- 不要执行本地知识库检索或联网搜索，也不要声称使用了未提供给你的资料。',
           });
       final attachmentBlock = await _prompts.load('chat/attachments.txt', {
         'attachments': request.attachmentContext.trim().isEmpty
@@ -691,9 +698,6 @@ class RagConversationService {
         maxOutputTokens: maxTokens,
         contextWindowTokens: effectiveContextWindow,
       );
-      final usesAgentCompletion =
-          _agentRunStream != null ||
-          request.imageInputs.isEmpty && _agentCompleteStream != null;
       final response = await _completeWithProgress(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
