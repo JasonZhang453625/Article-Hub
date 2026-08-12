@@ -907,7 +907,10 @@ void main() {
       tester.element(find.byType(ChatScreen)),
     );
     await container.read(chatSessionsProvider.notifier).deleteThread(thread.id);
-    expect(repository.getPendingThreadDeletions(), isEmpty);
+    final pendingDeletion = repository.getPendingThreadDeletions().single;
+    expect(pendingDeletion.aiRunIdsToCancel, isEmpty);
+    expect(pendingDeletion.aiRunLookups, hasLength(1));
+    expect(pendingDeletion.aiRunLookups.single.ownerUserId, 'user-1');
 
     hostedAgent.allowRunCreation();
     await pumpUntil(tester, () => hostedAgent.runCreated.isCompleted);
@@ -957,6 +960,9 @@ class _GatedHostedAgentService extends HostedAgentService {
 
   @override
   bool get isConfigured => true;
+
+  @override
+  String? get currentUserId => 'user-1';
 
   void complete() => _gate.complete();
 
@@ -1009,6 +1015,9 @@ class _TransportInterruptedHostedAgentService extends HostedAgentService {
 
   @override
   bool get isConfigured => true;
+
+  @override
+  String? get currentUserId => 'user-1';
 
   void completeResume() => _resumeGate.complete();
 
@@ -1147,6 +1156,9 @@ class _PreCreateGatedHostedAgentService extends HostedAgentService {
 
   @override
   bool get isConfigured => true;
+
+  @override
+  String? get currentUserId => 'user-1';
 
   void allowRunCreation() {
     if (!_allowRunCreation.isCompleted) _allowRunCreation.complete();
@@ -1344,15 +1356,37 @@ class _InMemoryChatRepository implements ChatRepository {
   }
 
   @override
+  Future<ChatMessageRecord?> markAiRunCreateStarted({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        current.status != ChatMessageStatus.sending ||
+        current.aiRunId != null ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        (current.aiRunOwnerUserId != null &&
+            current.aiRunOwnerUserId != ownerUserId)) {
+      return null;
+    }
+    final updated = current.copyWith(aiRunOwnerUserId: ownerUserId);
+    await putMessage(updated);
+    return updated;
+  }
+
+  @override
   Future<ChatMessageRecord?> attachAiRunToPendingMessage({
     required String messageId,
     required String? expectedRequestKey,
+    required String? expectedOwnerUserId,
     required String runId,
   }) async {
     final current = _messages[messageId];
     if (current == null ||
         !_threads.containsKey(current.threadId) ||
         current.aiRunRequestKey != expectedRequestKey ||
+        current.aiRunOwnerUserId != expectedOwnerUserId ||
         (current.status != ChatMessageStatus.sending &&
             current.errorCode != 'hosted_cancel_requested')) {
       return null;
@@ -1363,6 +1397,29 @@ class _InMemoryChatRepository implements ChatRepository {
     } on StateError {
       return null;
     }
+    return updated;
+  }
+
+  @override
+  Future<ChatMessageRecord?> completeAiRunReconciliationNotFound({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        current.aiRunId != null ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        current.aiRunOwnerUserId != ownerUserId) {
+      return null;
+    }
+    final updated = current.copyWith(
+      status: ChatMessageStatus.interrupted,
+      errorCode: current.errorCode == 'hosted_cancel_requested'
+          ? 'hosted_run_cancelled'
+          : 'hosted_run_not_found',
+    );
+    _messages[messageId] = updated;
     return updated;
   }
 
@@ -1422,6 +1479,7 @@ class _InMemoryChatRepository implements ChatRepository {
       threadId: threadId,
       attachmentIds: existing?.attachmentIds ?? const [],
       aiRunIdsToCancel: runIds,
+      aiRunLookups: existing?.aiRunLookups ?? const [],
       dataDeleted: true,
       revision: (existing?.revision ?? 0) + 1,
     );
@@ -1441,6 +1499,35 @@ class _InMemoryChatRepository implements ChatRepository {
       attachmentIds: existing.attachmentIds,
       aiRunIdsToCancel: existing.aiRunIdsToCancel
           .where((id) => id != runId)
+          .toList(),
+      aiRunLookups: existing.aiRunLookups,
+      dataDeleted: existing.dataDeleted,
+      revision: existing.revision + 1,
+      canAcknowledge: existing.canAcknowledge,
+    );
+    _deletions[threadId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<PendingChatThreadDeletion?> resolveAiRunLookup(
+    String threadId, {
+    required String ownerUserId,
+    required String requestKey,
+    String? runId,
+  }) async {
+    final existing = _deletions[threadId];
+    if (existing == null) return null;
+    final updated = PendingChatThreadDeletion(
+      threadId: threadId,
+      attachmentIds: existing.attachmentIds,
+      aiRunIdsToCancel: {...existing.aiRunIdsToCancel, ?runId}.toList(),
+      aiRunLookups: existing.aiRunLookups
+          .where(
+            (item) =>
+                item.ownerUserId != ownerUserId ||
+                item.requestKey != requestKey,
+          )
           .toList(),
       dataDeleted: existing.dataDeleted,
       revision: existing.revision + 1,
@@ -1473,11 +1560,29 @@ class _InMemoryChatRepository implements ChatRepository {
             .toSet()
             .toList()
           ..sort();
+    final lookups = _messages.values
+        .where(
+          (message) =>
+              message.threadId == id &&
+              message.aiRunId == null &&
+              message.aiRunOwnerUserId != null &&
+              message.aiRunRequestKey != null &&
+              (message.status == ChatMessageStatus.sending ||
+                  message.errorCode == 'hosted_cancel_requested'),
+        )
+        .map(
+          (message) => PendingAiRunLookup(
+            ownerUserId: message.aiRunOwnerUserId!,
+            requestKey: message.aiRunRequestKey!,
+          ),
+        )
+        .toList();
     _threads.remove(id);
     _messages.removeWhere((_, message) => message.threadId == id);
     final deletion = PendingChatThreadDeletion(
       threadId: id,
       aiRunIdsToCancel: runIds,
+      aiRunLookups: lookups,
       dataDeleted: true,
       revision: 1,
     );

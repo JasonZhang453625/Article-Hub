@@ -43,6 +43,14 @@ class ChatMessageRecord {
   /// attempt reuses this value, while an explicit user retry creates a new one.
   final String? aiRunRequestKey;
 
+  /// Account that authorized the concrete hosted Agent create attempt.
+  ///
+  /// This is written before `POST /ai/runs`. Together with
+  /// [aiRunRequestKey], it lets a later process safely reconcile a create
+  /// whose 202 response may have been lost. A different signed-in account
+  /// must never use this key for lookup.
+  final String? aiRunOwnerUserId;
+
   /// Files owned by this message. User messages may have attachments;
   /// assistant messages normally keep this empty.
   final List<ChatAttachment> attachments;
@@ -57,6 +65,13 @@ class ChatMessageRecord {
   final String? attachmentContext;
 
   final bool attachmentContextIncludesImages;
+
+  bool get hasUnresolvedAiRunCreate =>
+      aiRunId == null &&
+      aiRunOwnerUserId?.trim().isNotEmpty == true &&
+      aiRunRequestKey?.trim().isNotEmpty == true &&
+      (status == ChatMessageStatus.sending ||
+          errorCode == 'hosted_cancel_requested');
 
   const ChatMessageRecord({
     required this.id,
@@ -77,6 +92,7 @@ class ChatMessageRecord {
     this.aiRunId,
     this.aiRunEventSeq,
     this.aiRunRequestKey,
+    this.aiRunOwnerUserId,
     this.attachments = const [],
     this.attachmentIdsForCleanup = const [],
     this.attachmentContext,
@@ -98,6 +114,7 @@ class ChatMessageRecord {
     String? aiRunId,
     int? aiRunEventSeq,
     String? aiRunRequestKey,
+    String? aiRunOwnerUserId,
     List<ChatAttachment>? attachments,
     List<String>? attachmentIdsForCleanup,
     String? attachmentContext,
@@ -122,6 +139,7 @@ class ChatMessageRecord {
       aiRunId: aiRunId ?? this.aiRunId,
       aiRunEventSeq: aiRunEventSeq ?? this.aiRunEventSeq,
       aiRunRequestKey: aiRunRequestKey ?? this.aiRunRequestKey,
+      aiRunOwnerUserId: aiRunOwnerUserId ?? this.aiRunOwnerUserId,
       attachments: attachments ?? this.attachments,
       attachmentIdsForCleanup:
           attachmentIdsForCleanup ?? this.attachmentIdsForCleanup,
@@ -137,6 +155,11 @@ class ChatMessageRecord {
   /// and prevents stale citations, feedback, or provider metadata from being
   /// shown while the new answer is being generated.
   ChatMessageRecord retrying({required String aiRunRequestKey}) {
+    if (hasUnresolvedAiRunCreate) {
+      throw StateError(
+        'Cannot retry while a hosted Agent create is unresolved.',
+      );
+    }
     return ChatMessageRecord(
       id: id,
       threadId: threadId,
@@ -148,6 +171,7 @@ class ChatMessageRecord {
       aiRunId: null,
       aiRunEventSeq: null,
       aiRunRequestKey: aiRunRequestKey,
+      aiRunOwnerUserId: null,
       attachmentIdsForCleanup: attachmentIdsForCleanup,
     );
   }
@@ -186,13 +210,14 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       attachmentContext: fields[18] as String?,
       attachmentContextIncludesImages: fields[19] as bool? ?? false,
       aiRunRequestKey: fields[20] as String?,
+      aiRunOwnerUserId: fields[22] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(22)
+      ..writeByte(23)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -241,7 +266,9 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
           obj.attachments.map((attachment) => attachment.toJson()).toList(),
           obj.attachmentIdsForCleanup,
         ),
-      );
+      )
+      ..writeByte(22)
+      ..write(obj.aiRunOwnerUserId);
   }
 }
 

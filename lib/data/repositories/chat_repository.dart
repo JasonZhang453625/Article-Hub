@@ -4,10 +4,23 @@ import '../models/chat_attachment.dart';
 import '../models/chat_message_record.dart';
 import '../models/chat_thread.dart';
 
+class PendingAiRunLookup {
+  final String ownerUserId;
+  final String requestKey;
+
+  const PendingAiRunLookup({
+    required this.ownerUserId,
+    required this.requestKey,
+  });
+
+  String get identity => '$ownerUserId\u0000$requestKey';
+}
+
 class PendingChatThreadDeletion {
   final String threadId;
   final List<String> attachmentIds;
   final List<String> aiRunIdsToCancel;
+  final List<PendingAiRunLookup> aiRunLookups;
   final bool dataDeleted;
   final int revision;
   final bool canAcknowledge;
@@ -16,6 +29,7 @@ class PendingChatThreadDeletion {
     required this.threadId,
     this.attachmentIds = const [],
     this.aiRunIdsToCancel = const [],
+    this.aiRunLookups = const [],
     this.dataDeleted = false,
     this.revision = 0,
     this.canAcknowledge = true,
@@ -48,13 +62,31 @@ abstract class ChatRepository {
 
   Future<void> putMessage(ChatMessageRecord message);
 
+  /// Atomically records the account that is about to authorize this attempt.
+  /// A null result means the local attempt was already superseded, stopped,
+  /// deleted, or owned by another account, so no create request may be sent.
+  Future<ChatMessageRecord?> markAiRunCreateStarted({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  });
+
   /// Atomically binds a newly-created server run to the still-current local
   /// generation attempt. Returning null means the message was deleted,
   /// retried, or otherwise superseded and the caller must cancel [runId].
   Future<ChatMessageRecord?> attachAiRunToPendingMessage({
     required String messageId,
     required String? expectedRequestKey,
+    required String? expectedOwnerUserId,
     required String runId,
+  });
+
+  /// Completes an ambiguous attempt only after repeated read-only lookups
+  /// proved that the backend has no run for its idempotency key.
+  Future<ChatMessageRecord?> completeAiRunReconciliationNotFound({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
   });
 
   /// Atomically records local Stop intent while preserving a run id that may
@@ -88,6 +120,15 @@ abstract class ChatRepository {
     String threadId,
     String runId,
   );
+
+  /// Resolves one deleted-thread idempotency lookup. If [runId] is present it
+  /// is atomically moved into the durable cancellation set.
+  Future<PendingChatThreadDeletion?> resolveAiRunLookup(
+    String threadId, {
+    required String ownerUserId,
+    required String requestKey,
+    String? runId,
+  });
 
   Future<void> completeThreadDeletion(
     String id, {
@@ -207,9 +248,41 @@ class HiveChatRepository implements ChatRepository {
   }
 
   @override
+  Future<ChatMessageRecord?> markAiRunCreateStarted({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  }) {
+    return _serializeThreadMutation<ChatMessageRecord?>(() async {
+      final normalizedKey = _normalizeLookupValue(expectedRequestKey);
+      final normalizedOwner = _normalizeLookupValue(ownerUserId);
+      if (normalizedKey == null || normalizedOwner == null) return null;
+      final messages = _requireMessages();
+      final current = messages.get(messageId);
+      if (current == null ||
+          _isThreadTombstoned(current.threadId) ||
+          _requireThreads().get(current.threadId) == null ||
+          current.role != ChatMessageRole.assistant ||
+          current.status != ChatMessageStatus.sending ||
+          current.errorCode == 'hosted_cancel_requested' ||
+          current.aiRunId != null ||
+          current.aiRunRequestKey != normalizedKey ||
+          (current.aiRunOwnerUserId != null &&
+              current.aiRunOwnerUserId != normalizedOwner)) {
+        return null;
+      }
+      if (current.aiRunOwnerUserId == normalizedOwner) return current;
+      final updated = current.copyWith(aiRunOwnerUserId: normalizedOwner);
+      await messages.put(messageId, updated);
+      return updated;
+    });
+  }
+
+  @override
   Future<ChatMessageRecord?> attachAiRunToPendingMessage({
     required String messageId,
     required String? expectedRequestKey,
+    required String? expectedOwnerUserId,
     required String runId,
   }) {
     return _serializeThreadMutation<ChatMessageRecord?>(() async {
@@ -230,6 +303,7 @@ class HiveChatRepository implements ChatRepository {
           (current.status != ChatMessageStatus.sending &&
               current.errorCode != 'hosted_cancel_requested') ||
           current.aiRunRequestKey != expectedRequestKey ||
+          current.aiRunOwnerUserId != expectedOwnerUserId ||
           (current.aiRunId != null && current.aiRunId != normalizedRunId)) {
         return null;
       }
@@ -237,6 +311,36 @@ class HiveChatRepository implements ChatRepository {
       final updated = current.copyWith(
         aiRunId: normalizedRunId,
         aiRunEventSeq: 0,
+      );
+      await messages.put(messageId, updated);
+      return updated;
+    });
+  }
+
+  @override
+  Future<ChatMessageRecord?> completeAiRunReconciliationNotFound({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  }) {
+    return _serializeThreadMutation<ChatMessageRecord?>(() async {
+      final messages = _requireMessages();
+      final current = messages.get(messageId);
+      if (current == null ||
+          _isThreadTombstoned(current.threadId) ||
+          _requireThreads().get(current.threadId) == null ||
+          current.role != ChatMessageRole.assistant ||
+          current.aiRunId != null ||
+          current.aiRunRequestKey != expectedRequestKey ||
+          current.aiRunOwnerUserId != ownerUserId ||
+          (current.status != ChatMessageStatus.sending &&
+              current.errorCode != 'hosted_cancel_requested')) {
+        return null;
+      }
+      final stopped = current.errorCode == 'hosted_cancel_requested';
+      final updated = current.copyWith(
+        status: ChatMessageStatus.interrupted,
+        errorCode: stopped ? 'hosted_run_cancelled' : 'hosted_run_not_found',
       );
       await messages.put(messageId, updated);
       return updated;
@@ -362,6 +466,7 @@ class HiveChatRepository implements ChatRepository {
           threadId: threadId,
           attachmentIds: current.attachmentIds,
           aiRunIdsToCancel: _sortedAiRunIds(runIds),
+          aiRunLookups: current.aiRunLookups,
           dataDeleted: current.dataDeleted,
           revision: revision,
           canAcknowledge: false,
@@ -371,6 +476,7 @@ class HiveChatRepository implements ChatRepository {
         threadId: threadId,
         attachmentIds: current.attachmentIds,
         aiRunIdsToCancel: _sortedAiRunIds(runIds),
+        aiRunLookups: current.aiRunLookups,
         dataDeleted: current.dataDeleted,
         revision: revision,
         canAcknowledge: true,
@@ -381,6 +487,7 @@ class HiveChatRepository implements ChatRepository {
           threadId: threadId,
           attachmentIds: updated.attachmentIds,
           aiRunIdsToCancel: updated.aiRunIdsToCancel,
+          aiRunLookups: updated.aiRunLookups,
           dataDeleted: updated.dataDeleted,
           revision: updated.revision,
           canAcknowledge: true,
@@ -409,6 +516,7 @@ class HiveChatRepository implements ChatRepository {
         threadId: threadId,
         attachmentIds: current.attachmentIds,
         aiRunIdsToCancel: _sortedAiRunIds(runIds),
+        aiRunLookups: current.aiRunLookups,
         dataDeleted: current.dataDeleted,
         revision: current.revision + 1,
         canAcknowledge: true,
@@ -419,9 +527,65 @@ class HiveChatRepository implements ChatRepository {
           threadId: threadId,
           attachmentIds: updated.attachmentIds,
           aiRunIdsToCancel: updated.aiRunIdsToCancel,
+          aiRunLookups: updated.aiRunLookups,
           dataDeleted: updated.dataDeleted,
           revision: updated.revision,
           canAcknowledge: true,
+        ),
+      );
+      return updated;
+    });
+  }
+
+  @override
+  Future<PendingChatThreadDeletion?> resolveAiRunLookup(
+    String threadId, {
+    required String ownerUserId,
+    required String requestKey,
+    String? runId,
+  }) {
+    return _serializeThreadMutation<PendingChatThreadDeletion?>(() async {
+      final normalizedOwner = _normalizeLookupValue(ownerUserId);
+      final normalizedKey = _normalizeLookupValue(requestKey);
+      final normalizedRunId = runId == null ? null : _normalizeAiRunId(runId);
+      if (normalizedOwner == null ||
+          normalizedKey == null ||
+          (runId != null && normalizedRunId == null)) {
+        return null;
+      }
+      final deletions = _requireDeletions();
+      final raw = deletions.get(threadId);
+      if (raw == null) return null;
+      final current = _decodeDeletionRecord(threadId, raw);
+      if (!current.canAcknowledge) return current;
+      final identity = '$normalizedOwner\u0000$normalizedKey';
+      if (!current.aiRunLookups.any((item) => item.identity == identity)) {
+        return current;
+      }
+      final lookups = current.aiRunLookups
+          .where((item) => item.identity != identity)
+          .toList(growable: false);
+      final runIds = current.aiRunIdsToCancel.toSet();
+      if (normalizedRunId != null) runIds.add(normalizedRunId);
+      final updated = PendingChatThreadDeletion(
+        threadId: threadId,
+        attachmentIds: current.attachmentIds,
+        aiRunIdsToCancel: _sortedAiRunIds(runIds),
+        aiRunLookups: _sortedAiRunLookups(lookups),
+        dataDeleted: current.dataDeleted,
+        revision: current.revision + 1,
+        canAcknowledge: current.canAcknowledge,
+      );
+      await deletions.put(
+        threadId,
+        _encodeDeletionRecord(
+          threadId: threadId,
+          attachmentIds: updated.attachmentIds,
+          aiRunIdsToCancel: updated.aiRunIdsToCancel,
+          aiRunLookups: updated.aiRunLookups,
+          dataDeleted: updated.dataDeleted,
+          revision: updated.revision,
+          canAcknowledge: updated.canAcknowledge,
         ),
       );
       return updated;
@@ -440,7 +604,8 @@ class HiveChatRepository implements ChatRepository {
       final current = _decodeDeletionRecord(id, raw);
       if (!current.dataDeleted ||
           !current.canAcknowledge ||
-          current.aiRunIdsToCancel.isNotEmpty) {
+          current.aiRunIdsToCancel.isNotEmpty ||
+          current.aiRunLookups.isNotEmpty) {
         throw StateError('Chat thread deletion is not safe to acknowledge.');
       }
       if (current.revision != expectedRevision) {
@@ -488,6 +653,9 @@ class HiveChatRepository implements ChatRepository {
     final deletions = _requireDeletions();
     final attachmentIds = existing.attachmentIds.toSet();
     final aiRunIdsToCancel = existing.aiRunIdsToCancel.toSet();
+    final aiRunLookups = {
+      for (final lookup in existing.aiRunLookups) lookup.identity: lookup,
+    };
 
     void capture(Iterable<ChatMessageRecord> source) {
       for (final message in source) {
@@ -501,6 +669,8 @@ class HiveChatRepository implements ChatRepository {
         );
         final runId = _runIdRequiringCancellation(message);
         if (runId != null) aiRunIdsToCancel.add(runId);
+        final lookup = _lookupRequiringReconciliation(message);
+        if (lookup != null) aiRunLookups[lookup.identity] = lookup;
       }
     }
 
@@ -510,7 +680,8 @@ class HiveChatRepository implements ChatRepository {
         ..['dataDeleted'] = dataDeleted
         ..['canAcknowledge'] = false
         ..['recoveredAttachmentIds'] = _sortedAttachmentIds(attachmentIds)
-        ..['recoveredAiRunIdsToCancel'] = _sortedAiRunIds(aiRunIdsToCancel);
+        ..['recoveredAiRunIdsToCancel'] = _sortedAiRunIds(aiRunIdsToCancel)
+        ..['recoveredAiRunLookups'] = _encodeAiRunLookups(aiRunLookups.values);
       return deletions.put(id, quarantined);
     }
 
@@ -533,6 +704,7 @@ class HiveChatRepository implements ChatRepository {
       threadId: id,
       attachmentIds: _sortedAttachmentIds(attachmentIds),
       aiRunIdsToCancel: _sortedAiRunIds(aiRunIdsToCancel),
+      aiRunLookups: _sortedAiRunLookups(aiRunLookups.values),
       dataDeleted: true,
       revision: existing.revision,
       canAcknowledge: false,
@@ -549,6 +721,9 @@ class HiveChatRepository implements ChatRepository {
         : _decodeDeletionRecord(id, existingRaw);
     final attachmentIds = existing.attachmentIds.toSet();
     final aiRunIdsToCancel = existing.aiRunIdsToCancel.toSet();
+    final aiRunLookups = {
+      for (final lookup in existing.aiRunLookups) lookup.identity: lookup,
+    };
     var canAcknowledge = existing.canAcknowledge;
 
     void captureCleanupIds(Iterable<ChatMessageRecord> source) {
@@ -575,6 +750,8 @@ class HiveChatRepository implements ChatRepository {
             rawRunId != null) {
           canAcknowledge = false;
         }
+        final lookup = _lookupRequiringReconciliation(message);
+        if (lookup != null) aiRunLookups[lookup.identity] = lookup;
       }
     }
 
@@ -593,6 +770,7 @@ class HiveChatRepository implements ChatRepository {
         threadId: id,
         attachmentIds: attachmentIds,
         aiRunIdsToCancel: aiRunIdsToCancel,
+        aiRunLookups: aiRunLookups.values,
         dataDeleted: false,
         revision: revision,
         canAcknowledge: canAcknowledge,
@@ -617,6 +795,7 @@ class HiveChatRepository implements ChatRepository {
         threadId: id,
         attachmentIds: attachmentIds,
         aiRunIdsToCancel: aiRunIdsToCancel,
+        aiRunLookups: aiRunLookups.values,
         dataDeleted: false,
         revision: revision,
         canAcknowledge: canAcknowledge,
@@ -631,6 +810,7 @@ class HiveChatRepository implements ChatRepository {
       threadId: id,
       attachmentIds: _sortedAttachmentIds(attachmentIds),
       aiRunIdsToCancel: _sortedAiRunIds(aiRunIdsToCancel),
+      aiRunLookups: _sortedAiRunLookups(aiRunLookups.values),
       dataDeleted: true,
       revision: revision,
       canAcknowledge: canAcknowledge,
@@ -641,6 +821,7 @@ class HiveChatRepository implements ChatRepository {
         threadId: id,
         attachmentIds: completed.attachmentIds,
         aiRunIdsToCancel: completed.aiRunIdsToCancel,
+        aiRunLookups: completed.aiRunLookups,
         dataDeleted: true,
         revision: revision,
         canAcknowledge: canAcknowledge,
@@ -654,6 +835,7 @@ class HiveChatRepository implements ChatRepository {
     final schemaVersion = rawSchemaVersion is int ? rawSchemaVersion : null;
     final attachmentIds = <String>{};
     final aiRunIdsToCancel = <String>{};
+    final aiRunLookups = <String, PendingAiRunLookup>{};
     final rawCanAcknowledge = raw['canAcknowledge'];
     var canAcknowledge =
         (rawCanAcknowledge == null && schemaVersion == 1) ||
@@ -662,7 +844,7 @@ class HiveChatRepository implements ChatRepository {
     dynamic storedIds;
     if (schemaVersion == 1) {
       storedIds = raw['attachments'];
-    } else if (schemaVersion == 2 || schemaVersion == 3) {
+    } else if (schemaVersion == 2 || schemaVersion == 3 || schemaVersion == 4) {
       storedIds = raw['attachmentIds'];
     } else {
       canAcknowledge = false;
@@ -696,7 +878,7 @@ class HiveChatRepository implements ChatRepository {
     dynamic storedRunIds;
     if (schemaVersion == 1 || schemaVersion == 2) {
       storedRunIds = const <String>[];
-    } else if (schemaVersion == 3) {
+    } else if (schemaVersion == 3 || schemaVersion == 4) {
       storedRunIds = raw['aiRunIdsToCancel'];
     } else {
       storedRunIds = raw['aiRunIdsToCancel'];
@@ -726,9 +908,42 @@ class HiveChatRepository implements ChatRepository {
     } else if (recoveredRunIds != null) {
       canAcknowledge = false;
     }
+    dynamic storedLookups;
+    if (schemaVersion == 4) {
+      storedLookups = raw['aiRunLookups'];
+    } else if (schemaVersion == 1 || schemaVersion == 2 || schemaVersion == 3) {
+      storedLookups = const <dynamic>[];
+    } else {
+      storedLookups = raw['aiRunLookups'];
+    }
+    if (storedLookups is! List) {
+      canAcknowledge = false;
+    } else {
+      for (final item in storedLookups) {
+        final lookup = _decodeAiRunLookup(item);
+        if (lookup == null) {
+          canAcknowledge = false;
+        } else {
+          aiRunLookups[lookup.identity] = lookup;
+        }
+      }
+    }
+    final recoveredLookups = raw['recoveredAiRunLookups'];
+    if (recoveredLookups is List) {
+      for (final item in recoveredLookups) {
+        final lookup = _decodeAiRunLookup(item);
+        if (lookup == null) {
+          canAcknowledge = false;
+        } else {
+          aiRunLookups[lookup.identity] = lookup;
+        }
+      }
+    } else if (recoveredLookups != null) {
+      canAcknowledge = false;
+    }
     final rawRevision = raw['revision'];
     final revision = rawRevision is int ? rawRevision : 0;
-    if ((schemaVersion == 2 || schemaVersion == 3) &&
+    if ((schemaVersion == 2 || schemaVersion == 3 || schemaVersion == 4) &&
         (rawRevision is! int || revision < 0 || rawCanAcknowledge is! bool)) {
       canAcknowledge = false;
     }
@@ -736,6 +951,7 @@ class HiveChatRepository implements ChatRepository {
       threadId: id,
       attachmentIds: _sortedAttachmentIds(attachmentIds),
       aiRunIdsToCancel: _sortedAiRunIds(aiRunIdsToCancel),
+      aiRunLookups: _sortedAiRunLookups(aiRunLookups.values),
       dataDeleted: raw['dataDeleted'] == true,
       revision: revision,
       canAcknowledge: canAcknowledge,
@@ -746,18 +962,20 @@ class HiveChatRepository implements ChatRepository {
     required String threadId,
     required Iterable<String> attachmentIds,
     required Iterable<String> aiRunIdsToCancel,
+    required Iterable<PendingAiRunLookup> aiRunLookups,
     required bool dataDeleted,
     required int revision,
     required bool canAcknowledge,
   }) {
     return {
-      'schemaVersion': 3,
+      'schemaVersion': 4,
       'threadId': threadId,
       'dataDeleted': dataDeleted,
       'revision': revision,
       'canAcknowledge': canAcknowledge,
       'attachmentIds': _sortedAttachmentIds(attachmentIds),
       'aiRunIdsToCancel': _sortedAiRunIds(aiRunIdsToCancel),
+      'aiRunLookups': _encodeAiRunLookups(aiRunLookups),
     };
   }
 
@@ -771,6 +989,38 @@ class HiveChatRepository implements ChatRepository {
     return List.unmodifiable(result);
   }
 
+  List<PendingAiRunLookup> _sortedAiRunLookups(
+    Iterable<PendingAiRunLookup> values,
+  ) {
+    final unique = <String, PendingAiRunLookup>{
+      for (final value in values) value.identity: value,
+    };
+    final result = unique.values.toList()
+      ..sort((a, b) => a.identity.compareTo(b.identity));
+    return List.unmodifiable(result);
+  }
+
+  List<Map<String, String>> _encodeAiRunLookups(
+    Iterable<PendingAiRunLookup> values,
+  ) {
+    return _sortedAiRunLookups(values)
+        .map(
+          (lookup) => {
+            'ownerUserId': lookup.ownerUserId,
+            'requestKey': lookup.requestKey,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  PendingAiRunLookup? _decodeAiRunLookup(dynamic value) {
+    if (value is! Map) return null;
+    final owner = _normalizeLookupValue(value['ownerUserId']);
+    final key = _normalizeLookupValue(value['requestKey']);
+    if (owner == null || key == null) return null;
+    return PendingAiRunLookup(ownerUserId: owner, requestKey: key);
+  }
+
   bool _messageMayNeedRunCancellation(ChatMessageRecord message) {
     return message.role == ChatMessageRole.assistant &&
         (message.status == ChatMessageStatus.sending ||
@@ -780,6 +1030,25 @@ class HiveChatRepository implements ChatRepository {
   String? _runIdRequiringCancellation(ChatMessageRecord message) {
     if (!_messageMayNeedRunCancellation(message)) return null;
     return _normalizeAiRunId(message.aiRunId);
+  }
+
+  PendingAiRunLookup? _lookupRequiringReconciliation(
+    ChatMessageRecord message,
+  ) {
+    if (!_messageMayNeedRunCancellation(message) || message.aiRunId != null) {
+      return null;
+    }
+    final owner = _normalizeLookupValue(message.aiRunOwnerUserId);
+    final key = _normalizeLookupValue(message.aiRunRequestKey);
+    if (owner == null || key == null) return null;
+    return PendingAiRunLookup(ownerUserId: owner, requestKey: key);
+  }
+
+  String? _normalizeLookupValue(dynamic value) {
+    if (value is! String) return null;
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized.length > 200) return null;
+    return normalized;
   }
 
   String? _normalizeAiRunId(dynamic value) {

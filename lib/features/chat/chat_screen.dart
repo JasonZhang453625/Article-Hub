@@ -366,7 +366,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final record = _findMessage(chatState.messages, message.id);
     if (record == null ||
         record.role != ChatMessageRole.assistant ||
-        record.errorCode == 'hosted_cancel_requested') {
+        record.errorCode == 'hosted_cancel_requested' ||
+        record.hasUnresolvedAiRunCreate) {
       return;
     }
     final recordIndex = chatState.messages.indexOf(record);
@@ -477,7 +478,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         )
         .toList();
 
-    final usesHostedAgent = ref.read(hostedAgentServiceProvider) != null;
+    final hostedAgentForCreate = ref.read(hostedAgentServiceProvider);
+    final usesHostedAgent = hostedAgentForCreate != null;
     final agentImageCapabilities = usesHostedAgent
         ? ref.read(hostedAgentImageInputCapabilitiesProvider)
         : null;
@@ -669,6 +671,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await _finishUnstartedCancellation(runControl);
       return;
     }
+    String? hostedRunOwnerUserId;
+    if (usesHostedAgent) {
+      final requestKey = pending.aiRunRequestKey;
+      final ownerUserId = hostedAgentForCreate.currentUserId;
+      if (requestKey == null || ownerUserId == null) {
+        await finish(
+          pending.copyWith(
+            content: localizedAiErrorMessage(s, 'Sign in to use hosted AI.'),
+            status: ChatMessageStatus.failed,
+            errorCode: 'hosted_auth_unavailable',
+          ),
+        );
+        return;
+      }
+      final marked = await sessions.markServerRunCreateStarted(
+        messageId: pending.id,
+        expectedRequestKey: requestKey,
+        ownerUserId: ownerUserId,
+      );
+      if (marked == null) {
+        // Stop, delete, or a newer retry won the repository CAS. Sending a
+        // create now could only produce an orphan owned by the old attempt.
+        return;
+      }
+      activePending = marked;
+      hostedRunOwnerUserId = ownerUserId;
+    }
+    if (runControl.cancelRequested || runId != _answerRunId) {
+      await _finishUnstartedCancellation(runControl);
+      return;
+    }
     runControl.durableRunExpected = usesHostedAgent;
     runControl.agentRequestStarted = true;
 
@@ -695,6 +728,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           final attached = await sessions.attachServerRun(
             messageId: pending.id,
             expectedRequestKey: pending.aiRunRequestKey,
+            expectedOwnerUserId: hostedRunOwnerUserId,
             runId: serverRunId,
           );
           if (attached == null) {
@@ -707,6 +741,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 await sessions.queueDeletedThreadRunCancellation(
                   threadId: pending.threadId,
                   runId: serverRunId,
+                  ownerUserId: hostedRunOwnerUserId,
+                  requestKey: pending.aiRunRequestKey,
                 );
               } else {
                 await ref.read(hostedAgentRunCancellerProvider)(serverRunId);
@@ -871,7 +907,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     try {
       final sessions = ref.read(chatSessionsProvider.notifier);
       await sessions.retryPendingRunCancellations();
-      final pending = await sessions.pendingServerMessages();
+      recoveryFailed = await sessions.reconcileAmbiguousServerRuns(
+        ownerUserId: hostedAgent.currentUserId,
+      );
+      final pending = await sessions.pendingServerMessages(
+        ownerUserId: hostedAgent.currentUserId,
+      );
       for (final message in pending) {
         final runId = message.aiRunId;
         if (!mounted ||
@@ -1162,6 +1203,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         expectedRequestKey: control.requestKey,
         runId: serverRunId,
       );
+      return;
+    }
+    if (control.durableRunExpected && control.agentRequestStarted) {
+      // The create transport ended without proving whether the backend
+      // committed the stable key. Keep `hosted_cancel_requested`; startup or
+      // lifecycle reconciliation will GET by key and either cancel the found
+      // run or complete Stop after repeated 404s.
       return;
     }
     await sessions.completeUncreatedRunCancellation(
@@ -1461,7 +1509,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         expectedRequestKey: control.requestKey,
       );
     }
-    await sessions.deleteThread(threadId);
+    await sessions.deleteThread(
+      threadId,
+      ownerUserId: ref.read(hostedAgentServiceProvider)?.currentUserId,
+    );
   }
 
   @override

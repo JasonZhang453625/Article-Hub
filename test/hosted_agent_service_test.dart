@@ -1240,6 +1240,156 @@ void main() {
     },
   );
 
+  test(
+    'reconciles a create with GET and the exact idempotency header',
+    () async {
+      final session = _session(_jwt('lookup'));
+      var requests = 0;
+      final client = MockClient.streaming((request, _) async {
+        requests++;
+        expect(request.method, 'GET');
+        expect(request.url.path, '/ai/runs');
+        expect(request.headers['idempotency-key'], 'attempt-lookup-1');
+        expect(
+          request.headers['authorization'],
+          'Bearer ${session.accessToken}',
+        );
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-lookup-1","status":"running"}'),
+          ),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final control = HostedAgentControlService(
+        getSession: () => session,
+        refreshSession: () async => null,
+      );
+
+      final result = await http.runWithClient(
+        () => control.lookupRunByIdempotencyKey(' attempt-lookup-1 '),
+        () => client,
+      );
+
+      expect(result.runId, 'run-lookup-1');
+      expect(result.status, 'running');
+      expect(requests, 1);
+    },
+  );
+
+  test('lookup refreshes one 401 and classifies 404 without POST', () async {
+    final old = _session(_jwt('lookup-old'));
+    final fresh = _session(_jwt('lookup-fresh'));
+    var requests = 0;
+    var refreshes = 0;
+    final client = MockClient.streaming((request, _) async {
+      requests++;
+      expect(request.method, 'GET');
+      if (requests == 1) {
+        expect(request.headers['authorization'], 'Bearer ${old.accessToken}');
+        return http.StreamedResponse(
+          Stream<List<int>>.value(utf8.encode('{"error":"expired"}')),
+          401,
+        );
+      }
+      expect(request.headers['authorization'], 'Bearer ${fresh.accessToken}');
+      return http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode('{"error":"not_found"}')),
+        404,
+      );
+    });
+    final control = HostedAgentControlService(
+      getSession: () => old,
+      refreshSession: () async {
+        refreshes++;
+        return fresh;
+      },
+    );
+
+    await expectLater(
+      http.runWithClient(
+        () => control.lookupRunByIdempotencyKey('attempt-missing'),
+        () => client,
+      ),
+      throwsA(
+        isA<HostedAgentLookupException>()
+            .having((error) => error.statusCode, 'statusCode', 404)
+            .having((error) => error.notFound, 'notFound', isTrue)
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+    expect(requests, 2);
+    expect(refreshes, 1);
+  });
+
+  test('lookup timeout remains retryable and never replays create', () async {
+    var requests = 0;
+    final client = MockClient.streaming((request, _) async {
+      requests++;
+      expect(request.method, 'GET');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      return http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode('{}')),
+        200,
+      );
+    });
+    final control = HostedAgentControlService(
+      getSession: () => _session(_jwt('lookup-timeout')),
+      refreshSession: () async => null,
+      timeout: const Duration(milliseconds: 10),
+    );
+
+    await expectLater(
+      http.runWithClient(
+        () => control.lookupRunByIdempotencyKey('attempt-timeout'),
+        () => client,
+      ),
+      throwsA(
+        isA<HostedAgentLookupException>()
+            .having((error) => error.statusCode, 'statusCode', isNull)
+            .having((error) => error.retryable, 'retryable', isTrue)
+            .having((error) => error.notFound, 'notFound', isFalse),
+      ),
+    );
+    expect(requests, 1);
+  });
+
+  test(
+    'lookup refuses an account mismatch before any network request',
+    () async {
+      var requests = 0;
+      final client = MockClient.streaming((_, _) async {
+        requests++;
+        return http.StreamedResponse(Stream<List<int>>.empty(), 500);
+      });
+      final control = HostedAgentControlService(
+        getSession: () => _session(_jwt('lookup-owner')),
+        refreshSession: () async => null,
+      );
+
+      await expectLater(
+        http.runWithClient(
+          () => control.lookupRunByIdempotencyKey(
+            'attempt-other-owner',
+            expectedOwnerUserId: 'user-2',
+          ),
+          () => client,
+        ),
+        throwsA(
+          isA<HostedAgentLookupException>()
+              .having(
+                (error) => error.accountMismatch,
+                'accountMismatch',
+                isTrue,
+              )
+              .having((error) => error.retryable, 'retryable', isFalse),
+        ),
+      );
+      expect(requests, 0);
+    },
+  );
+
   test('cancel refreshes one 401 and treats a later 404 as terminal', () async {
     final old = _session(_jwt('old'));
     final fresh = _session(_jwt('fresh'));

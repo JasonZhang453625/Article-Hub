@@ -92,6 +92,59 @@ class HostedAgentCancelException implements Exception {
   String toString() => message;
 }
 
+/// Result of the read-only idempotency lookup used after an ambiguous create.
+class HostedAgentRunLookup {
+  static const Set<String> supportedStatuses = {
+    'queued',
+    'running',
+    'waiting_client',
+    'completed',
+    'failed',
+    'cancelled',
+  };
+
+  final String runId;
+  final String status;
+
+  const HostedAgentRunLookup({required this.runId, required this.status});
+
+  factory HostedAgentRunLookup.fromJson(Map<String, dynamic> json) {
+    final runId = (json['id'] ?? json['runId'] ?? '').toString().trim();
+    final status = (json['status'] ?? '').toString().trim();
+    if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(runId) ||
+        !supportedStatuses.contains(status)) {
+      throw const FormatException(
+        'Hosted Agent returned an invalid reconciliation response.',
+      );
+    }
+    return HostedAgentRunLookup(runId: runId, status: status);
+  }
+}
+
+/// A read-only idempotency lookup failure.
+///
+/// [notFound] is deliberately separate from [retryable]. A 404 can prove
+/// absence only after the caller's short visibility backoff; transport and
+/// authentication failures must leave the local attempt pending.
+class HostedAgentLookupException implements Exception {
+  final String message;
+  final int? statusCode;
+  final bool retryable;
+  final bool notFound;
+  final bool accountMismatch;
+
+  const HostedAgentLookupException({
+    required this.message,
+    this.statusCode,
+    required this.retryable,
+    this.notFound = false,
+    this.accountMismatch = false,
+  });
+
+  @override
+  String toString() => message;
+}
+
 class HostedAgentInputException implements Exception {
   final String code;
   final String message;
@@ -120,6 +173,119 @@ class HostedAgentControlService {
     this.timeout = defaultTimeout,
   }) : _getSession = getSession,
        _refreshSession = refreshSession;
+
+  /// Finds the run owned by this account and [idempotencyKey] through the
+  /// backend's read-only `GET /ai/runs` control endpoint.
+  ///
+  /// This method never replays `POST /ai/runs`: once a create may have been
+  /// accepted, only this lookup can safely resolve the missing 202 response.
+  Future<HostedAgentRunLookup> lookupRunByIdempotencyKey(
+    String idempotencyKey, {
+    String? expectedOwnerUserId,
+  }) async {
+    final normalizedKey = idempotencyKey.trim();
+    if (normalizedKey.isEmpty || normalizedKey.length > 200) {
+      throw const HostedAgentLookupException(
+        message: 'Hosted Agent reconciliation key is invalid.',
+        retryable: false,
+      );
+    }
+
+    AuthSession? session;
+    try {
+      session = _getSession();
+      if (session == null || !session.hasValidAccessToken) {
+        session = await _refreshSession();
+      }
+    } catch (error) {
+      throw HostedAgentLookupException(
+        message: 'Hosted Agent authentication failed: $error',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+    if (session == null) {
+      throw const HostedAgentLookupException(
+        message: 'Sign in to reconcile hosted AI.',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+    if (expectedOwnerUserId != null && session.user.id != expectedOwnerUserId) {
+      throw const HostedAgentLookupException(
+        message: 'The hosted AI account does not own this pending attempt.',
+        statusCode: 401,
+        retryable: false,
+        accountMismatch: true,
+      );
+    }
+
+    var activeSession = session;
+    var refreshedAfterUnauthorized = false;
+    while (true) {
+      try {
+        return await _getRunByIdempotencyKey(activeSession, normalizedKey);
+      } on _RunHttpException catch (error) {
+        if (error.statusCode == 401 && !refreshedAfterUnauthorized) {
+          refreshedAfterUnauthorized = true;
+          AuthSession? refreshed;
+          try {
+            refreshed = await _refreshSession();
+          } catch (refreshError) {
+            throw HostedAgentLookupException(
+              message: 'Hosted Agent authentication failed: $refreshError',
+              statusCode: 401,
+              retryable: true,
+            );
+          }
+          if (refreshed != null) {
+            if (expectedOwnerUserId != null &&
+                refreshed.user.id != expectedOwnerUserId) {
+              throw const HostedAgentLookupException(
+                message:
+                    'The hosted AI account does not own this pending attempt.',
+                statusCode: 401,
+                retryable: false,
+                accountMismatch: true,
+              );
+            }
+            activeSession = refreshed;
+            continue;
+          }
+        }
+        final statusCode = error.statusCode;
+        throw HostedAgentLookupException(
+          message:
+              'HTTP $statusCode: '
+              '${HostedAgentService._responseError(error.body)}',
+          statusCode: statusCode,
+          retryable:
+              statusCode == 401 ||
+              statusCode == 408 ||
+              statusCode == 425 ||
+              statusCode == 429 ||
+              statusCode >= 500,
+          notFound: statusCode == 404,
+        );
+      } on TimeoutException {
+        throw HostedAgentLookupException(
+          message:
+              'Hosted Agent reconciliation timed out after ${timeout.inSeconds} seconds',
+          retryable: true,
+        );
+      } on http.ClientException catch (error) {
+        throw HostedAgentLookupException(
+          message: 'Hosted Agent reconciliation request failed: $error',
+          retryable: true,
+        );
+      } on FormatException catch (error) {
+        throw HostedAgentLookupException(
+          message: error.message,
+          retryable: true,
+        );
+      }
+    }
+  }
 
   /// Cancels [runId] through the backend's idempotent
   /// `POST /ai/runs/:runId/cancel` endpoint.
@@ -235,6 +401,35 @@ class HostedAgentControlService {
       client.close();
     }
   }
+
+  Future<HostedAgentRunLookup> _getRunByIdempotencyKey(
+    AuthSession session,
+    String idempotencyKey,
+  ) async {
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', BackendConfig.uri('/ai/runs'))
+        ..headers.addAll({
+          'Authorization': 'Bearer ${session.accessToken}',
+          'Accept': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        });
+      final response = await client.send(request).timeout(timeout);
+      final body = await response.stream.bytesToString().timeout(timeout);
+      if (response.statusCode != 200) {
+        throw _RunHttpException(response.statusCode, body);
+      }
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException(
+          'Hosted Agent returned invalid reconciliation JSON.',
+        );
+      }
+      return HostedAgentRunLookup.fromJson(decoded);
+    } finally {
+      client.close();
+    }
+  }
 }
 
 /// Client for a durable server-side Agent run.
@@ -266,6 +461,7 @@ class HostedAgentService {
   bool _lastRunResultWasEmpty = false;
   http.Client? _activeCreateClient;
   bool _createCancelled = false;
+  String? _boundOwnerUserId;
   AiThinkingLevel thinkingLevel;
 
   HostedAgentService({
@@ -285,6 +481,14 @@ class HostedAgentService {
 
   bool get isConfigured =>
       BackendConfig.isConfigured && model.trim().isNotEmpty;
+
+  /// Account currently backing this observer. The create coordinator stores
+  /// it before POST so a later process can scope idempotency reconciliation.
+  String? get currentUserId {
+    final owner = _getSession()?.user.id.trim();
+    if (owner == null || owner.isEmpty) return null;
+    return _boundOwnerUserId ??= owner;
+  }
 
   List<String> get lastWebUrls => lastSources
       .map((source) => source.url.trim())
@@ -327,6 +531,12 @@ class HostedAgentService {
         lastStatusCode = 401;
         return null;
       }
+    }
+    final boundOwner = _boundOwnerUserId;
+    if (boundOwner != null && session.user.id != boundOwner) {
+      lastError = 'The hosted AI account changed before the request started.';
+      lastStatusCode = 401;
+      return null;
     }
     return session;
   }
