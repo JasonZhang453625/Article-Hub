@@ -1335,17 +1335,24 @@ class _InMemoryChatRepository implements ChatRepository {
   @override
   Future<PendingChatThreadDeletion> queueAiRunCancellation(
     String threadId,
-    String runId,
-  ) async {
+    String runId, {
+    String? ownerUserId,
+  }) async {
     final existing = _deletions[threadId];
     final runIds = {...?existing?.aiRunIdsToCancel, runId}.toList()..sort();
+    final runOwners = <String, String>{
+      ...?existing?.aiRunOwnerUserIds,
+      runId: ?ownerUserId,
+    };
     final updated = PendingChatThreadDeletion(
       threadId: threadId,
       attachmentIds: existing?.attachmentIds ?? const [],
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: existing?.aiRunLookups ?? const [],
       dataDeleted: true,
       revision: (existing?.revision ?? 0) + 1,
+      canAcknowledge: (existing?.canAcknowledge ?? true) && ownerUserId != null,
     );
     _deletions[threadId] = updated;
     return updated;
@@ -1364,6 +1371,8 @@ class _InMemoryChatRepository implements ChatRepository {
       aiRunIdsToCancel: existing.aiRunIdsToCancel
           .where((id) => id != runId)
           .toList(),
+      aiRunOwnerUserIds: Map<String, String>.from(existing.aiRunOwnerUserIds)
+        ..remove(runId),
       aiRunLookups: existing.aiRunLookups,
       dataDeleted: existing.dataDeleted,
       revision: existing.revision + 1,
@@ -1386,6 +1395,7 @@ class _InMemoryChatRepository implements ChatRepository {
       threadId: threadId,
       attachmentIds: existing.attachmentIds,
       aiRunIdsToCancel: {...existing.aiRunIdsToCancel, ?runId}.toList(),
+      aiRunOwnerUserIds: {...existing.aiRunOwnerUserIds, ?runId: ownerUserId},
       aiRunLookups: existing.aiRunLookups
           .where(
             (item) =>
@@ -1424,6 +1434,18 @@ class _InMemoryChatRepository implements ChatRepository {
             .toSet()
             .toList()
           ..sort();
+    final runOwners = <String, String>{};
+    var canAcknowledge = true;
+    for (final message in _messages.values.where(
+      (message) => message.threadId == id && runIds.contains(message.aiRunId),
+    )) {
+      final owner = message.aiRunOwnerUserId;
+      if (owner == null) {
+        canAcknowledge = false;
+      } else {
+        runOwners[message.aiRunId!] = owner;
+      }
+    }
     final lookups = _messages.values
         .where(
           (message) =>
@@ -1446,9 +1468,11 @@ class _InMemoryChatRepository implements ChatRepository {
     final deletion = PendingChatThreadDeletion(
       threadId: id,
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: lookups,
       dataDeleted: true,
       revision: 1,
+      canAcknowledge: canAcknowledge,
     );
     _deletions[id] = deletion;
     return deletion;

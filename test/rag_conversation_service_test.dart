@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:memora/data/models/memory_document.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/services/prompt_service.dart';
+import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
 import 'package:memora/data/services/retrieval_log_service.dart';
 import 'package:memora/data/services/retrieval_service.dart';
@@ -731,6 +733,161 @@ void main() {
       expect(capturedMaxTokens, 2500);
     },
   );
+
+  test(
+    'v3 plain chat bypasses query rewrite and local context upload',
+    () async {
+      var retrievalCalls = 0;
+      var directCompletionCalls = 0;
+      bool? capturedLocalKnowledge;
+      String? capturedKnowledgeMode;
+      String? sentUserMessage;
+      final promptService = _FakePromptService();
+      final service = RagConversationService(
+        retrieve: (query, articles) async {
+          retrievalCalls++;
+          return const RetrievalResult(
+            articles: [],
+            method: RetrievalMethod.none,
+            duration: Duration.zero,
+          );
+        },
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async {
+              directCompletionCalls++;
+              return 'must not run';
+            },
+        agentRunStreamV3:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              required String userQuestion,
+              required List<AiImageInput> images,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+              required bool webSearch,
+              required bool localKnowledge,
+              String? knowledgeMode,
+              void Function(HostedAgentEvent event)? onEvent,
+              FutureOr<void> Function(String runId)? onRunCreated,
+              String? idempotencyKey,
+            }) {
+              sentUserMessage = userMessage;
+              capturedLocalKnowledge = localKnowledge;
+              capturedKnowledgeMode = knowledgeMode;
+              return Stream.value('Device evidence [1].');
+            },
+        agentCompletionError: () => null,
+        agentRunId: () => 'run-1',
+        agentLocalSources: () => const [
+          HostedAgentLocalSource(
+            id: '1',
+            articleRef: 'ar_abcdefghijklmnopqrstuv',
+          ),
+        ],
+        agentClientToolsEnabled: true,
+        resolveAgentLocalCitations:
+            ({required runId, required answer, required sources}) async => [
+              'agent-sdk',
+            ],
+        saveLog: (_) async {},
+        promptService: promptService,
+      );
+
+      final result = await service.ask(
+        RagConversationRequest(
+          question: 'Use my saved evidence',
+          articles: [agentArticle()],
+          knowledgeOnly: true,
+          detailedAnswer: false,
+          languageHint: '',
+        ),
+      );
+
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(result.citedIds, ['agent-sdk']);
+      expect(retrievalCalls, 0);
+      expect(directCompletionCalls, 0);
+      expect(capturedLocalKnowledge, isTrue);
+      expect(capturedKnowledgeMode, 'only');
+      expect(
+        sentUserMessage,
+        '<user_question>\nUse my saved evidence\n</user_question>',
+      );
+      expect(
+        promptService.loadedPaths,
+        isNot(contains('chat/query_rewrite.txt')),
+      );
+    },
+  );
+
+  test('legacy hosted callback keeps v2 query rewrite and RAG path', () async {
+    var retrievalCalls = 0;
+    var directCompletionCalls = 0;
+    final service = RagConversationService(
+      retrieve: (query, articles) async {
+        retrievalCalls++;
+        return RetrievalResult(
+          articles: [agentArticle()],
+          method: RetrievalMethod.keyword,
+          duration: Duration.zero,
+        );
+      },
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async {
+            directCompletionCalls++;
+            return 'rewritten query';
+          },
+      agentRunStream:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            required String userQuestion,
+            required List<AiImageInput> images,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+            required bool webSearch,
+            void Function(HostedAgentEvent event)? onEvent,
+            FutureOr<void> Function(String runId)? onRunCreated,
+            String? idempotencyKey,
+          }) => Stream.value('Legacy evidence [1].'),
+      agentCompletionError: () => null,
+      saveLog: (_) async {},
+      promptService: _FakePromptService(),
+    );
+
+    final result = await service.ask(
+      RagConversationRequest(
+        question: 'follow up',
+        history: const [
+          RagConversationTurn(role: 'user', content: 'earlier question'),
+          RagConversationTurn(role: 'assistant', content: 'earlier answer'),
+        ],
+        articles: [agentArticle()],
+        knowledgeOnly: true,
+        detailedAnswer: false,
+        languageHint: '',
+      ),
+    );
+
+    expect(result.outcome, RagConversationOutcome.answer);
+    expect(directCompletionCalls, 1);
+    expect(retrievalCalls, 1);
+  });
 }
 
 class _FakePromptService extends PromptService {

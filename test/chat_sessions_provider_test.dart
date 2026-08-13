@@ -6,10 +6,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/models/chat_message_record.dart';
 import 'package:memora/data/models/chat_thread.dart';
 import 'package:memora/data/repositories/chat_repository.dart';
+import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/chat_attachment_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/shared/providers/attachment_providers.dart';
+import 'package:memora/shared/providers/auth_provider.dart';
 import 'package:memora/shared/providers/chat_providers.dart';
+
+AuthSession _authSession({required String userId, required String deviceId}) {
+  return AuthSession(
+    accessToken: 'header.payload.signature',
+    refreshToken: 'refresh-$userId-$deviceId',
+    refreshTokenExpiresAt: null,
+    user: AuthUser(
+      id: userId,
+      email: '$userId@example.com',
+      displayName: null,
+      status: 'active',
+      plan: 'free',
+      storageUsedBytes: '0',
+    ),
+    device: AuthDevice(
+      id: deviceId,
+      userId: userId,
+      deviceName: 'Test device',
+      platform: 'test',
+      appVersion: null,
+    ),
+  );
+}
 
 void main() {
   Future<void> waitForLoad(ProviderContainer container) async {
@@ -261,13 +286,21 @@ void main() {
           status: ChatMessageStatus.sending,
           aiRunId: 'run-delete-provider',
           aiRunRequestKey: 'attempt-delete-provider',
+          aiRunOwnerUserId: 'user-1',
         ),
       );
       final cancelled = <String>[];
       final container = ProviderContainer(
         overrides: [
           chatRepositoryProvider.overrideWith((ref) async => repository),
-          hostedAgentRunCancellerProvider.overrideWithValue((runId) async {
+          currentSessionProvider.overrideWithValue(
+            _authSession(userId: 'user-1', deviceId: 'device-1'),
+          ),
+          hostedAgentRunCancellerProvider.overrideWithValue((
+            runId, {
+            expectedOwnerUserId,
+          }) async {
+            expect(expectedOwnerUserId, 'user-1');
             cancelled.add(runId);
           }),
         ],
@@ -309,6 +342,7 @@ void main() {
           status: ChatMessageStatus.sending,
           aiRunId: 'run-retry-cancel',
           aiRunRequestKey: 'attempt-retry-cancel',
+          aiRunOwnerUserId: 'user-1',
         ),
       );
       var shouldFail = true;
@@ -316,7 +350,14 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           chatRepositoryProvider.overrideWith((ref) async => repository),
-          hostedAgentRunCancellerProvider.overrideWithValue((runId) async {
+          currentSessionProvider.overrideWithValue(
+            _authSession(userId: 'user-1', deviceId: 'device-1'),
+          ),
+          hostedAgentRunCancellerProvider.overrideWithValue((
+            runId, {
+            expectedOwnerUserId,
+          }) async {
+            expect(expectedOwnerUserId, 'user-1');
             attempts++;
             if (shouldFail) throw StateError('offline');
           }),
@@ -338,6 +379,103 @@ void main() {
 
       expect(attempts, 2);
       expect(repository.pendingThreadDeletions, isEmpty);
+    },
+  );
+
+  test(
+    'account B cannot cancel or acknowledge account A durable runs',
+    () async {
+      final repository = _MemoryChatRepository();
+      final now = DateTime.utc(2026, 8, 13);
+      await repository.putThread(
+        ChatThread(
+          id: 'owner-stop-thread',
+          title: 'Owner stop',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'owner-stop-message',
+          threadId: 'owner-stop-thread',
+          role: ChatMessageRole.assistant,
+          content: 'partial',
+          createdAt: now,
+          status: ChatMessageStatus.interrupted,
+          errorCode: 'hosted_cancel_requested',
+          aiRunId: 'run-owner-stop',
+          aiRunRequestKey: 'attempt-owner-stop',
+          aiRunOwnerUserId: 'user-a',
+        ),
+      );
+      await repository.putThread(
+        ChatThread(
+          id: 'owner-delete-thread',
+          title: 'Owner delete',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'owner-delete-message',
+          threadId: 'owner-delete-thread',
+          role: ChatMessageRole.assistant,
+          content: 'partial',
+          createdAt: now,
+          status: ChatMessageStatus.sending,
+          aiRunId: 'run-owner-delete',
+          aiRunRequestKey: 'attempt-owner-delete',
+          aiRunOwnerUserId: 'user-a',
+        ),
+      );
+      final sessionState = StateProvider<AuthSession?>((ref) {
+        return _authSession(userId: 'user-b', deviceId: 'device-b');
+      });
+      final cancelled = <(String, String?)>[];
+      final container = ProviderContainer(
+        overrides: [
+          chatRepositoryProvider.overrideWith((ref) async => repository),
+          currentSessionProvider.overrideWith((ref) => ref.watch(sessionState)),
+          hostedAgentRunCancellerProvider.overrideWithValue((
+            runId, {
+            expectedOwnerUserId,
+          }) async {
+            cancelled.add((runId, expectedOwnerUserId));
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      await waitForLoad(container);
+      final sessions = container.read(chatSessionsProvider.notifier);
+
+      await sessions.deleteThread('owner-delete-thread');
+      await sessions.retryPendingRunCancellations();
+
+      expect(cancelled, isEmpty);
+      expect(
+        repository.getMessage('owner-stop-message')?.errorCode,
+        'hosted_cancel_requested',
+      );
+      final retained = repository.pendingThreadDeletions.single;
+      expect(retained.aiRunOwnerUserIds, {'run-owner-delete': 'user-a'});
+      expect(repository.completeThreadDeletionCalls, 0);
+
+      container.read(sessionState.notifier).state = _authSession(
+        userId: 'user-a',
+        deviceId: 'device-a',
+      );
+      await sessions.retryPendingRunCancellations();
+
+      expect(cancelled, contains(('run-owner-stop', 'user-a')));
+      expect(cancelled, contains(('run-owner-delete', 'user-a')));
+      expect(
+        repository.getMessage('owner-stop-message')?.errorCode,
+        'hosted_run_cancelled',
+      );
+      expect(repository.pendingThreadDeletions, isEmpty);
+      expect(repository.completeThreadDeletionCalls, 1);
     },
   );
 
@@ -363,13 +501,21 @@ void main() {
         errorCode: 'hosted_cancel_requested',
         aiRunId: 'run-restart-stop',
         aiRunRequestKey: 'attempt-restart-stop',
+        aiRunOwnerUserId: 'user-1',
       ),
     );
     final cancelled = Completer<String>();
     final container = ProviderContainer(
       overrides: [
         chatRepositoryProvider.overrideWith((ref) async => repository),
-        hostedAgentRunCancellerProvider.overrideWithValue((runId) async {
+        currentSessionProvider.overrideWithValue(
+          _authSession(userId: 'user-1', deviceId: 'device-1'),
+        ),
+        hostedAgentRunCancellerProvider.overrideWithValue((
+          runId, {
+          expectedOwnerUserId,
+        }) async {
+          expect(expectedOwnerUserId, 'user-1');
           if (!cancelled.isCompleted) cancelled.complete(runId);
         }),
       ],
@@ -513,6 +659,62 @@ void main() {
     },
   );
 
+  test(
+    'foreground create gate prevents a delayed 202 from becoming not found',
+    () async {
+      final repository = await ambiguousRepository();
+      var lookups = 0;
+      final container = ProviderContainer(
+        overrides: [
+          chatRepositoryProvider.overrideWith((ref) async => repository),
+          hostedAgentRunLookupProvider.overrideWithValue((
+            _, {
+            expectedOwnerUserId,
+          }) async {
+            lookups++;
+            throw const HostedAgentLookupException(
+              message: 'not found',
+              statusCode: 404,
+              retryable: false,
+              notFound: true,
+            );
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      await waitForLoad(container);
+      final sessions = container.read(chatSessionsProvider.notifier);
+
+      final marked = await sessions.markServerRunCreateStarted(
+        messageId: 'ambiguous-message',
+        expectedRequestKey: 'attempt-ambiguous',
+        ownerUserId: 'user-1',
+      );
+      expect(marked, isNotNull);
+
+      final retryWhilePosting = await sessions.reconcileAmbiguousServerRuns(
+        ownerUserId: 'user-1',
+      );
+      expect(retryWhilePosting, isFalse);
+      expect(lookups, 0);
+      expect(
+        repository.getMessage('ambiguous-message')?.status,
+        ChatMessageStatus.sending,
+      );
+
+      await sessions.finishServerRunCreate(
+        ownerUserId: 'user-1',
+        requestKey: 'attempt-ambiguous',
+      );
+      await sessions.reconcileAmbiguousServerRuns(ownerUserId: 'user-1');
+      expect(lookups, 3);
+      expect(
+        repository.getMessage('ambiguous-message')?.errorCode,
+        'hosted_run_not_found',
+      );
+    },
+  );
+
   test('lookup timeout keeps the owner attempt pending', () async {
     final repository = await ambiguousRepository();
     var lookups = 0;
@@ -578,6 +780,83 @@ void main() {
     );
   });
 
+  test(
+    'v3 lookup completion cannot attach after same-user device switch',
+    () async {
+      final repository = _MemoryChatRepository();
+      final now = DateTime.utc(2026, 8, 13, 1);
+      await repository.putThread(
+        ChatThread(
+          id: 'v3-device-thread',
+          title: 'V3 device fence',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'v3-device-message',
+          threadId: 'v3-device-thread',
+          role: ChatMessageRole.assistant,
+          content: '',
+          createdAt: now,
+          status: ChatMessageStatus.sending,
+          aiRunRequestKey: 'attempt-v3-device',
+          aiRunOwnerUserId: 'user-1',
+          aiRunOwnerDeviceId: 'device-1',
+          aiRunProtocolVersion: 3,
+          aiRunClientToolsVersion: 1,
+          aiRunKnowledgeMode: 'only',
+        ),
+      );
+      final sessionState = StateProvider<AuthSession?>((ref) {
+        return _authSession(userId: 'user-1', deviceId: 'device-1');
+      });
+      final lookupStarted = Completer<void>();
+      final lookupResult = Completer<HostedAgentRunLookup>();
+      final container = ProviderContainer(
+        overrides: [
+          chatRepositoryProvider.overrideWith((ref) async => repository),
+          currentSessionProvider.overrideWith((ref) => ref.watch(sessionState)),
+          hostedAgentRunLookupProvider.overrideWithValue((
+            _, {
+            expectedOwnerUserId,
+          }) {
+            expect(expectedOwnerUserId, 'user-1');
+            if (!lookupStarted.isCompleted) lookupStarted.complete();
+            return lookupResult.future;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      await waitForLoad(container);
+
+      final reconcile = container
+          .read(chatSessionsProvider.notifier)
+          .reconcileAmbiguousServerRuns(
+            ownerUserId: 'user-1',
+            ownerDeviceId: 'device-1',
+          );
+      await lookupStarted.future;
+      container.read(sessionState.notifier).state = _authSession(
+        userId: 'user-1',
+        deviceId: 'device-2',
+      );
+      lookupResult.complete(
+        const HostedAgentRunLookup(
+          runId: 'run-wrong-device',
+          status: 'running',
+        ),
+      );
+
+      expect(await reconcile, isFalse);
+      final preserved = repository.getMessage('v3-device-message');
+      expect(preserved?.aiRunId, isNull);
+      expect(preserved?.status, ChatMessageStatus.sending);
+      expect(preserved?.aiRunOwnerDeviceId, 'device-1');
+    },
+  );
+
   test('Stop reconciles then cancels an accepted ambiguous create', () async {
     final repository = await ambiguousRepository(
       status: ChatMessageStatus.interrupted,
@@ -593,7 +872,14 @@ void main() {
             status: 'running',
           ),
         ),
-        hostedAgentRunCancellerProvider.overrideWithValue((runId) async {
+        currentSessionProvider.overrideWithValue(
+          _authSession(userId: 'user-1', deviceId: 'device-1'),
+        ),
+        hostedAgentRunCancellerProvider.overrideWithValue((
+          runId, {
+          expectedOwnerUserId,
+        }) async {
+          expect(expectedOwnerUserId, 'user-1');
           cancelled.add(runId);
         }),
       ],
@@ -910,7 +1196,8 @@ void main() {
   );
 }
 
-class _MemoryChatRepository implements ChatRepository {
+class _MemoryChatRepository
+    implements ChatRepository, ClientToolChatRepository {
   final Map<String, ChatThread> _threads = {};
   final Map<String, ChatMessageRecord> _messages = {};
   List<PendingChatThreadDeletion> pendingThreadDeletions = const [];
@@ -1026,6 +1313,38 @@ class _MemoryChatRepository implements ChatRepository {
   }
 
   @override
+  Future<ChatMessageRecord?> markAiRunClientToolsCreateStarted({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+    required String ownerDeviceId,
+    required int protocolVersion,
+    required int clientToolsVersion,
+    required String knowledgeMode,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        current.status != ChatMessageStatus.sending ||
+        current.aiRunId != null ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        (current.aiRunOwnerUserId != null &&
+            current.aiRunOwnerUserId != ownerUserId) ||
+        (current.aiRunOwnerDeviceId != null &&
+            current.aiRunOwnerDeviceId != ownerDeviceId)) {
+      return null;
+    }
+    final updated = current.copyWith(
+      aiRunOwnerUserId: ownerUserId,
+      aiRunOwnerDeviceId: ownerDeviceId,
+      aiRunProtocolVersion: protocolVersion,
+      aiRunClientToolsVersion: clientToolsVersion,
+      aiRunKnowledgeMode: knowledgeMode,
+    );
+    await putMessage(updated);
+    return updated;
+  }
+
+  @override
   Future<ChatMessageRecord?> attachAiRunToPendingMessage({
     required String messageId,
     required String? expectedRequestKey,
@@ -1047,6 +1366,35 @@ class _MemoryChatRepository implements ChatRepository {
     } on StateError {
       return null;
     }
+    return updated;
+  }
+
+  @override
+  Future<ChatMessageRecord?> attachAiRunClientToolsToPendingMessage({
+    required String messageId,
+    required String? expectedRequestKey,
+    required String? expectedOwnerUserId,
+    required String expectedOwnerDeviceId,
+    required int expectedProtocolVersion,
+    required int expectedClientToolsVersion,
+    required String expectedKnowledgeMode,
+    required String runId,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        !_threads.containsKey(current.threadId) ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        current.aiRunOwnerUserId != expectedOwnerUserId ||
+        current.aiRunOwnerDeviceId != expectedOwnerDeviceId ||
+        current.aiRunProtocolVersion != expectedProtocolVersion ||
+        current.aiRunClientToolsVersion != expectedClientToolsVersion ||
+        current.aiRunKnowledgeMode != expectedKnowledgeMode ||
+        (current.status != ChatMessageStatus.sending &&
+            current.errorCode != 'hosted_cancel_requested')) {
+      return null;
+    }
+    final updated = current.copyWith(aiRunId: runId, aiRunEventSeq: 0);
+    await putMessage(updated);
     return updated;
   }
 
@@ -1122,21 +1470,27 @@ class _MemoryChatRepository implements ChatRepository {
   @override
   Future<PendingChatThreadDeletion> queueAiRunCancellation(
     String threadId,
-    String runId,
-  ) async {
+    String runId, {
+    String? ownerUserId,
+  }) async {
     PendingChatThreadDeletion? existing;
     for (final deletion in pendingThreadDeletions) {
       if (deletion.threadId == threadId) existing = deletion;
     }
     final runIds = {...?existing?.aiRunIdsToCancel, runId}.toList()..sort();
+    final runOwners = <String, String>{
+      ...?existing?.aiRunOwnerUserIds,
+      runId: ?ownerUserId,
+    };
     final updated = PendingChatThreadDeletion(
       threadId: threadId,
       attachmentIds: existing?.attachmentIds ?? const [],
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: existing?.aiRunLookups ?? const [],
       dataDeleted: true,
       revision: (existing?.revision ?? 0) + 1,
-      canAcknowledge: existing?.canAcknowledge ?? true,
+      canAcknowledge: (existing?.canAcknowledge ?? true) && ownerUserId != null,
     );
     pendingThreadDeletions = [
       ...pendingThreadDeletions.where(
@@ -1160,10 +1514,13 @@ class _MemoryChatRepository implements ChatRepository {
     final runIds = existing.aiRunIdsToCancel
         .where((id) => id != runId)
         .toList();
+    final runOwners = Map<String, String>.from(existing.aiRunOwnerUserIds)
+      ..remove(runId);
     final updated = PendingChatThreadDeletion(
       threadId: threadId,
       attachmentIds: existing.attachmentIds,
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: existing.aiRunLookups,
       dataDeleted: existing.dataDeleted,
       revision: existing.revision + 1,
@@ -1197,10 +1554,13 @@ class _MemoryChatRepository implements ChatRepository {
         )
         .toList();
     final runIds = {...existing.aiRunIdsToCancel, ?runId}.toList()..sort();
+    final runOwners = Map<String, String>.from(existing.aiRunOwnerUserIds);
+    if (runId != null) runOwners[runId] = ownerUserId;
     final updated = PendingChatThreadDeletion(
       threadId: threadId,
       attachmentIds: existing.attachmentIds,
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: lookups,
       dataDeleted: existing.dataDeleted,
       revision: existing.revision + 1,
@@ -1239,6 +1599,18 @@ class _MemoryChatRepository implements ChatRepository {
             .toSet()
             .toList()
           ..sort();
+    final runOwners = <String, String>{};
+    var canAcknowledge = true;
+    for (final message in _messages.values.where(
+      (message) => message.threadId == id && runIds.contains(message.aiRunId),
+    )) {
+      final owner = message.aiRunOwnerUserId;
+      if (owner == null) {
+        canAcknowledge = false;
+      } else {
+        runOwners[message.aiRunId!] = owner;
+      }
+    }
     final lookups = _messages.values
         .where(
           (message) =>
@@ -1261,9 +1633,11 @@ class _MemoryChatRepository implements ChatRepository {
     final deletion = PendingChatThreadDeletion(
       threadId: id,
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: lookups,
       dataDeleted: true,
       revision: 1,
+      canAcknowledge: canAcknowledge,
     );
     pendingThreadDeletions = [
       ...pendingThreadDeletions.where((pending) => pending.threadId != id),

@@ -11,6 +11,7 @@ import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/data/repositories/chat_repository.dart';
+import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
@@ -18,11 +19,33 @@ import 'package:memora/data/services/retrieval_service.dart';
 import 'package:memora/features/chat/chat_screen.dart';
 import 'package:memora/features/chat/chat_typing_indicator.dart';
 import 'package:memora/shared/providers/chat_providers.dart';
+import 'package:memora/shared/providers/auth_provider.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
 
 final _hostedAgentAvailabilityProvider = StateProvider<HostedAgentService?>(
   (ref) => null,
+);
+
+final _testAuthSession = AuthSession(
+  accessToken: 'header.payload.signature',
+  refreshToken: 'refresh-user-1',
+  refreshTokenExpiresAt: null,
+  user: const AuthUser(
+    id: 'user-1',
+    email: 'user-1@example.com',
+    displayName: null,
+    status: 'active',
+    plan: 'free',
+    storageUsedBytes: '0',
+  ),
+  device: const AuthDevice(
+    id: 'device-1',
+    userId: 'user-1',
+    deviceName: 'Test device',
+    platform: 'test',
+    appVersion: null,
+  ),
 );
 
 /// Background/foreground lifecycle regression tests.
@@ -74,6 +97,8 @@ void main() {
             (ref) async => _InMemoryArticleRepository(articles),
           ),
           chatRepositoryProvider.overrideWith((ref) async => repository),
+          if (runCanceller != null)
+            currentSessionProvider.overrideWithValue(_testAuthSession),
           if (runCanceller != null)
             hostedAgentRunCancellerProvider.overrideWithValue(runCanceller),
         ],
@@ -850,7 +875,10 @@ void main() {
       articles: [],
       conversation: durableConversation(hostedAgent),
       hostedAgent: hostedAgent,
-      runCanceller: (runId) async => cancelled.add(runId),
+      runCanceller: (runId, {expectedOwnerUserId}) async {
+        expect(expectedOwnerUserId, 'user-1');
+        cancelled.add(runId);
+      },
     );
 
     await tester.enterText(find.byType(TextField), 'stop before create');
@@ -897,7 +925,10 @@ void main() {
       threads: [thread],
       conversation: durableConversation(hostedAgent),
       hostedAgent: hostedAgent,
-      runCanceller: (runId) async => cancelled.add(runId),
+      runCanceller: (runId, {expectedOwnerUserId}) async {
+        expect(expectedOwnerUserId, 'user-1');
+        cancelled.add(runId);
+      },
     );
 
     await tester.enterText(find.byType(TextField), 'delete before create');
@@ -1471,17 +1502,24 @@ class _InMemoryChatRepository implements ChatRepository {
   @override
   Future<PendingChatThreadDeletion> queueAiRunCancellation(
     String threadId,
-    String runId,
-  ) async {
+    String runId, {
+    String? ownerUserId,
+  }) async {
     final existing = _deletions[threadId];
     final runIds = {...?existing?.aiRunIdsToCancel, runId}.toList()..sort();
+    final runOwners = <String, String>{
+      ...?existing?.aiRunOwnerUserIds,
+      runId: ?ownerUserId,
+    };
     final updated = PendingChatThreadDeletion(
       threadId: threadId,
       attachmentIds: existing?.attachmentIds ?? const [],
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: existing?.aiRunLookups ?? const [],
       dataDeleted: true,
       revision: (existing?.revision ?? 0) + 1,
+      canAcknowledge: (existing?.canAcknowledge ?? true) && ownerUserId != null,
     );
     _deletions[threadId] = updated;
     return updated;
@@ -1500,6 +1538,8 @@ class _InMemoryChatRepository implements ChatRepository {
       aiRunIdsToCancel: existing.aiRunIdsToCancel
           .where((id) => id != runId)
           .toList(),
+      aiRunOwnerUserIds: Map<String, String>.from(existing.aiRunOwnerUserIds)
+        ..remove(runId),
       aiRunLookups: existing.aiRunLookups,
       dataDeleted: existing.dataDeleted,
       revision: existing.revision + 1,
@@ -1522,6 +1562,7 @@ class _InMemoryChatRepository implements ChatRepository {
       threadId: threadId,
       attachmentIds: existing.attachmentIds,
       aiRunIdsToCancel: {...existing.aiRunIdsToCancel, ?runId}.toList(),
+      aiRunOwnerUserIds: {...existing.aiRunOwnerUserIds, ?runId: ownerUserId},
       aiRunLookups: existing.aiRunLookups
           .where(
             (item) =>
@@ -1560,6 +1601,18 @@ class _InMemoryChatRepository implements ChatRepository {
             .toSet()
             .toList()
           ..sort();
+    final runOwners = <String, String>{};
+    var canAcknowledge = true;
+    for (final message in _messages.values.where(
+      (message) => message.threadId == id && runIds.contains(message.aiRunId),
+    )) {
+      final owner = message.aiRunOwnerUserId;
+      if (owner == null) {
+        canAcknowledge = false;
+      } else {
+        runOwners[message.aiRunId!] = owner;
+      }
+    }
     final lookups = _messages.values
         .where(
           (message) =>
@@ -1582,9 +1635,11 @@ class _InMemoryChatRepository implements ChatRepository {
     final deletion = PendingChatThreadDeletion(
       threadId: id,
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
       aiRunLookups: lookups,
       dataDeleted: true,
       revision: 1,
+      canAcknowledge: canAcknowledge,
     );
     _deletions[id] = deletion;
     return deletion;

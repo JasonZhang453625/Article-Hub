@@ -174,6 +174,7 @@ void main() {
           status: ChatMessageStatus.sending,
           aiRunId: 'run-live-1',
           aiRunRequestKey: 'attempt-1',
+          aiRunOwnerUserId: 'user-owner',
         ),
       );
 
@@ -222,13 +223,14 @@ void main() {
           createdAt: now,
           status: ChatMessageStatus.sending,
           aiRunRequestKey: 'attempt-attach',
+          aiRunOwnerUserId: 'user-owner',
         ),
       );
 
       final attached = await repository.attachAiRunToPendingMessage(
         messageId: 'attach-delete-message',
         expectedRequestKey: 'attempt-attach',
-        expectedOwnerUserId: null,
+        expectedOwnerUserId: 'user-owner',
         runId: 'run-attached',
       );
       expect(attached?.aiRunId, 'run-attached');
@@ -238,7 +240,7 @@ void main() {
         await repository.attachAiRunToPendingMessage(
           messageId: 'attach-delete-message',
           expectedRequestKey: 'attempt-attach',
-          expectedOwnerUserId: null,
+          expectedOwnerUserId: 'user-owner',
           runId: 'run-too-late',
         ),
         isNull,
@@ -257,6 +259,7 @@ void main() {
       current = await repository.queueAiRunCancellation(
         'attach-delete',
         'run-too-late',
+        ownerUserId: 'user-owner',
       );
       expect(current.dataDeleted, isTrue);
       expect(current.aiRunIdsToCancel, ['run-too-late']);
@@ -389,6 +392,40 @@ void main() {
     expect(deletions.containsKey(malformed.threadId), isTrue);
     expect(deletions.containsKey(unknown.threadId), isTrue);
     expect(deletions.containsKey(wrongTypes.threadId), isTrue);
+  });
+
+  test('schema 4 run cancellation without owner stays quarantined', () async {
+    final deletions = Hive.box<Map>(HiveChatRepository.deletionsBoxName);
+    await deletions.put('legacy-run-delete', {
+      'schemaVersion': 4,
+      'threadId': 'legacy-run-delete',
+      'dataDeleted': true,
+      'revision': 3,
+      'canAcknowledge': true,
+      'attachmentIds': <String>[],
+      'aiRunIdsToCancel': <String>['run-legacy-ownerless'],
+      'aiRunLookups': <Map<String, String>>[],
+    });
+
+    final pending = repository.getPendingThreadDeletions().singleWhere(
+      (item) => item.threadId == 'legacy-run-delete',
+    );
+    expect(pending.aiRunIdsToCancel, ['run-legacy-ownerless']);
+    expect(pending.aiRunOwnerUserIds, isEmpty);
+    expect(pending.canAcknowledge, isFalse);
+
+    final unchanged = await repository.completeAiRunCancellation(
+      pending.threadId,
+      'run-legacy-ownerless',
+    );
+    expect(unchanged?.aiRunIdsToCancel, ['run-legacy-ownerless']);
+    await expectLater(
+      repository.completeThreadDeletion(
+        pending.threadId,
+        expectedRevision: pending.revision,
+      ),
+      throwsStateError,
+    );
   });
 
   test(
@@ -957,6 +994,77 @@ void main() {
 
     expect(chatAttachmentsFromStored(stored), isEmpty);
     expect(chatAttachmentIdsFromStored(stored), ['recoverable-attachment']);
+  });
+
+  test('client-tool run tuple is immutable across late attach races', () async {
+    final now = DateTime.utc(2026, 8, 12);
+    await repository.putThread(
+      ChatThread(
+        id: 'tool-thread',
+        title: 'Tool run',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await repository.putMessage(
+      ChatMessageRecord(
+        id: 'tool-message',
+        threadId: 'tool-thread',
+        role: ChatMessageRole.assistant,
+        content: '',
+        createdAt: now,
+        status: ChatMessageStatus.sending,
+        aiRunRequestKey: 'tool-attempt',
+      ),
+    );
+    final toolsRepository = repository as ClientToolChatRepository;
+    final marked = await toolsRepository.markAiRunClientToolsCreateStarted(
+      messageId: 'tool-message',
+      expectedRequestKey: 'tool-attempt',
+      ownerUserId: 'user-1',
+      ownerDeviceId: 'device-1',
+      protocolVersion: 3,
+      clientToolsVersion: 1,
+      knowledgeMode: 'only',
+    );
+    expect(marked?.usesDeviceClientTools, isTrue);
+    expect(marked?.aiRunOwnerDeviceId, 'device-1');
+    expect(
+      await toolsRepository.attachAiRunClientToolsToPendingMessage(
+        messageId: 'tool-message',
+        expectedRequestKey: 'tool-attempt',
+        expectedOwnerUserId: 'user-1',
+        expectedOwnerDeviceId: 'device-2',
+        expectedProtocolVersion: 3,
+        expectedClientToolsVersion: 1,
+        expectedKnowledgeMode: 'only',
+        runId: 'wrong-device-run',
+      ),
+      isNull,
+    );
+    final attached = await toolsRepository
+        .attachAiRunClientToolsToPendingMessage(
+          messageId: 'tool-message',
+          expectedRequestKey: 'tool-attempt',
+          expectedOwnerUserId: 'user-1',
+          expectedOwnerDeviceId: 'device-1',
+          expectedProtocolVersion: 3,
+          expectedClientToolsVersion: 1,
+          expectedKnowledgeMode: 'only',
+          runId: 'correct-run',
+        );
+    expect(attached?.aiRunId, 'correct-run');
+
+    await Hive.close();
+    Hive.init(tempDir.path);
+    final reopened = HiveChatRepository();
+    await reopened.init();
+    final restored = reopened.getMessage('tool-message');
+    expect(restored?.aiRunOwnerUserId, 'user-1');
+    expect(restored?.aiRunOwnerDeviceId, 'device-1');
+    expect(restored?.aiRunProtocolVersion, 3);
+    expect(restored?.aiRunClientToolsVersion, 1);
+    expect(restored?.aiRunKnowledgeMode, 'only');
   });
 }
 

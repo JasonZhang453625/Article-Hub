@@ -18,6 +18,7 @@ class HostedAiCapabilities {
   final bool agentAvailable;
   final int agentProtocolVersion;
   final HostedAgentImageInputCapabilities? agentImageInput;
+  final HostedAgentClientToolsCapabilities? agentClientTools;
 
   const HostedAiCapabilities({
     required this.chatModels,
@@ -26,6 +27,7 @@ class HostedAiCapabilities {
     this.agentAvailable = false,
     this.agentProtocolVersion = 1,
     this.agentImageInput,
+    this.agentClientTools,
   });
 
   factory HostedAiCapabilities.fromJson(Map<String, dynamic> json) {
@@ -43,6 +45,9 @@ class HostedAiCapabilities {
       agentAvailable: _agentAvailable(json['agent']),
       agentProtocolVersion: _agentProtocolVersion(json['agent']),
       agentImageInput: HostedAgentImageInputCapabilities.fromAgentSection(
+        json['agent'],
+      ),
+      agentClientTools: HostedAgentClientToolsCapabilities.fromAgentSection(
         json['agent'],
       ),
     );
@@ -81,6 +86,235 @@ class HostedAiCapabilities {
   bool get hasServerSummaryModels => summaryModels.isNotEmpty;
 
   bool get hasServerVisionModels => visionModels.isNotEmpty;
+}
+
+class HostedAgentClientToolResultLimits {
+  final int maxResultBytes;
+  final int maxResultTokens;
+
+  const HostedAgentClientToolResultLimits({
+    required this.maxResultBytes,
+    required this.maxResultTokens,
+  });
+}
+
+class HostedAgentLocalSearchLimits extends HostedAgentClientToolResultLimits {
+  final int maxResults;
+  final int maxSnippetsPerResult;
+
+  const HostedAgentLocalSearchLimits({
+    required this.maxResults,
+    required this.maxSnippetsPerResult,
+    required super.maxResultBytes,
+    required super.maxResultTokens,
+  });
+}
+
+/// Fail-closed device-tool contract advertised by Agent protocol v3.
+class HostedAgentClientToolsCapabilities {
+  static const int supportedVersion = 1;
+  static const Set<String> requiredTools = {'local_search', 'read_article'};
+
+  final int version;
+  final List<String> models;
+  final Set<String> tools;
+  final int maxTotalCalls;
+  final int maxLocalSearchCalls;
+  final int maxReadArticleCalls;
+  final int maxResultBytes;
+  final int leaseSeconds;
+  final int waitSeconds;
+  final int wallSeconds;
+  final HostedAgentLocalSearchLimits localSearch;
+  final HostedAgentClientToolResultLimits readArticle;
+
+  const HostedAgentClientToolsCapabilities({
+    required this.version,
+    required this.models,
+    required this.tools,
+    required this.maxTotalCalls,
+    required this.maxLocalSearchCalls,
+    required this.maxReadArticleCalls,
+    required this.maxResultBytes,
+    required this.leaseSeconds,
+    required this.waitSeconds,
+    required this.wallSeconds,
+    required this.localSearch,
+    required this.readArticle,
+  });
+
+  static HostedAgentClientToolsCapabilities? fromAgentSection(
+    dynamic agentSection,
+  ) {
+    if (agentSection is! Map || agentSection['protocolVersion'] is! int) {
+      return null;
+    }
+    if ((agentSection['protocolVersion'] as int) < 3) return null;
+    final raw = agentSection['clientTools'];
+    if (raw is! Map || raw['available'] != true) return null;
+    if (!_hasExactKeys(raw, const {
+      'available',
+      'version',
+      'models',
+      'tools',
+      'limits',
+    })) {
+      return null;
+    }
+    final version = raw['version'];
+    final models = _strictStringList(raw['models']);
+    final parsedTools = _strictStringList(raw['tools']);
+    final limits = raw['limits'];
+    if (version != supportedVersion ||
+        models == null ||
+        models.isEmpty ||
+        parsedTools == null ||
+        parsedTools.isEmpty ||
+        limits is! Map) {
+      return null;
+    }
+    final tools = parsedTools.toSet();
+    if (tools.length != requiredTools.length ||
+        !tools.containsAll(requiredTools)) {
+      return null;
+    }
+
+    final local = limits['localSearch'];
+    final read = limits['readArticle'];
+    if (!_hasExactKeys(limits, const {
+          'maxTotalCalls',
+          'maxLocalSearchCalls',
+          'maxReadArticleCalls',
+          'maxResultBytes',
+          'leaseSeconds',
+          'waitSeconds',
+          'wallSeconds',
+          'localSearch',
+          'readArticle',
+        }) ||
+        local is! Map ||
+        read is! Map ||
+        !_hasExactKeys(local, const {
+          'maxResults',
+          'maxSnippetsPerResult',
+          'maxResultBytes',
+          'maxResultTokens',
+        }) ||
+        !_hasExactKeys(read, const {'maxResultBytes', 'maxResultTokens'})) {
+      return null;
+    }
+    final maxTotalCalls = _strictPositiveInt(limits['maxTotalCalls']);
+    final maxLocalSearchCalls = _strictPositiveInt(
+      limits['maxLocalSearchCalls'],
+    );
+    final maxReadArticleCalls = _strictPositiveInt(
+      limits['maxReadArticleCalls'],
+    );
+    final maxResultBytes = _strictPositiveInt(limits['maxResultBytes']);
+    final leaseSeconds = _strictPositiveInt(limits['leaseSeconds']);
+    final waitSeconds = _strictPositiveInt(limits['waitSeconds']);
+    final wallSeconds = _strictPositiveInt(limits['wallSeconds']);
+    final localMaxResults = _strictPositiveInt(local['maxResults']);
+    final localMaxSnippets = _strictPositiveInt(local['maxSnippetsPerResult']);
+    final localMaxBytes = _strictPositiveInt(local['maxResultBytes']);
+    final localMaxTokens = _strictPositiveInt(local['maxResultTokens']);
+    final readMaxBytes = _strictPositiveInt(read['maxResultBytes']);
+    final readMaxTokens = _strictPositiveInt(read['maxResultTokens']);
+    if (maxTotalCalls == null ||
+        maxLocalSearchCalls == null ||
+        maxReadArticleCalls == null ||
+        maxResultBytes == null ||
+        leaseSeconds == null ||
+        waitSeconds == null ||
+        wallSeconds == null ||
+        localMaxResults == null ||
+        localMaxSnippets == null ||
+        localMaxBytes == null ||
+        localMaxTokens == null ||
+        readMaxBytes == null ||
+        readMaxTokens == null) {
+      return null;
+    }
+    if (maxLocalSearchCalls > maxTotalCalls ||
+        maxReadArticleCalls > maxTotalCalls ||
+        localMaxBytes > maxResultBytes ||
+        readMaxBytes > maxResultBytes ||
+        leaseSeconds > waitSeconds ||
+        waitSeconds > wallSeconds ||
+        maxResultBytes < 256 ||
+        localMaxBytes < 256 ||
+        readMaxBytes < 256 ||
+        localMaxTokens < 32 ||
+        readMaxTokens < 32) {
+      return null;
+    }
+
+    return HostedAgentClientToolsCapabilities(
+      version: version as int,
+      models: List.unmodifiable(models),
+      tools: Set.unmodifiable(tools),
+      maxTotalCalls: maxTotalCalls,
+      maxLocalSearchCalls: maxLocalSearchCalls,
+      maxReadArticleCalls: maxReadArticleCalls,
+      maxResultBytes: maxResultBytes,
+      leaseSeconds: leaseSeconds,
+      waitSeconds: waitSeconds,
+      wallSeconds: wallSeconds,
+      localSearch: HostedAgentLocalSearchLimits(
+        maxResults: localMaxResults,
+        maxSnippetsPerResult: localMaxSnippets,
+        maxResultBytes: localMaxBytes,
+        maxResultTokens: localMaxTokens,
+      ),
+      readArticle: HostedAgentClientToolResultLimits(
+        maxResultBytes: readMaxBytes,
+        maxResultTokens: readMaxTokens,
+      ),
+    );
+  }
+
+  bool supportsModel(String model) {
+    final candidate = model.trim();
+    return candidate.isNotEmpty && models.contains(candidate);
+  }
+
+  static List<String>? _strictStringList(dynamic value) {
+    if (value is! List ||
+        value.isEmpty ||
+        value.any((item) => item is! String)) {
+      return null;
+    }
+    final normalized = value
+        .cast<String>()
+        .map((item) => item.trim())
+        .toList(growable: false);
+    if (normalized.any((item) => item.isEmpty) ||
+        normalized.toSet().length != normalized.length) {
+      return null;
+    }
+    return normalized;
+  }
+
+  static int? _strictPositiveInt(dynamic value) =>
+      value is int && value > 0 ? value : null;
+
+  static bool _hasExactKeys(Map value, Set<String> keys) =>
+      value.length == keys.length && value.keys.toSet().containsAll(keys);
+}
+
+HostedAgentClientToolsCapabilities? hostedAgentClientToolsForModel(
+  HostedAiCapabilities? capabilities,
+  String model,
+) {
+  final tools = capabilities?.agentClientTools;
+  if (capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < 3 ||
+      tools == null ||
+      !tools.supportsModel(model)) {
+    return null;
+  }
+  return tools;
 }
 
 class HostedAgentImageInputCapabilities {

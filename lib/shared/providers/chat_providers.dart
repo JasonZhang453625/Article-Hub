@@ -20,7 +20,8 @@ final chatRepositoryProvider = FutureProvider<ChatRepository>((ref) async {
   return repository;
 });
 
-typedef HostedAgentRunCanceller = Future<void> Function(String runId);
+typedef HostedAgentRunCanceller =
+    Future<void> Function(String runId, {String? expectedOwnerUserId});
 typedef HostedAgentRunLookupResolver =
     Future<HostedAgentRunLookup> Function(
       String idempotencyKey, {
@@ -94,6 +95,7 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   late final Future<void> _loadFuture;
   ChatRepository? _repository;
   int _navigationRevision = 0;
+  final Set<String> _activeServerRunCreates = {};
 
   ChatSessionsNotifier(this._ref, {Uuid uuid = const Uuid()})
     : _uuid = uuid,
@@ -170,8 +172,19 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     );
     final afterLookups = _pendingDeletion(repository, deletion.threadId);
     for (final runId in afterLookups?.aiRunIdsToCancel ?? const <String>[]) {
+      final expectedOwner = afterLookups?.aiRunOwnerUserIds[runId];
+      final currentOwner = _ref.read(currentSessionProvider)?.user.id;
+      if (expectedOwner == null || currentOwner != expectedOwner) {
+        // Unknown legacy ownership and another signed-in account both retain
+        // the tombstone. A 404 under the wrong bearer is not proof that the
+        // original owner's run disappeared.
+        continue;
+      }
       try {
-        await _ref.read(hostedAgentRunCancellerProvider)(runId);
+        await _ref.read(hostedAgentRunCancellerProvider)(
+          runId,
+          expectedOwnerUserId: expectedOwner,
+        );
         await repository.completeAiRunCancellation(deletion.threadId, runId);
       } catch (_) {
         // The tombstone retains this run id. A lifecycle resume or the next
@@ -210,11 +223,24 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     if (activeOwnerUserId == null || activeOwnerUserId.trim().isEmpty) return;
     for (final lookup in deletion.aiRunLookups) {
       if (lookup.ownerUserId != activeOwnerUserId) continue;
+      if (_activeServerRunCreates.contains(
+        _serverRunCreateIdentity(lookup.ownerUserId, lookup.requestKey),
+      )) {
+        // A foreground POST still owns this key. Removing the tombstone after
+        // a transient 404 would lose the only crash-recovery handle for a
+        // server run whose 202 response has not arrived yet.
+        continue;
+      }
       try {
         final found = await _lookupWithNotFoundBackoff(
           lookup.requestKey,
           ownerUserId: lookup.ownerUserId,
+          stillCurrent: () =>
+              _ref.read(currentSessionProvider)?.user.id == lookup.ownerUserId,
         );
+        if (_ref.read(currentSessionProvider)?.user.id != lookup.ownerUserId) {
+          continue;
+        }
         await repository.resolveAiRunLookup(
           deletion.threadId,
           ownerUserId: lookup.ownerUserId,
@@ -294,6 +320,7 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   /// with a durable [ChatMessageRecord.aiRunId] are returned.
   Future<List<ChatMessageRecord>> pendingServerMessages({
     String? ownerUserId,
+    String? ownerDeviceId,
   }) async {
     await _ensureLoaded();
     final pending = <ChatMessageRecord>[];
@@ -317,15 +344,41 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
       pending.where(
         (message) =>
             message.aiRunOwnerUserId == null ||
-            message.aiRunOwnerUserId == ownerUserId,
+            message.aiRunOwnerUserId == ownerUserId &&
+                (!message.usesDeviceClientTools ||
+                    message.aiRunOwnerDeviceId == ownerDeviceId),
       ),
     );
+  }
+
+  /// All locally-known v3 attempts, including terminal records. The global
+  /// client-tool host compares this ledger with its run-scoped Hive stores so
+  /// deleted/stopped runs can be revoked after a process restart.
+  Future<List<ChatMessageRecord>> clientToolAttempts() async {
+    await _ensureLoaded();
+    final attempts = <ChatMessageRecord>[];
+    for (final thread in _repo.getThreads()) {
+      attempts.addAll(
+        _repo
+            .getMessages(thread.id)
+            .where(
+              (message) =>
+                  message.role == ChatMessageRole.assistant &&
+                  message.aiRunId?.trim().isNotEmpty == true &&
+                  message.usesDeviceClientTools,
+            ),
+      );
+    }
+    return List.unmodifiable(attempts);
   }
 
   /// Resolves creates whose server response may have been lost after the
   /// backend accepted the stable idempotency key. Returns true when at least
   /// one transient failure remains and the caller should schedule a retry.
-  Future<bool> reconcileAmbiguousServerRuns({String? ownerUserId}) async {
+  Future<bool> reconcileAmbiguousServerRuns({
+    String? ownerUserId,
+    String? ownerDeviceId,
+  }) async {
     await _ensureLoaded();
     final ambiguous = <ChatMessageRecord>[];
     for (final thread in _repo.getThreads()) {
@@ -335,37 +388,78 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     }
     if (ambiguous.isEmpty) return false;
     if (ownerUserId == null || ownerUserId.trim().isEmpty) return false;
+    final expectedOwnerUserId = ownerUserId.trim();
+    final expectedOwnerDeviceId = ownerDeviceId?.trim();
+    bool ownerStillCurrent(ChatMessageRecord message) {
+      if (!message.usesDeviceClientTools) return true;
+      final current = _ref.read(currentSessionProvider);
+      if (current == null || current.user.id != expectedOwnerUserId) {
+        return false;
+      }
+      return current.device.id == expectedOwnerDeviceId;
+    }
+
     var retryNeeded = false;
     final pending = ambiguous.where(
-      (message) => message.aiRunOwnerUserId == ownerUserId,
+      (message) =>
+          message.aiRunOwnerUserId == ownerUserId &&
+          (!message.usesDeviceClientTools ||
+              message.aiRunOwnerDeviceId == ownerDeviceId),
     );
     for (final message in pending) {
       final requestKey = message.aiRunRequestKey!;
+      if (_activeServerRunCreates.contains(
+        _serverRunCreateIdentity(ownerUserId, requestKey),
+      )) {
+        // The normal foreground POST has not settled. It is not an ambiguous
+        // create yet, so a fast global-host lookup must not turn a delayed
+        // 202 into a false hosted_run_not_found.
+        continue;
+      }
       try {
         final found = await _lookupWithNotFoundBackoff(
           requestKey,
-          ownerUserId: ownerUserId,
+          ownerUserId: expectedOwnerUserId,
+          stillCurrent: () => ownerStillCurrent(message),
         );
+        if (!ownerStillCurrent(message)) continue;
         if (found == null) {
           final updated = await _repo.completeAiRunReconciliationNotFound(
             messageId: message.id,
             expectedRequestKey: requestKey,
-            ownerUserId: ownerUserId,
+            ownerUserId: expectedOwnerUserId,
           );
           if (updated != null) _replacePersistedMessageInState(updated);
           continue;
         }
-        final attached = await _repo.attachAiRunToPendingMessage(
-          messageId: message.id,
-          expectedRequestKey: requestKey,
-          expectedOwnerUserId: ownerUserId,
-          runId: found.runId,
-        );
+        final attached =
+            message.usesDeviceClientTools && _repo is ClientToolChatRepository
+            ? await (_repo as ClientToolChatRepository)
+                  .attachAiRunClientToolsToPendingMessage(
+                    messageId: message.id,
+                    expectedRequestKey: requestKey,
+                    expectedOwnerUserId: expectedOwnerUserId,
+                    expectedOwnerDeviceId: message.aiRunOwnerDeviceId!,
+                    expectedProtocolVersion: message.aiRunProtocolVersion!,
+                    expectedClientToolsVersion:
+                        message.aiRunClientToolsVersion!,
+                    expectedKnowledgeMode: message.aiRunKnowledgeMode!,
+                    runId: found.runId,
+                  )
+            : await _repo.attachAiRunToPendingMessage(
+                messageId: message.id,
+                expectedRequestKey: requestKey,
+                expectedOwnerUserId: expectedOwnerUserId,
+                runId: found.runId,
+              );
         if (attached == null) {
           // A local CAS winner superseded this attempt. Do not bind the run to
           // a newer retry; compensate with idempotent cancellation instead.
           try {
-            await _ref.read(hostedAgentRunCancellerProvider)(found.runId);
+            await _ref.read(hostedAgentRunCancellerProvider)(
+              found.runId,
+              expectedOwnerUserId: expectedOwnerUserId,
+            );
           } catch (_) {
             retryNeeded = true;
           }
@@ -396,21 +490,26 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
   Future<HostedAgentRunLookup?> _lookupWithNotFoundBackoff(
     String requestKey, {
     required String ownerUserId,
+    bool Function()? stillCurrent,
   }) async {
     const notFoundBackoff = [
       Duration(milliseconds: 250),
       Duration(milliseconds: 750),
     ];
     for (var attempt = 0; attempt <= notFoundBackoff.length; attempt++) {
+      if (stillCurrent != null && !stillCurrent()) return null;
       try {
-        return await _ref.read(hostedAgentRunLookupProvider)(
+        final found = await _ref.read(hostedAgentRunLookupProvider)(
           requestKey,
           expectedOwnerUserId: ownerUserId,
         );
+        if (stillCurrent != null && !stillCurrent()) return null;
+        return found;
       } on HostedAgentLookupException catch (error) {
         if (!error.notFound) rethrow;
         if (attempt == notFoundBackoff.length) return null;
         await Future<void>.delayed(notFoundBackoff[attempt]);
+        if (stillCurrent != null && !stillCurrent()) return null;
       }
     }
     return null;
@@ -436,15 +535,36 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     required String messageId,
     required String? expectedRequestKey,
     required String? expectedOwnerUserId,
+    String? expectedOwnerDeviceId,
+    int? expectedProtocolVersion,
+    int? expectedClientToolsVersion,
+    String? expectedKnowledgeMode,
     required String runId,
   }) async {
     await _ensureLoaded();
-    final updated = await _repo.attachAiRunToPendingMessage(
-      messageId: messageId,
-      expectedRequestKey: expectedRequestKey,
-      expectedOwnerUserId: expectedOwnerUserId,
-      runId: runId,
-    );
+    final usesClientTools =
+        expectedOwnerDeviceId != null &&
+        expectedProtocolVersion != null &&
+        expectedClientToolsVersion != null &&
+        expectedKnowledgeMode != null;
+    final updated = usesClientTools && _repo is ClientToolChatRepository
+        ? await (_repo as ClientToolChatRepository)
+              .attachAiRunClientToolsToPendingMessage(
+                messageId: messageId,
+                expectedRequestKey: expectedRequestKey,
+                expectedOwnerUserId: expectedOwnerUserId,
+                expectedOwnerDeviceId: expectedOwnerDeviceId,
+                expectedProtocolVersion: expectedProtocolVersion,
+                expectedClientToolsVersion: expectedClientToolsVersion,
+                expectedKnowledgeMode: expectedKnowledgeMode,
+                runId: runId,
+              )
+        : await _repo.attachAiRunToPendingMessage(
+            messageId: messageId,
+            expectedRequestKey: expectedRequestKey,
+            expectedOwnerUserId: expectedOwnerUserId,
+            runId: runId,
+          );
     if (updated == null) return null;
     _replacePersistedMessageInState(updated);
     return updated;
@@ -457,14 +577,82 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     required String ownerUserId,
   }) async {
     await _ensureLoaded();
-    final updated = await _repo.markAiRunCreateStarted(
-      messageId: messageId,
-      expectedRequestKey: expectedRequestKey,
-      ownerUserId: ownerUserId,
-    );
-    if (updated != null) _replacePersistedMessageInState(updated);
-    return updated;
+    final identity = _serverRunCreateIdentity(ownerUserId, expectedRequestKey);
+    _activeServerRunCreates.add(identity);
+    try {
+      final updated = await _repo.markAiRunCreateStarted(
+        messageId: messageId,
+        expectedRequestKey: expectedRequestKey,
+        ownerUserId: ownerUserId,
+      );
+      if (updated == null) {
+        _activeServerRunCreates.remove(identity);
+      } else {
+        _replacePersistedMessageInState(updated);
+      }
+      return updated;
+    } catch (_) {
+      _activeServerRunCreates.remove(identity);
+      rethrow;
+    }
   }
+
+  Future<ChatMessageRecord?> markClientToolRunCreateStarted({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+    required String ownerDeviceId,
+    required int protocolVersion,
+    required int clientToolsVersion,
+    required String knowledgeMode,
+  }) async {
+    await _ensureLoaded();
+    if (_repo is! ClientToolChatRepository) return null;
+    final identity = _serverRunCreateIdentity(ownerUserId, expectedRequestKey);
+    _activeServerRunCreates.add(identity);
+    try {
+      final updated = await (_repo as ClientToolChatRepository)
+          .markAiRunClientToolsCreateStarted(
+            messageId: messageId,
+            expectedRequestKey: expectedRequestKey,
+            ownerUserId: ownerUserId,
+            ownerDeviceId: ownerDeviceId,
+            protocolVersion: protocolVersion,
+            clientToolsVersion: clientToolsVersion,
+            knowledgeMode: knowledgeMode,
+          );
+      if (updated == null) {
+        _activeServerRunCreates.remove(identity);
+      } else {
+        _replacePersistedMessageInState(updated);
+      }
+      return updated;
+    } catch (_) {
+      _activeServerRunCreates.remove(identity);
+      rethrow;
+    }
+  }
+
+  /// Releases the in-process foreground-create gate after the POST stream has
+  /// either attached a run id or become genuinely ambiguous. Deleted-thread
+  /// tombstones held back by the gate are retried immediately.
+  Future<void> finishServerRunCreate({
+    required String ownerUserId,
+    required String requestKey,
+  }) async {
+    _activeServerRunCreates.remove(
+      _serverRunCreateIdentity(ownerUserId, requestKey),
+    );
+    await _ensureLoaded();
+    try {
+      await _cleanupPendingThreadDeletions(_repo);
+    } catch (_) {
+      // Tombstones remain durable and startup/lifecycle recovery retries them.
+    }
+  }
+
+  static String _serverRunCreateIdentity(String ownerUserId, String key) =>
+      '${ownerUserId.trim()}\u0000${key.trim()}';
 
   Future<ChatMessageRecord?> markRunCancellationRequested({
     required String messageId,
@@ -517,7 +705,13 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     }
 
     try {
-      await _ref.read(hostedAgentRunCancellerProvider)(runId);
+      final expectedOwner = current.aiRunOwnerUserId;
+      final currentOwner = _ref.read(currentSessionProvider)?.user.id;
+      if (expectedOwner == null || currentOwner != expectedOwner) return false;
+      await _ref.read(hostedAgentRunCancellerProvider)(
+        runId,
+        expectedOwnerUserId: expectedOwner,
+      );
     } catch (_) {
       return false;
     }
@@ -566,6 +760,11 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
       );
     }
     for (final message in pending) {
+      final expectedOwner = message.aiRunOwnerUserId;
+      if (expectedOwner == null ||
+          _ref.read(currentSessionProvider)?.user.id != expectedOwner) {
+        continue;
+      }
       try {
         await requestServerRunCancellation(
           messageId: message.id,
@@ -598,7 +797,11 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
           );
     final deletion = resolved?.aiRunIdsToCancel.contains(runId) == true
         ? resolved!
-        : await _repo.queueAiRunCancellation(threadId, runId);
+        : await _repo.queueAiRunCancellation(
+            threadId,
+            runId,
+            ownerUserId: ownerUserId,
+          );
     if (deletion.dataDeleted) {
       await _cleanupPendingThreadDeletion(
         _repo,

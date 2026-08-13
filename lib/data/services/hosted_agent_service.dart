@@ -46,6 +46,29 @@ class HostedAgentSource {
   }
 }
 
+class HostedAgentLocalSource {
+  final String id;
+  final String articleRef;
+
+  const HostedAgentLocalSource({required this.id, required this.articleRef});
+
+  factory HostedAgentLocalSource.fromJson(Map<String, dynamic> json) {
+    if (json.length != 2 ||
+        json['id'] is! String ||
+        !RegExp(r'^[1-9]\d{0,5}$').hasMatch(json['id'] as String) ||
+        json['articleRef'] is! String ||
+        !RegExp(
+          r'^ar_[A-Za-z0-9_-]{22,64}$',
+        ).hasMatch(json['articleRef'] as String)) {
+      throw const FormatException('Invalid local source response.');
+    }
+    return HostedAgentLocalSource(
+      id: json['id'] as String,
+      articleRef: json['articleRef'] as String,
+    );
+  }
+}
+
 class HostedAgentEvent {
   final String type;
   final Map<String, dynamic> data;
@@ -294,7 +317,7 @@ class HostedAgentControlService {
   /// this account that the client can cancel. Transient transport failures are
   /// retried because repeating this control request has no additional side
   /// effect once the server run is terminal.
-  Future<void> cancelRun(String runId) async {
+  Future<void> cancelRun(String runId, {String? expectedOwnerUserId}) async {
     final normalizedRunId = runId.trim();
     if (normalizedRunId.isEmpty) {
       throw const HostedAgentCancelException(
@@ -323,6 +346,15 @@ class HostedAgentControlService {
         retryable: true,
       );
     }
+    if (expectedOwnerUserId == null ||
+        expectedOwnerUserId.trim().isEmpty ||
+        session.user.id != expectedOwnerUserId) {
+      throw const HostedAgentCancelException(
+        message: 'The hosted AI account does not own this pending run.',
+        statusCode: 401,
+        retryable: false,
+      );
+    }
 
     var activeSession = session;
     var refreshedAfterUnauthorized = false;
@@ -346,6 +378,13 @@ class HostedAgentControlService {
             );
           }
           if (refreshed != null) {
+            if (refreshed.user.id != expectedOwnerUserId) {
+              throw const HostedAgentCancelException(
+                message: 'The hosted AI account does not own this pending run.',
+                statusCode: 401,
+                retryable: false,
+              );
+            }
             activeSession = refreshed;
             continue;
           }
@@ -455,6 +494,7 @@ class HostedAgentService {
   String? lastRunId;
   int lastEventSeq = 0;
   List<HostedAgentSource> lastSources = const [];
+  List<HostedAgentLocalSource> lastLocalSources = const [];
   List<HostedAgentEvent> lastEvents = const [];
   String? lastRunStatus;
   bool lastChunkIsFullAnswer = false;
@@ -462,6 +502,7 @@ class HostedAgentService {
   http.Client? _activeCreateClient;
   bool _createCancelled = false;
   String? _boundOwnerUserId;
+  String? _boundOwnerDeviceId;
   AiThinkingLevel thinkingLevel;
 
   HostedAgentService({
@@ -485,9 +526,15 @@ class HostedAgentService {
   /// Account currently backing this observer. The create coordinator stores
   /// it before POST so a later process can scope idempotency reconciliation.
   String? get currentUserId {
-    final owner = _getSession()?.user.id.trim();
-    if (owner == null || owner.isEmpty) return null;
-    return _boundOwnerUserId ??= owner;
+    final session = _getSession();
+    if (session == null || !_bindOrValidateSession(session)) return null;
+    return _boundOwnerUserId;
+  }
+
+  String? get currentDeviceId {
+    final session = _getSession();
+    if (session == null || !_bindOrValidateSession(session)) return null;
+    return _boundOwnerDeviceId;
   }
 
   List<String> get lastWebUrls => lastSources
@@ -498,11 +545,11 @@ class HostedAgentService {
   /// Sends a control-plane cancellation without mutating this stream
   /// observer's `last*` fields. Callers that do not need the observer should
   /// prefer constructing [HostedAgentControlService] directly.
-  Future<void> cancelRun(String runId) {
+  Future<void> cancelRun(String runId, {String? expectedOwnerUserId}) {
     return HostedAgentControlService(
       getSession: _getSession,
       refreshSession: _refreshSession,
-    ).cancelRun(runId);
+    ).cancelRun(runId, expectedOwnerUserId: expectedOwnerUserId);
   }
 
   /// Stops an in-flight `POST /ai/runs` upload owned by this observer.
@@ -532,13 +579,35 @@ class HostedAgentService {
         return null;
       }
     }
-    final boundOwner = _boundOwnerUserId;
-    if (boundOwner != null && session.user.id != boundOwner) {
-      lastError = 'The hosted AI account changed before the request started.';
-      lastStatusCode = 401;
-      return null;
-    }
+    if (!_bindOrValidateSession(session)) return null;
     return session;
+  }
+
+  bool _bindOrValidateSession(AuthSession session) {
+    final owner = session.user.id.trim();
+    final device = session.device.id.trim();
+    if (owner.isEmpty || device.isEmpty) {
+      lastError = 'The hosted AI session identity is invalid.';
+      lastStatusCode = 401;
+      return false;
+    }
+    _boundOwnerUserId ??= owner;
+    _boundOwnerDeviceId ??= device;
+    if (_boundOwnerUserId != owner || _boundOwnerDeviceId != device) {
+      lastError =
+          'The hosted AI account or device changed before the request started.';
+      lastStatusCode = 401;
+      return false;
+    }
+    return true;
+  }
+
+  bool _isCurrentSessionIdentity(AuthSession session) {
+    if (!_bindOrValidateSession(session)) return false;
+    final current = _getSession();
+    return current != null &&
+        current.user.id.trim() == _boundOwnerUserId &&
+        current.device.id.trim() == _boundOwnerDeviceId;
   }
 
   void _validateImages(List<AiImageInput> images) {
@@ -593,6 +662,72 @@ class HostedAgentService {
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
     String? idempotencyKey,
+  }) {
+    return _chatStreamInternal(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      userQuestion: userQuestion,
+      images: images,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      webSearch: webSearch,
+      clientToolsV3: false,
+      localKnowledge: false,
+      onEvent: onEvent,
+      onRunCreated: onRunCreated,
+      idempotencyKey: idempotencyKey,
+    );
+  }
+
+  Stream<String> chatStreamV3({
+    required String systemPrompt,
+    required String userMessage,
+    required String userQuestion,
+    List<AiImageInput> images = const [],
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+    bool webSearch = false,
+    bool localKnowledge = false,
+    String? knowledgeMode,
+    void Function(HostedAgentEvent event)? onEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
+  }) {
+    return _chatStreamInternal(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      userQuestion: userQuestion,
+      images: images,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      webSearch: webSearch,
+      clientToolsV3: true,
+      localKnowledge: localKnowledge,
+      knowledgeMode: knowledgeMode,
+      onEvent: onEvent,
+      onRunCreated: onRunCreated,
+      idempotencyKey: idempotencyKey,
+    );
+  }
+
+  Stream<String> _chatStreamInternal({
+    required String systemPrompt,
+    required String userMessage,
+    required String userQuestion,
+    required List<AiImageInput> images,
+    required List<Map<String, String>> history,
+    required double temperature,
+    required int maxTokens,
+    required bool webSearch,
+    required bool clientToolsV3,
+    required bool localKnowledge,
+    String? knowledgeMode,
+    void Function(HostedAgentEvent event)? onEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
   }) async* {
     _resetRunState();
     if (!isConfigured) {
@@ -604,6 +739,15 @@ class HostedAgentService {
     if (session == null) return;
 
     _validateImages(images);
+    if (clientToolsV3 &&
+        localKnowledge &&
+        knowledgeMode != 'only' &&
+        knowledgeMode != 'hybrid') {
+      throw const HostedAgentInputException(
+        code: 'invalid_knowledge_mode',
+        message: 'Hosted Agent local knowledge mode is invalid.',
+      );
+    }
     final userContent = images.isEmpty
         ? userMessage
         : <Map<String, dynamic>>[
@@ -626,7 +770,11 @@ class HostedAgentService {
       'temperature': temperature,
       'max_completion_tokens': maxTokens,
       'stream': true,
-      'memora_tools': {'web_search': webSearch},
+      'memora_tools': {
+        'web_search': webSearch,
+        if (clientToolsV3) 'local_knowledge': localKnowledge,
+      },
+      if (clientToolsV3 && localKnowledge) 'knowledge_mode': knowledgeMode,
       if (supportsDeepSeekThinking(model: model))
         ...deepSeekThinkingOptions(thinkingLevel),
     };
@@ -650,7 +798,7 @@ class HostedAgentService {
         if (error.statusCode == 401 && !refreshedCreateSession) {
           refreshedCreateSession = true;
           final refreshed = await _refreshSession();
-          if (refreshed != null) {
+          if (refreshed != null && _bindOrValidateSession(refreshed)) {
             session = refreshed;
             lastError = null;
             continue;
@@ -772,6 +920,13 @@ class HostedAgentService {
             );
           }
           if (refreshed != null) {
+            if (!_bindOrValidateSession(refreshed)) {
+              throw HostedAgentResumeException(
+                message: lastError!,
+                statusCode: 401,
+                retryable: false,
+              );
+            }
             session = refreshed;
             continue;
           }
@@ -878,6 +1033,12 @@ class HostedAgentService {
     Map<String, dynamic> body,
     String? idempotencyKey,
   ) async {
+    if (!_isCurrentSessionIdentity(session)) {
+      throw const HostedAgentInputException(
+        code: 'hosted_identity_changed',
+        message: 'The hosted AI account or device changed before create.',
+      );
+    }
     final client = http.Client();
     _activeCreateClient = client;
     try {
@@ -1003,6 +1164,9 @@ class HostedAgentService {
           refreshedAfterUnauthorized = true;
           final refreshed = await _refreshSession();
           if (refreshed == null) break;
+          if (!_bindOrValidateSession(refreshed)) {
+            throw StateError(lastError!);
+          }
           activeSession = refreshed;
           continue;
         }
@@ -1112,11 +1276,12 @@ class HostedAgentService {
 
     final event = HostedAgentEvent(
       type: (decoded['type'] ?? eventName).toString(),
-      data: decoded,
+      data: _sanitizePublicEvent(decoded),
     );
     _captureSources(decoded['sources']);
     if (event.type == 'run.result') {
       _captureSources(decoded['sources']);
+      _captureLocalSources(decoded['localSources']);
       _runIsTerminal = true;
       lastRunStatus = 'completed';
       lastChunkIsFullAnswer = true;
@@ -1150,6 +1315,7 @@ class HostedAgentService {
     void Function(HostedAgentEvent event)? onEvent,
   }) {
     _captureSources(decoded['sources']);
+    _captureLocalSources(decoded['localSources']);
     final status = (decoded['status'] ?? '').toString();
     if (status.isNotEmpty) lastRunStatus = status;
     if (status == 'failed' || status == 'cancelled') {
@@ -1163,12 +1329,25 @@ class HostedAgentService {
     if (rawError is Map) {
       lastError = (rawError['message'] ?? 'Hosted Agent failed.').toString();
     }
-    final event = HostedAgentEvent(type: 'run.snapshot', data: decoded);
+    final event = HostedAgentEvent(
+      type: 'run.snapshot',
+      data: _sanitizePublicEvent(decoded),
+    );
     onEvent?.call(event);
   }
 
   void _captureSources(dynamic rawSources) {
     if (rawSources is! List || rawSources.isEmpty) return;
+    if (rawSources.any(
+      (source) =>
+          source is Map &&
+          (source.containsKey('articleRef') ||
+              source.containsKey('article_ref')),
+    )) {
+      throw const FormatException(
+        'Hosted Agent mixed device references into web sources.',
+      );
+    }
     lastSources = List.unmodifiable(
       rawSources
           .whereType<Map>()
@@ -1180,6 +1359,53 @@ class HostedAgentService {
     );
   }
 
+  void _captureLocalSources(dynamic rawSources) {
+    if (rawSources == null) return;
+    if (rawSources is! List) {
+      throw const FormatException('Invalid local source response.');
+    }
+    final parsed = rawSources
+        .map(
+          (source) => HostedAgentLocalSource.fromJson(
+            Map<String, dynamic>.from(source as Map),
+          ),
+        )
+        .toList(growable: false);
+    if (parsed.map((item) => item.id).toSet().length != parsed.length ||
+        parsed.map((item) => item.articleRef).toSet().length != parsed.length) {
+      throw const FormatException('Duplicate local source response.');
+    }
+    lastLocalSources = List.unmodifiable(parsed);
+  }
+
+  static Map<String, dynamic> _sanitizePublicEvent(Map<String, dynamic> value) {
+    dynamic sanitize(dynamic item) {
+      if (item is String) {
+        return item.replaceAll(
+          RegExp(r'\bar_[A-Za-z0-9_-]{22,64}\b'),
+          '[device-reference]',
+        );
+      }
+      if (item is List) return item.map(sanitize).toList(growable: false);
+      if (item is Map) {
+        final result = <String, dynamic>{};
+        for (final entry in item.entries) {
+          final key = entry.key.toString();
+          if (key == 'localSources' ||
+              key == 'articleRef' ||
+              key == 'article_ref') {
+            continue;
+          }
+          result[key] = sanitize(entry.value);
+        }
+        return result;
+      }
+      return item;
+    }
+
+    return Map<String, dynamic>.from(sanitize(value) as Map);
+  }
+
   void _resetRunState() {
     _createCancelled = false;
     lastError = null;
@@ -1187,6 +1413,7 @@ class HostedAgentService {
     lastRunId = null;
     lastEventSeq = 0;
     lastSources = const [];
+    lastLocalSources = const [];
     lastEvents = const [];
     lastRunStatus = null;
     lastChunkIsFullAnswer = false;

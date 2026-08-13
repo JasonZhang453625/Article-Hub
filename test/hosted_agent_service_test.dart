@@ -351,6 +351,127 @@ void main() {
     expect(service.lastError, isNull);
   });
 
+  test(
+    'device client-tools create rejects a same-user device refresh race',
+    () async {
+      var active = _session(_jwt('old-device'));
+      final differentDevice = AuthSession(
+        user: active.user,
+        device: AuthDevice(
+          id: 'device-2',
+          userId: active.device.userId,
+          deviceName: active.device.deviceName,
+          platform: active.device.platform,
+          appVersion: active.device.appVersion,
+        ),
+        accessToken: _jwt('new-device'),
+        refreshToken: active.refreshToken,
+        refreshTokenExpiresAt: active.refreshTokenExpiresAt,
+      );
+      var posts = 0;
+      final client = MockClient.streaming((request, _) async {
+        if (request.method == 'POST') {
+          posts++;
+          return http.StreamedResponse(
+            Stream<List<int>>.value(utf8.encode('{"error":"expired"}')),
+            401,
+          );
+        }
+        throw StateError('events must not be opened');
+      });
+      final service = HostedAgentService(
+        getSession: () => active,
+        refreshSession: () async {
+          active = differentDevice;
+          return differentDevice;
+        },
+        model: 'mimo-v2.5',
+      );
+      expect(service.currentDeviceId, 'device-1');
+
+      final chunks = await http.runWithClient(
+        () => service
+            .chatStreamV3(
+              systemPrompt: 'system',
+              userMessage: 'question',
+              userQuestion: 'question',
+              localKnowledge: true,
+              knowledgeMode: 'only',
+            )
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks, isEmpty);
+      expect(posts, 1);
+      expect(service.lastStatusCode, 401);
+      expect(service.lastError, contains('device changed'));
+    },
+  );
+
+  test(
+    'v3 wire adds local knowledge while legacy v2 wire stays exact',
+    () async {
+      final payloads = <Map<String, dynamic>>[];
+      var run = 0;
+      final client = MockClient.streaming((request, bodyStream) async {
+        if (request.method == 'POST') {
+          run++;
+          payloads.add(jsonDecode(await bodyStream.bytesToString()));
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode('{"id":"wire-$run","status":"queued"}'),
+            ),
+            202,
+          );
+        }
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              'id: 1\nevent: agent\ndata: {"type":"run.result",'
+              '"runId":"wire-$run","answer":"ok","sources":[]}\n\n',
+            ),
+          ),
+          200,
+        );
+      });
+      HostedAgentService service() => HostedAgentService(
+        getSession: () => _session(_jwt('wire')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+      );
+      await http.runWithClient(
+        () => service()
+            .chatStream(
+              systemPrompt: 'system',
+              userMessage: 'legacy',
+              userQuestion: 'legacy',
+            )
+            .toList(),
+        () => client,
+      );
+      await http.runWithClient(
+        () => service()
+            .chatStreamV3(
+              systemPrompt: 'system',
+              userMessage: 'v3',
+              userQuestion: 'v3',
+              localKnowledge: true,
+              knowledgeMode: 'hybrid',
+            )
+            .toList(),
+        () => client,
+      );
+      expect(payloads[0]['memora_tools'], {'web_search': false});
+      expect(payloads[0].containsKey('knowledge_mode'), isFalse);
+      expect(payloads[1]['memora_tools'], {
+        'web_search': false,
+        'local_knowledge': true,
+      });
+      expect(payloads[1]['knowledge_mode'], 'hybrid');
+    },
+  );
+
   test('replays an ambiguous create with the same idempotency key', () async {
     var createCalls = 0;
     final seenKeys = <String?>[];
@@ -1228,7 +1349,7 @@ void main() {
             ..lastRunStatus = 'running';
 
       await http.runWithClient(
-        () => service.cancelRun('run-state-1'),
+        () => service.cancelRun('run-state-1', expectedOwnerUserId: 'user-1'),
         () => client,
       );
 
@@ -1418,7 +1539,10 @@ void main() {
       },
     );
 
-    await http.runWithClient(() => control.cancelRun('run-gone'), () => client);
+    await http.runWithClient(
+      () => control.cancelRun('run-gone', expectedOwnerUserId: 'user-1'),
+      () => client,
+    );
 
     expect(requests, 2);
     expect(refreshes, 1);

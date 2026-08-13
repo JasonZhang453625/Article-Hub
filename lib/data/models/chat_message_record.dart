@@ -51,6 +51,17 @@ class ChatMessageRecord {
   /// must never use this key for lookup.
   final String? aiRunOwnerUserId;
 
+  /// Device that authorized the durable Agent attempt. Device-local tools
+  /// must never be claimed by another installation, even for the same user.
+  final String? aiRunOwnerDeviceId;
+
+  /// Immutable protocol metadata negotiated before `POST /ai/runs`.
+  final int? aiRunProtocolVersion;
+  final int? aiRunClientToolsVersion;
+
+  /// Local-knowledge policy frozen for this concrete run (`only`/`hybrid`).
+  final String? aiRunKnowledgeMode;
+
   /// Files owned by this message. User messages may have attachments;
   /// assistant messages normally keep this empty.
   final List<ChatAttachment> attachments;
@@ -73,6 +84,12 @@ class ChatMessageRecord {
       (status == ChatMessageStatus.sending ||
           errorCode == 'hosted_cancel_requested');
 
+  bool get usesDeviceClientTools =>
+      aiRunProtocolVersion != null &&
+      aiRunProtocolVersion! >= 3 &&
+      aiRunClientToolsVersion == 1 &&
+      (aiRunKnowledgeMode == 'only' || aiRunKnowledgeMode == 'hybrid');
+
   const ChatMessageRecord({
     required this.id,
     required this.threadId,
@@ -93,6 +110,10 @@ class ChatMessageRecord {
     this.aiRunEventSeq,
     this.aiRunRequestKey,
     this.aiRunOwnerUserId,
+    this.aiRunOwnerDeviceId,
+    this.aiRunProtocolVersion,
+    this.aiRunClientToolsVersion,
+    this.aiRunKnowledgeMode,
     this.attachments = const [],
     this.attachmentIdsForCleanup = const [],
     this.attachmentContext,
@@ -115,6 +136,10 @@ class ChatMessageRecord {
     int? aiRunEventSeq,
     String? aiRunRequestKey,
     String? aiRunOwnerUserId,
+    String? aiRunOwnerDeviceId,
+    int? aiRunProtocolVersion,
+    int? aiRunClientToolsVersion,
+    String? aiRunKnowledgeMode,
     List<ChatAttachment>? attachments,
     List<String>? attachmentIdsForCleanup,
     String? attachmentContext,
@@ -140,6 +165,11 @@ class ChatMessageRecord {
       aiRunEventSeq: aiRunEventSeq ?? this.aiRunEventSeq,
       aiRunRequestKey: aiRunRequestKey ?? this.aiRunRequestKey,
       aiRunOwnerUserId: aiRunOwnerUserId ?? this.aiRunOwnerUserId,
+      aiRunOwnerDeviceId: aiRunOwnerDeviceId ?? this.aiRunOwnerDeviceId,
+      aiRunProtocolVersion: aiRunProtocolVersion ?? this.aiRunProtocolVersion,
+      aiRunClientToolsVersion:
+          aiRunClientToolsVersion ?? this.aiRunClientToolsVersion,
+      aiRunKnowledgeMode: aiRunKnowledgeMode ?? this.aiRunKnowledgeMode,
       attachments: attachments ?? this.attachments,
       attachmentIdsForCleanup:
           attachmentIdsForCleanup ?? this.attachmentIdsForCleanup,
@@ -172,6 +202,10 @@ class ChatMessageRecord {
       aiRunEventSeq: null,
       aiRunRequestKey: aiRunRequestKey,
       aiRunOwnerUserId: null,
+      aiRunOwnerDeviceId: null,
+      aiRunProtocolVersion: null,
+      aiRunClientToolsVersion: null,
+      aiRunKnowledgeMode: null,
       attachmentIdsForCleanup: attachmentIdsForCleanup,
     );
   }
@@ -211,13 +245,17 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       attachmentContextIncludesImages: fields[19] as bool? ?? false,
       aiRunRequestKey: fields[20] as String?,
       aiRunOwnerUserId: fields[22] as String?,
+      aiRunOwnerDeviceId: fields[23] as String?,
+      aiRunProtocolVersion: (fields[24] as num?)?.toInt(),
+      aiRunClientToolsVersion: (fields[25] as num?)?.toInt(),
+      aiRunKnowledgeMode: fields[26] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(23)
+      ..writeByte(27)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -268,7 +306,15 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
         ),
       )
       ..writeByte(22)
-      ..write(obj.aiRunOwnerUserId);
+      ..write(obj.aiRunOwnerUserId)
+      ..writeByte(23)
+      ..write(obj.aiRunOwnerDeviceId)
+      ..writeByte(24)
+      ..write(obj.aiRunProtocolVersion)
+      ..writeByte(25)
+      ..write(obj.aiRunClientToolsVersion)
+      ..writeByte(26)
+      ..write(obj.aiRunKnowledgeMode);
   }
 }
 

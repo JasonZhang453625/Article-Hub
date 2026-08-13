@@ -12,6 +12,7 @@ import '../../data/models/chat_message_record.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/ai_service.dart';
+import '../../data/services/agent_client_tool_store.dart';
 import '../../data/services/chat_attachment_pipeline.dart';
 import '../../data/services/chat_attachment_service.dart';
 import '../../data/services/hosted_agent_service.dart';
@@ -19,6 +20,7 @@ import '../../data/services/rag_citation.dart';
 import '../../data/services/rag_conversation_service.dart';
 import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/attachment_providers.dart';
+import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/pipeline_provider.dart';
@@ -26,6 +28,7 @@ import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/ai_error_messages.dart';
 import '../../shared/utils/locale_strings.dart';
 import '../../shared/utils/snackbar_helpers.dart';
+import '../../shared/widgets/agent_client_tool_host.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
@@ -458,6 +461,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     final activeSettings = settings;
 
+    if (ref.read(hostedAiEnabledProvider) &&
+        ref.read(hostedAgentServiceProvider) == null) {
+      await finish(
+        pending.copyWith(
+          content: localizedAiErrorMessage(
+            s,
+            'Hosted Agent protocol is not available.',
+          ),
+          status: ChatMessageStatus.failed,
+          errorCode: 'hosted_agent_protocol_unavailable',
+        ),
+      );
+      return;
+    }
+
     final conversation = ref.read(ragConversationServiceProvider);
     if (conversation == null) {
       await finish(
@@ -480,6 +498,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     final hostedAgentForCreate = ref.read(hostedAgentServiceProvider);
     final usesHostedAgent = hostedAgentForCreate != null;
+    final agentClientTools = usesHostedAgent
+        ? ref.read(hostedAgentClientToolsCapabilitiesProvider)
+        : null;
     final agentImageCapabilities = usesHostedAgent
         ? ref.read(hostedAgentImageInputCapabilitiesProvider)
         : null;
@@ -559,7 +580,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (completedArticles.isEmpty &&
         activeSettings.chatKnowledgeSourceIndex == 0 &&
         !ref.read(chatWebSearchEnabledProvider) &&
-        userMessage.attachments.isEmpty) {
+        userMessage.attachments.isEmpty &&
+        agentClientTools == null) {
       await finish(
         pending.copyWith(
           content: s.knowledgeBaseEmpty,
@@ -577,6 +599,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     var lastPartialPersist = DateTime.fromMillisecondsSinceEpoch(0);
     var partialPersistChain = Future<void>.value();
     String? liveServerRunId;
+    String? activeCreateOwnerUserId;
+    String? activeCreateRequestKey;
 
     bool durableRunStillPending() {
       if (liveServerRunId == null) return false;
@@ -675,7 +699,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (usesHostedAgent) {
       final requestKey = pending.aiRunRequestKey;
       final ownerUserId = hostedAgentForCreate.currentUserId;
-      if (requestKey == null || ownerUserId == null) {
+      final hasAttachments = userMessage.attachments.isNotEmpty;
+      final usesDeviceClientTools = !hasAttachments && agentClientTools != null;
+      final ownerDeviceId = hostedAgentForCreate.currentDeviceId;
+      if (requestKey == null ||
+          ownerUserId == null ||
+          usesDeviceClientTools && ownerDeviceId == null) {
         await finish(
           pending.copyWith(
             content: localizedAiErrorMessage(s, 'Sign in to use hosted AI.'),
@@ -685,11 +714,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         );
         return;
       }
-      final marked = await sessions.markServerRunCreateStarted(
-        messageId: pending.id,
-        expectedRequestKey: requestKey,
-        ownerUserId: ownerUserId,
-      );
+      final knowledgeMode = activeSettings.chatKnowledgeSourceIndex == 0
+          ? 'only'
+          : 'hybrid';
+      final negotiatedProtocolVersion =
+          ref
+              .read(hostedAiCapabilitiesProvider)
+              .valueOrNull
+              ?.agentProtocolVersion ??
+          0;
+      final marked = usesDeviceClientTools
+          ? await sessions.markClientToolRunCreateStarted(
+              messageId: pending.id,
+              expectedRequestKey: requestKey,
+              ownerUserId: ownerUserId,
+              ownerDeviceId: ownerDeviceId!,
+              protocolVersion: negotiatedProtocolVersion,
+              clientToolsVersion: agentClientTools.version,
+              knowledgeMode: knowledgeMode,
+            )
+          : await sessions.markServerRunCreateStarted(
+              messageId: pending.id,
+              expectedRequestKey: requestKey,
+              ownerUserId: ownerUserId,
+            );
       if (marked == null) {
         // Stop, delete, or a newer retry won the repository CAS. Sending a
         // create now could only produce an orphan owned by the old attempt.
@@ -697,9 +745,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       activePending = marked;
       hostedRunOwnerUserId = ownerUserId;
+      activeCreateOwnerUserId = ownerUserId;
+      activeCreateRequestKey = requestKey;
     }
     if (runControl.cancelRequested || runId != _answerRunId) {
       await _finishUnstartedCancellation(runControl);
+      final createOwner = activeCreateOwnerUserId;
+      final createKey = activeCreateRequestKey;
+      if (createOwner != null && createKey != null) {
+        await sessions.finishServerRunCreate(
+          ownerUserId: createOwner,
+          requestKey: createKey,
+        );
+      }
       return;
     }
     runControl.durableRunExpected = usesHostedAgent;
@@ -729,6 +787,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             messageId: pending.id,
             expectedRequestKey: pending.aiRunRequestKey,
             expectedOwnerUserId: hostedRunOwnerUserId,
+            expectedOwnerDeviceId: activePending.aiRunOwnerDeviceId,
+            expectedProtocolVersion: activePending.aiRunProtocolVersion,
+            expectedClientToolsVersion: activePending.aiRunClientToolsVersion,
+            expectedKnowledgeMode: activePending.aiRunKnowledgeMode,
             runId: serverRunId,
           );
           if (attached == null) {
@@ -745,7 +807,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   requestKey: pending.aiRunRequestKey,
                 );
               } else {
-                await ref.read(hostedAgentRunCancellerProvider)(serverRunId);
+                await ref.read(hostedAgentRunCancellerProvider)(
+                  serverRunId,
+                  expectedOwnerUserId: hostedRunOwnerUserId,
+                );
               }
             } catch (error, stackTrace) {
               developer.log(
@@ -848,6 +913,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       );
     } finally {
+      final createOwner = activeCreateOwnerUserId;
+      final createKey = activeCreateRequestKey;
+      if (createOwner != null && createKey != null) {
+        await sessions.finishServerRunCreate(
+          ownerUserId: createOwner,
+          requestKey: createKey,
+        );
+      }
       final serverRunId = liveServerRunId;
       if (serverRunId != null) {
         _liveServerRunIds.remove(serverRunId);
@@ -909,9 +982,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await sessions.retryPendingRunCancellations();
       recoveryFailed = await sessions.reconcileAmbiguousServerRuns(
         ownerUserId: hostedAgent.currentUserId,
+        ownerDeviceId: hostedAgent.currentDeviceId,
       );
       final pending = await sessions.pendingServerMessages(
         ownerUserId: hostedAgent.currentUserId,
+        ownerDeviceId: hostedAgent.currentDeviceId,
       );
       for (final message in pending) {
         final runId = message.aiRunId;
@@ -1031,14 +1106,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         response: answer,
         urls: hostedAgent.lastWebUrls,
       );
+      var citedArticleIds = const <String>[];
+      final session = ref.read(currentSessionProvider);
+      if (message.usesDeviceClientTools &&
+          session != null &&
+          session.user.id == message.aiRunOwnerUserId &&
+          session.device.id == message.aiRunOwnerDeviceId) {
+        // Await the repository itself rather than interpreting a loading
+        // articles provider as an empty vault. If hydration fails, the outer
+        // recovery catch deliberately leaves this durable run pending and the
+        // run-scoped refs intact for a later retry/restart.
+        final articleRepository = await ref.read(
+          articleRepositoryProvider.future,
+        );
+        citedArticleIds = await ref
+            .read(agentClientToolStoreProvider)
+            .resolveCitedArticleIds(
+              binding: AgentToolRunBinding(
+                ownerUserId: session.user.id,
+                ownerDeviceId: session.device.id,
+                runId: runId,
+              ),
+              answer: answer,
+              localSources: hostedAgent.lastLocalSources
+                  .map(
+                    (source) => (id: source.id, articleRef: source.articleRef),
+                  )
+                  .toList(growable: false),
+              existingArticleIds: articleRepository
+                  .getAll()
+                  .map((article) => article.id)
+                  .toSet(),
+            );
+      }
       await sessions.updateMessage(
         message.copyWith(
           content: answer,
           status: ChatMessageStatus.completed,
+          articleIds: citedArticleIds,
           webUrls: citedWebUrls,
-          method: citedWebUrls.isEmpty
-              ? message.method
-              : (message.method ?? 'web'),
+          method: citedArticleIds.isNotEmpty && citedWebUrls.isNotEmpty
+              ? 'hybrid'
+              : citedArticleIds.isNotEmpty
+              ? 'local'
+              : citedWebUrls.isNotEmpty
+              ? 'web'
+              : message.method,
           aiRunEventSeq: hostedAgent.lastEventSeq,
         ),
       );
@@ -1175,6 +1288,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
     final serverRunId = control.serverRunId;
     if (serverRunId != null) {
+      await ref.read(agentClientToolLifecycleProvider).revokeRun(serverRunId);
       await sessions.requestServerRunCancellation(
         messageId: messageId,
         expectedRequestKey: control.requestKey,
@@ -1513,6 +1627,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       threadId,
       ownerUserId: ref.read(hostedAgentServiceProvider)?.currentUserId,
     );
+    // Only after the deletion tombstone is durable may local tool receipts be
+    // erased. A crash at any earlier await leaves an explicit cancel intent;
+    // a crash after deletion leaves the tombstone as the recovery authority.
+    for (final control in controls) {
+      final serverRunId = control.serverRunId;
+      if (serverRunId != null) {
+        await ref.read(agentClientToolLifecycleProvider).revokeRun(serverRunId);
+      }
+    }
   }
 
   @override
