@@ -10,6 +10,7 @@ import '../../data/services/agent_client_tool_executor.dart';
 import '../../data/services/agent_client_tool_store.dart';
 import '../../data/services/auth_service.dart';
 import '../../data/services/hosted_ai_capabilities.dart';
+import '../../data/services/hosted_agent_service.dart';
 import '../providers/ai_providers.dart';
 import '../providers/article_providers.dart';
 import '../providers/auth_provider.dart';
@@ -67,6 +68,8 @@ class _AgentClientToolHostState extends ConsumerState<AgentClientToolHost> {
   Timer? _timer;
   int _generation = 0;
   bool _tickRunning = false;
+  bool _tickRequested = false;
+  StreamSubscription<HostedAgentClientToolWake>? _wakeSubscription;
   final Set<String> _inFlight = {};
   final Set<String> _blockedCalls = {};
   final Set<String> _awaitingPendingReclaim = {};
@@ -86,6 +89,10 @@ class _AgentClientToolHostState extends ConsumerState<AgentClientToolHost> {
       beforeSignOut: _beforeSignOut,
       revokeRun: _revokeRunFromUi,
     );
+    _wakeSubscription = ref
+        .read(hostedAgentClientToolWakeProvider)
+        .stream
+        .listen(_handleWake);
   }
 
   @override
@@ -93,6 +100,7 @@ class _AgentClientToolHostState extends ConsumerState<AgentClientToolHost> {
     _lifecycleCoordinator?.detach();
     _lifecycleCoordinator = null;
     _timer?.cancel();
+    _wakeSubscription?.cancel();
     _api?.close();
     super.dispose();
   }
@@ -123,6 +131,7 @@ class _AgentClientToolHostState extends ConsumerState<AgentClientToolHost> {
     }
 
     _generation++;
+    _tickRequested = false;
     _timer?.cancel();
     _timer = null;
     _api?.close();
@@ -152,14 +161,33 @@ class _AgentClientToolHostState extends ConsumerState<AgentClientToolHost> {
     _scheduleTick();
   }
 
-  void _scheduleTick() {
-    if (_tickRunning || _binding == null || _capabilities == null) return;
+  void _scheduleTick({bool latchIfRunning = false}) {
+    if (_binding == null || _capabilities == null) return;
+    if (_tickRunning) {
+      if (latchIfRunning) _tickRequested = true;
+      return;
+    }
     _tickRunning = true;
     unawaited(
       _tick().whenComplete(() {
         _tickRunning = false;
+        if (_tickRequested) {
+          _tickRequested = false;
+          _scheduleTick();
+        }
       }),
     );
+  }
+
+  void _handleWake(HostedAgentClientToolWake wake) {
+    if (_binding == null ||
+        _capabilities == null ||
+        wake.runId.trim().isEmpty) {
+      return;
+    }
+    // The signal carries no tool arguments. It can only accelerate a complete
+    // ledger reconciliation; REST decides which owned runs and calls exist.
+    _scheduleTick(latchIfRunning: true);
   }
 
   Future<void> _tick() async {
@@ -663,6 +691,7 @@ class _AgentClientToolHostState extends ConsumerState<AgentClientToolHost> {
 
   Future<void> _beforeSignOut() async {
     _generation++;
+    _tickRequested = false;
     _timer?.cancel();
     _api?.close();
     _api = null;

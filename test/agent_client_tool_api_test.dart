@@ -276,6 +276,38 @@ void main() {
     );
   });
 
+  test('local-search result rejects duplicate article_ref values', () {
+    const duplicateRef = 'ar_abcdefghijklmnopqrstuv';
+    expect(
+      () => validateAgentClientToolResult(
+        tool: 'local_search',
+        argumentsJson: '{"query":"x"}',
+        result: const {
+          'schemaVersion': 1,
+          'status': 'ok',
+          'results': [
+            {
+              'article_ref': duplicateRef,
+              'title': 'First',
+              'snippets': [
+                {'kind': 'summary', 'text': 'First evidence'},
+              ],
+            },
+            {
+              'article_ref': duplicateRef,
+              'title': 'Duplicate',
+              'snippets': [
+                {'kind': 'summary', 'text': 'Duplicate evidence'},
+              ],
+            },
+          ],
+          'truncated': false,
+        },
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('result ACK is bound to the requested run', () async {
     final receipt = await _readyReceipt(store);
     final client = MockClient(

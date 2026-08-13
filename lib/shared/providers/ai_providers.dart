@@ -219,8 +219,34 @@ final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
         ? hostedAgentImageMimeTypes
         : imageCapabilities.mimeTypes.intersection(hostedAgentImageMimeTypes),
     imageInputEnabled: imageCapabilities != null,
+    onClientToolWake: ref.read(hostedAgentClientToolWakeProvider).emit,
   );
 });
+
+/// App-global, payload-free wake channel for protocol-v3 client tools.
+///
+/// It is intentionally independent of ChatScreen. The app-global host
+/// consumes only the run id and always reconciles through REST pending.
+final hostedAgentClientToolWakeProvider = Provider<HostedAgentClientToolWakes>((
+  ref,
+) {
+  final wakes = HostedAgentClientToolWakes();
+  ref.onDispose(wakes.dispose);
+  return wakes;
+});
+
+class HostedAgentClientToolWakes {
+  final StreamController<HostedAgentClientToolWake> _controller =
+      StreamController<HostedAgentClientToolWake>.broadcast(sync: true);
+
+  Stream<HostedAgentClientToolWake> get stream => _controller.stream;
+
+  void emit(HostedAgentClientToolWake wake) {
+    if (!_controller.isClosed) _controller.add(wake);
+  }
+
+  void dispose() => _controller.close();
+}
 
 int _lowerLimit(int advertised, int localHardLimit) =>
     advertised < localHardLimit ? advertised : localHardLimit;

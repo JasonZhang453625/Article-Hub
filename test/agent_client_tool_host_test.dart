@@ -30,6 +30,152 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
+    'SSE wake triggers authoritative pending before the poll fallback',
+    (tester) async {
+      final repository = _activeRepository();
+      var exposeCall = false;
+      var pendingCalls = 0;
+      var claimCalls = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/pending')) {
+          pendingCalls++;
+          return _pendingResponse(
+            calls: exposeCall ? [_call(status: 'pending')] : const [],
+          );
+        }
+        if (request.url.path.endsWith('/claim')) {
+          claimCalls++;
+          return _claimResponse(token: _claimToken(1), epoch: '1');
+        }
+        if (request.url.path.endsWith('/result')) return _acceptedResult();
+        return http.Response('{}', 500);
+      });
+
+      await http.runWithClient(() async {
+        final harness = await _mountHost(
+          tester,
+          repository: repository,
+          store: _MemoryAgentClientToolStore(),
+          retrieval: _FakeRetrievalService(),
+          initialArticles: [_article()],
+        );
+        await _pumpUntil(tester, () => pendingCalls >= 1);
+        final beforeWake = pendingCalls;
+        exposeCall = true;
+        harness.container
+            .read(hostedAgentClientToolWakeProvider)
+            .emit(const HostedAgentClientToolWake('run-1'));
+        await tester.pump(const Duration(milliseconds: 10));
+        await tester.pump();
+
+        expect(pendingCalls, beforeWake + 1);
+        expect(claimCalls, 1);
+        await _unmount(tester);
+      }, () => client);
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'lost SSE wake still recovers through the 800ms pending poll',
+    (tester) async {
+      final repository = _activeRepository();
+      var exposeCall = false;
+      var pendingCalls = 0;
+      var claimCalls = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'GET' && request.url.path.endsWith('/pending')) {
+          pendingCalls++;
+          return _pendingResponse(
+            calls: exposeCall ? [_call(status: 'pending')] : const [],
+          );
+        }
+        if (request.url.path.endsWith('/claim')) {
+          claimCalls++;
+          return _claimResponse(token: _claimToken(1), epoch: '1');
+        }
+        if (request.url.path.endsWith('/result')) return _acceptedResult();
+        return http.Response('{}', 500);
+      });
+
+      await http.runWithClient(() async {
+        await _mountHost(
+          tester,
+          repository: repository,
+          store: _MemoryAgentClientToolStore(),
+          retrieval: _FakeRetrievalService(),
+          initialArticles: [_article()],
+        );
+        await _pumpUntil(tester, () => pendingCalls >= 1);
+        final beforeFallback = pendingCalls;
+        exposeCall = true;
+        await tester.pump(const Duration(milliseconds: 800));
+        await tester.pump();
+
+        expect(pendingCalls, greaterThan(beforeFallback));
+        expect(claimCalls, 1);
+        await _unmount(tester);
+      }, () => client);
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'SSE wake during an active poll latches one immediate REST retry',
+    (tester) async {
+      final repository = _activeRepository();
+      final firstPendingStarted = Completer<void>();
+      final firstPendingResponse = Completer<http.Response>();
+      var pendingCalls = 0;
+      var claimCalls = 0;
+      final client = MockClient((request) {
+        if (request.method == 'GET' && request.url.path.endsWith('/pending')) {
+          pendingCalls++;
+          if (pendingCalls == 1) {
+            firstPendingStarted.complete();
+            return firstPendingResponse.future;
+          }
+          return Future.value(
+            _pendingResponse(calls: [_call(status: 'pending')]),
+          );
+        }
+        if (request.url.path.endsWith('/claim')) {
+          claimCalls++;
+          return Future.value(
+            _claimResponse(token: _claimToken(1), epoch: '1'),
+          );
+        }
+        if (request.url.path.endsWith('/result')) {
+          return Future.value(_acceptedResult());
+        }
+        return Future.value(http.Response('{}', 500));
+      });
+
+      await http.runWithClient(() async {
+        final harness = await _mountHost(
+          tester,
+          repository: repository,
+          store: _MemoryAgentClientToolStore(),
+          retrieval: _FakeRetrievalService(),
+          initialArticles: [_article()],
+        );
+        await _pumpUntil(tester, () => firstPendingStarted.isCompleted);
+        harness.container
+            .read(hostedAgentClientToolWakeProvider)
+            .emit(const HostedAgentClientToolWake('run-1'));
+        firstPendingResponse.complete(_pendingResponse(calls: const []));
+        await tester.pump(const Duration(milliseconds: 10));
+        await tester.pump();
+
+        expect(pendingCalls, 2);
+        expect(claimCalls, 1);
+        await _unmount(tester);
+      }, () => client);
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
     'loading vault delays claim and 401 replays the same result receipt',
     (tester) async {
       final repository = _activeRepository();

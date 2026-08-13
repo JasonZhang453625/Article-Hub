@@ -14,6 +14,71 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'client-tool SSE emits only a run-id wake and retains no payload',
+    () async {
+      final wakes = <HostedAgentClientToolWake>[];
+      final publicEvents = <HostedAgentEvent>[];
+      final client = MockClient.streaming((request, _) async {
+        if (request.method == 'POST') {
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode('{"id":"run-wake","status":"queued"}'),
+            ),
+            202,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              'id: 1\n'
+              'event: agent\n'
+              'data: {"type":"client_tool.pending","runId":"run-other",'
+              '"arguments":{"query":"wrong run"}}\n\n'
+              'id: 2\n'
+              'event: agent\n'
+              'data: {"type":"client_tool.pending","runId":"run-wake",'
+              '"callId":"private-call","tool":"local_search",'
+              '"arguments":{"query":"private query"}}\n\n'
+              'id: 3\n'
+              'event: agent\n'
+              'data: {"type":"run.result","runId":"run-wake",'
+              '"answer":"Done","sources":[]}\n\n',
+            ),
+          ),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('wake')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        onClientToolWake: wakes.add,
+      );
+
+      final chunks = await http.runWithClient(
+        () => service
+            .chatStreamV3(
+              systemPrompt: 'system',
+              userMessage: 'question',
+              userQuestion: 'question',
+              localKnowledge: true,
+              knowledgeMode: 'only',
+              onEvent: publicEvents.add,
+            )
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks, ['Done']);
+      expect(wakes.map((wake) => wake.runId), ['run-wake']);
+      expect(service.lastEvents, isEmpty);
+      expect(publicEvents, isEmpty);
+    },
+  );
+
+  test(
     'streams Agent answer and captures tool events and web sources',
     () async {
       Map<String, dynamic>? payload;

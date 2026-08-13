@@ -76,6 +76,16 @@ class HostedAgentEvent {
   const HostedAgentEvent({required this.type, required this.data});
 }
 
+/// Process-local wake-up emitted by the durable Agent SSE observer.
+///
+/// The server event payload is deliberately discarded. Device-tool REST
+/// pending remains the sole source of truth for arguments and execution.
+class HostedAgentClientToolWake {
+  final String runId;
+
+  const HostedAgentClientToolWake(this.runId);
+}
+
 /// A failure while reconnecting to an already-created durable Agent run.
 ///
 /// Retryable failures must never be interpreted as a terminal model outcome:
@@ -488,6 +498,7 @@ class HostedAgentService {
   final int maxBodyBytes;
   final Set<String> allowedImageMimeTypes;
   final bool imageInputEnabled;
+  final void Function(HostedAgentClientToolWake wake)? _onClientToolWake;
 
   String? lastError;
   int? lastStatusCode;
@@ -517,8 +528,10 @@ class HostedAgentService {
     this.maxBodyBytes = maxHostedAgentBodyBytes,
     this.allowedImageMimeTypes = hostedAgentImageMimeTypes,
     this.imageInputEnabled = false,
+    void Function(HostedAgentClientToolWake wake)? onClientToolWake,
   }) : _getSession = getSession,
-       _refreshSession = refreshSession;
+       _refreshSession = refreshSession,
+       _onClientToolWake = onClientToolWake;
 
   bool get isConfigured =>
       BackendConfig.isConfigured && model.trim().isNotEmpty;
@@ -1274,8 +1287,19 @@ class HostedAgentService {
       return completion.text;
     }
 
+    final type = (decoded['type'] ?? eventName).toString();
+    if (type == 'client_tool.pending') {
+      final runId = decoded['runId'];
+      if (runId is String && runId == lastRunId && _validRunId(runId)) {
+        _onClientToolWake?.call(HostedAgentClientToolWake(runId));
+      }
+      // A client-tool SSE event is a wake-up only. Do not retain or surface
+      // its untrusted payload; the global host fetches authoritative REST.
+      return null;
+    }
+
     final event = HostedAgentEvent(
-      type: (decoded['type'] ?? eventName).toString(),
+      type: type,
       data: _sanitizePublicEvent(decoded),
     );
     _captureSources(decoded['sources']);
@@ -1405,6 +1429,9 @@ class HostedAgentService {
 
     return Map<String, dynamic>.from(sanitize(value) as Map);
   }
+
+  static bool _validRunId(String value) =>
+      RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(value);
 
   void _resetRunState() {
     _createCancelled = false;

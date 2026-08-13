@@ -634,6 +634,7 @@ void validateAgentClientToolResult({
         (results.isEmpty ? status != 'empty' : status != 'ok')) {
       throw const FormatException('Invalid local-search result.');
     }
+    final articleRefs = <String>{};
     for (final rawItem in results) {
       if (rawItem is! Map) {
         throw const FormatException('Invalid local-search result.');
@@ -641,10 +642,10 @@ void validateAgentClientToolResult({
       final item = Map<String, dynamic>.from(rawItem);
       _requireExactKeys(item, const {'article_ref', 'title', 'snippets'});
       final snippets = item['snippets'];
-      if (item['article_ref'] is! String ||
-          !AgentClientToolStore.articleRefPattern.hasMatch(
-            item['article_ref'] as String,
-          ) ||
+      final articleRef = item['article_ref'];
+      if (articleRef is! String ||
+          !AgentClientToolStore.articleRefPattern.hasMatch(articleRef) ||
+          !articleRefs.add(articleRef) ||
           !boundedString(item['title'], 1, 500) ||
           snippets is! List ||
           snippets.isEmpty ||

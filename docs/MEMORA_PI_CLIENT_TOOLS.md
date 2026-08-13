@@ -40,8 +40,10 @@ cancellation/tombstone flow remains the single owner of backend cancellation.
 ## Recovery invariant
 
 REST pending/claim/call-status/result endpoints are the source of truth. The
-current host polls REST every 800 ms; it does not consume SSE tool events, so
-the poll remains both the execution trigger and recovery fallback. Before a
+app-global host consumes `client_tool.pending` SSE events only as payload-free
+wake signals and immediately fetches authoritative REST pending. It also polls
+REST every 800 ms, so a lost SSE event, closed ChatScreen, or process recovery
+still makes progress. Before a
 claim request the client persists a random
 `claimRequestKey`. Before PUT it persists the strict result and a random
 `resultReceiptKey`. Lost responses and process restarts therefore replay the
