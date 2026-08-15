@@ -8,6 +8,7 @@ class ChatInputBar extends StatelessWidget {
   final bool loading;
   final LocaleStrings s;
   final VoidCallback onSend;
+  final VoidCallback? onStop;
   final FocusNode? focusNode;
   final List<ChatAttachmentDraft> attachments;
   final ValueChanged<ChatAttachmentDraft>? onRemoveAttachment;
@@ -22,6 +23,7 @@ class ChatInputBar extends StatelessWidget {
     required this.s,
     required this.onSend,
     required this.onOpenTools,
+    this.onStop,
     this.focusNode,
     this.attachments = const [],
     this.onRemoveAttachment,
@@ -62,26 +64,29 @@ class ChatInputBar extends StatelessWidget {
               Row(
                 children: [
                   // AI 对话工具页入口：左侧加号打开工具面板。
-                  Tooltip(
-                    message: s.chatTools,
-                    child: InkWell(
-                      key: const ValueKey('chat-tools-button'),
-                      customBorder: const CircleBorder(),
-                      onTap: onOpenTools,
-                      child: Container(
-                        // Match the filled send button's Material tap target and
-                        // visible circle so the input controls align visually.
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surface,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Theme.of(context).dividerColor.withAlpha(60),
+                  Transform.translate(
+                    key: const ValueKey('chat-tools-button-offset'),
+                    offset: const Offset(-2, 0),
+                    child: Tooltip(
+                      message: s.chatTools,
+                      child: InkWell(
+                        key: const ValueKey('chat-tools-button'),
+                        customBorder: const CircleBorder(),
+                        onTap: onOpenTools,
+                        child: Container(
+                          // Match the filled send button's Material tap target
+                          // and visible circle so the controls align visually.
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surface,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).dividerColor.withAlpha(60),
+                            ),
                           ),
-                        ),
-                        child: Transform.translate(
-                          offset: const Offset(-2, 0),
                           child: const Icon(
                             Icons.add_rounded,
                             key: ValueKey('chat-tools-plus-icon'),
@@ -118,8 +123,14 @@ class ChatInputBar extends StatelessWidget {
                   const SizedBox(width: 4),
                   IconButton.filled(
                     key: const ValueKey('chat-send-button'),
-                    onPressed: loading ? null : onSend,
-                    icon: loading
+                    tooltip: loading && onStop != null ? s.cancel : null,
+                    onPressed: loading ? onStop : onSend,
+                    icon: loading && onStop != null
+                        ? const Icon(
+                            Icons.stop_rounded,
+                            key: ValueKey('chat-stop-icon'),
+                          )
+                        : loading
                         ? const SizedBox(
                             width: 20,
                             height: 20,

@@ -7,6 +7,7 @@ import 'auth_service.dart';
 import 'sync_apply_service.dart';
 import 'sync_conflict_service.dart';
 import 'sync_outbox_service.dart';
+import 'sync_payload_policy.dart';
 import 'sync_protocol.dart';
 import 'sync_shadow_service.dart';
 import 'sync_state_service.dart';
@@ -107,7 +108,10 @@ class SyncService {
 
   Future<SyncResult> pushPending(AuthSession session, {int limit = 50}) async {
     final accountId = session.user.id;
-    final records = await outbox.pending(accountId: accountId, limit: limit);
+    final records = await outbox.claimPending(
+      accountId: accountId,
+      limit: limit,
+    );
     if (records.isEmpty) {
       return SyncResult(
         pushed: 0,
@@ -116,14 +120,12 @@ class SyncService {
       );
     }
 
-    // Mark before the request. If the process dies after the server commits
-    // but before the response arrives, the mutation ID remains immutable and
-    // can be retried as an idempotent request.
-    await outbox.markAttempted(records);
     try {
       final events = <Map<String, dynamic>>[];
       for (final record in records) {
-        final rawPayload = record.payload ?? const <String, dynamic>{};
+        final rawPayload =
+            SyncPayloadPolicy.sanitize(record.collection, record.payload) ??
+            const <String, dynamic>{};
         final payload = record.operation == SyncOperation.delete
             ? null
             : SyncProtocol.wrapPayload(
@@ -141,9 +143,7 @@ class SyncService {
           'baseEntityRevision': record.baseEntityRevision,
           'protocolVersion': SyncProtocol.protocolVersion,
           'schemaVersion': SyncProtocol.protocolVersion,
-          'entitySchemaVersion': SyncProtocol.entitySchemaVersion(
-            record.payload,
-          ),
+          'entitySchemaVersion': SyncProtocol.entitySchemaVersion(rawPayload),
           'payloadFormat': SyncProtocol.payloadFormat,
           'payload': payload,
           'clientUpdatedAt': record.clientUpdatedAt,
@@ -246,7 +246,7 @@ class SyncService {
         itemId: record.itemId,
         entityRevision: revision,
         serverSeq: serverSeq,
-        payload: record.payload,
+        payload: SyncPayloadPolicy.sanitize(record.collection, record.payload),
         deleted: record.operation == SyncOperation.delete,
         deviceId: session.device.id,
       ),
@@ -262,6 +262,14 @@ class SyncService {
     final remote = current is Map
         ? Map<String, dynamic>.from(current)
         : <String, dynamic>{};
+    final remoteContainedProviderSecrets =
+        current is Map &&
+        _eventPayloadContainsProviderSecrets(
+          remote,
+          accountId: session.user.id,
+          collection: record.collection,
+          itemId: record.itemId,
+        );
     final remotePayload = current is Map
         ? _decodeEventPayload(
             remote,
@@ -314,7 +322,8 @@ class SyncService {
           payload: merged.merged,
         );
         await outbox.removeAll([record.id]);
-        if (jsonChangedPaths(remotePayload, merged.merged).isNotEmpty) {
+        final changedPaths = jsonChangedPaths(remotePayload, merged.merged);
+        if (changedPaths.isNotEmpty || remoteContainedProviderSecrets) {
           await outbox.enqueue(
             SyncOutboxRecord.create(
               accountId: session.user.id,
@@ -324,7 +333,7 @@ class SyncService {
               payload: merged.merged,
               baseEntityRevision: remoteRevision,
               basePayload: remotePayload,
-              changedPaths: jsonChangedPaths(remotePayload, merged.merged),
+              changedPaths: changedPaths.isEmpty ? const [r'$'] : changedPaths,
             ),
           );
         }
@@ -491,12 +500,30 @@ class SyncService {
   }) {
     final payload = event['payload'];
     if (payload is! Map) return null;
-    return SyncProtocol.unwrapPayload(
+    final unwrapped = SyncProtocol.unwrapPayload(
       Map<String, dynamic>.from(payload),
       accountId: accountId,
       collection: collection,
       itemId: itemId,
     );
+    return SyncPayloadPolicy.sanitize(collection, unwrapped);
+  }
+
+  bool _eventPayloadContainsProviderSecrets(
+    Map<String, dynamic> event, {
+    required String accountId,
+    required String collection,
+    required String itemId,
+  }) {
+    final payload = event['payload'];
+    if (payload is! Map) return false;
+    final unwrapped = SyncProtocol.unwrapPayload(
+      Map<String, dynamic>.from(payload),
+      accountId: accountId,
+      collection: collection,
+      itemId: itemId,
+    );
+    return SyncPayloadPolicy.containsSecrets(collection, unwrapped);
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {

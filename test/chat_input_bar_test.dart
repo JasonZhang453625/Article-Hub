@@ -38,8 +38,12 @@ void main() {
     expect(tester.getSize(tools), const Size.square(48));
     expect(
       tester.getCenter(find.byKey(const ValueKey('chat-tools-plus-icon'))).dx,
-      tester.getCenter(tools).dx - 2,
+      tester.getCenter(tools).dx,
     );
+    final offset = tester.widget<Transform>(
+      find.byKey(const ValueKey('chat-tools-button-offset')),
+    );
+    expect(offset.transform.getTranslation().x, -2);
   });
 
   testWidgets('renders selected image and file drafts with remove actions', (
@@ -105,5 +109,31 @@ void main() {
       find.byKey(const ValueKey('chat-attachment-remove-file-1')),
     );
     expect(removed, drafts.last);
+  });
+
+  testWidgets('loading generation exposes a Stop action', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    var stops = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatInputBar(
+            controller: controller,
+            loading: true,
+            s: LocaleStrings.of(2),
+            onSend: () {},
+            onStop: () => stops++,
+            onOpenTools: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('chat-stop-icon')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    expect(stops, 1);
   });
 }

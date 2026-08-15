@@ -31,7 +31,7 @@ final embeddingServiceProvider = Provider<EmbeddingService?>((ref) {
 });
 
 final embeddingConfiguredProvider = Provider<bool>((ref) {
-  return ref.watch(embeddingServiceProvider) != null;
+  return ref.watch(embeddingServiceProvider)?.isConfigured == true;
 });
 
 final indexServiceProvider = Provider<IndexService>((ref) {
@@ -130,16 +130,23 @@ HostedAiCapabilities _builtInCapabilities() {
 final webSearchServiceProvider = Provider<WebSearchGateway?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null) return null;
+  final session = ref.watch(currentSessionProvider);
   if (ref.watch(hostedAiEnabledProvider)) {
     final service = HostedWebSearchService(
       getSession: () => ref.read(currentSessionProvider),
       refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+      cache: WebSearchCache(namespace: 'hosted:${session?.user.id ?? 'none'}'),
     );
     ref.onDispose(service.dispose);
     return service;
   }
   if (settings.tavilyApiKey.trim().isEmpty) return null;
-  return WebSearchService(apiKey: settings.tavilyApiKey.trim());
+  final service = WebSearchService(
+    apiKey: settings.tavilyApiKey.trim(),
+    cache: WebSearchCache(namespace: 'byok:${session?.user.id ?? 'local'}'),
+  );
+  ref.onDispose(service.dispose);
+  return service;
 });
 
 final webSearchConfiguredProvider = Provider<bool>((ref) {
@@ -310,6 +317,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
         : ({
             required String systemPrompt,
             required String userMessage,
+            required String userQuestion,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -321,6 +329,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             return hostedAgent.chatStream(
               systemPrompt: systemPrompt,
               userMessage: userMessage,
+              userQuestion: userQuestion,
               history: history,
               temperature: temperature,
               maxTokens: maxTokens,
@@ -330,7 +339,10 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               idempotencyKey: idempotencyKey,
             );
           },
-    completionError: () => hostedAgent?.lastError ?? ai.lastError,
+    completionError: () => ai.lastError,
+    agentCompletionError: hostedAgent == null
+        ? null
+        : () => hostedAgent.lastError,
     configureThinking: (level) {
       ai.thinkingLevel = level;
       if (hostedAgent != null) hostedAgent.thinkingLevel = level;

@@ -27,11 +27,15 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
   late final TextEditingController _imageAiBaseUrlCtrl,
       _imageAiApiKeyCtrl,
       _imageAiModelCtrl;
+  late final TextEditingController _embeddingBaseUrlCtrl,
+      _embeddingApiKeyCtrl,
+      _embeddingModelCtrl;
   bool _initialized = false;
   bool _modeSaving = false;
   bool _aiSaving = false;
   bool _chatAiSaving = false;
   bool _imageAiSaving = false;
+  bool _embeddingSaving = false;
 
   @override
   void initState() {
@@ -45,6 +49,9 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     _imageAiBaseUrlCtrl = TextEditingController();
     _imageAiApiKeyCtrl = TextEditingController();
     _imageAiModelCtrl = TextEditingController();
+    _embeddingBaseUrlCtrl = TextEditingController();
+    _embeddingApiKeyCtrl = TextEditingController();
+    _embeddingModelCtrl = TextEditingController();
   }
 
   @override
@@ -66,6 +73,9 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     _imageAiBaseUrlCtrl.text = settings.imageAiBaseUrl;
     _imageAiApiKeyCtrl.text = settings.imageAiApiKey;
     _imageAiModelCtrl.text = settings.imageAiModel;
+    _embeddingBaseUrlCtrl.text = settings.embeddingBaseUrl;
+    _embeddingApiKeyCtrl.text = settings.embeddingApiKey;
+    _embeddingModelCtrl.text = settings.embeddingModel;
   }
 
   @override
@@ -79,6 +89,9 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     _imageAiBaseUrlCtrl.dispose();
     _imageAiApiKeyCtrl.dispose();
     _imageAiModelCtrl.dispose();
+    _embeddingBaseUrlCtrl.dispose();
+    _embeddingApiKeyCtrl.dispose();
+    _embeddingModelCtrl.dispose();
     super.dispose();
   }
 
@@ -136,6 +149,24 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     }
   }
 
+  Future<void> _saveEmbedding() async {
+    setState(() => _embeddingSaving = true);
+    await ref
+        .read(settingsProvider.notifier)
+        .setEmbeddingConfig(
+          baseUrl: _embeddingBaseUrlCtrl.text.trim(),
+          apiKey: _embeddingApiKeyCtrl.text.trim(),
+          model: _embeddingModelCtrl.text.trim(),
+        );
+    if (mounted) {
+      setState(() => _embeddingSaving = false);
+      showAppSnackBar(
+        context,
+        message: ref.read(stringsProvider).aiSettingsSaved,
+      );
+    }
+  }
+
   Future<void> _toggleHosted(bool enabled) async {
     if (_modeSaving || ref.read(currentSessionProvider) == null) return;
     setState(() => _modeSaving = true);
@@ -154,11 +185,11 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
     final hostedEnabled = isLoggedIn && settings?.aiProviderMode == 1;
     final capabilities =
         ref.watch(hostedAiCapabilitiesProvider).valueOrNull ??
-            const HostedAiCapabilities(
-              chatModels: [],
-              summaryModels: [],
-              visionModels: [],
-            );
+        const HostedAiCapabilities(
+          chatModels: [],
+          summaryModels: [],
+          visionModels: [],
+        );
     final chatModelOptions = hostedTextModelOptions(
       serverModels: capabilities.chatModels,
       builtInModels: AppSettings.hostedTextModels,
@@ -383,6 +414,37 @@ class _ApiConfigScreenState extends ConsumerState<ApiConfigScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+              _ApiCard(
+                key: const ValueKey('embedding-config-card'),
+                icon: Icons.hub_rounded,
+                title: s.embeddingSection,
+                fields: [
+                  _field(
+                    s.baseUrl,
+                    _embeddingBaseUrlCtrl,
+                    AppSettings.defaultEmbeddingBaseUrl,
+                  ),
+                  _field(
+                    s.apiKey,
+                    _embeddingApiKeyCtrl,
+                    'sk-...',
+                    obscured: true,
+                  ),
+                  _field(
+                    s.model,
+                    _embeddingModelCtrl,
+                    AppSettings.defaultEmbeddingModel,
+                  ),
+                ],
+                saving: _embeddingSaving,
+                onSave: _saveEmbedding,
+                saveLabel: s.saveAiSettings,
+                theme: theme,
+                cardColor: cardColor,
+                outlineColor: outlineColor,
+                isDark: isDark,
+              ),
             ],
           ),
         ),
@@ -434,6 +496,7 @@ class _ApiCard extends StatelessWidget {
   final bool isDark;
 
   const _ApiCard({
+    super.key,
     required this.icon,
     required this.title,
     required this.fields,

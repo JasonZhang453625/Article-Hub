@@ -35,41 +35,56 @@ class ChatHistoryDrawer extends StatelessWidget {
     return Drawer(
       width: screenWidth < 420 ? screenWidth * 0.86 : 360,
       backgroundColor: theme.colorScheme.surfaceContainerLow,
+      // The Drawer's Material does not clip when no shape is set; clip the
+      // whole surface so scrolled list content can never paint outside it.
+      clipBehavior: Clip.hardEdge,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
-              child: Row(
+            // Opaque header: the thread list scrolls *under* the
+            // new-chat button, never over it.
+            ColoredBox(
+              color: theme.colorScheme.surfaceContainerLow,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: Text(
-                      s.chatHistory,
-                      style: theme.textTheme.titleLarge,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            s.chatHistory,
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                        IconButton(
+                          key: const ValueKey('chat-sidebar-close-button'),
+                          tooltip: MaterialLocalizations.of(
+                            context,
+                          ).closeButtonTooltip,
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
                     ),
                   ),
-                  IconButton(
-                    key: const ValueKey('chat-sidebar-close-button'),
-                    tooltip: MaterialLocalizations.of(
-                      context,
-                    ).closeButtonTooltip,
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: FilledButton.tonalIcon(
+                      key: const ValueKey('chat-new-thread-button'),
+                      onPressed: enabled
+                          ? () => _startNewThread(context)
+                          : null,
+                      icon: const Icon(Icons.add_comment_outlined),
+                      label: Text(s.chatNew),
+                    ),
                   ),
+                  const SizedBox(height: 6),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: FilledButton.tonalIcon(
-                key: const ValueKey('chat-new-thread-button'),
-                onPressed: enabled ? () => _startNewThread(context) : null,
-                icon: const Icon(Icons.add_comment_outlined),
-                label: Text(s.chatNew),
-              ),
-            ),
-            const SizedBox(height: 6),
             Expanded(
               child: ClipRect(
                 child: threads.isEmpty

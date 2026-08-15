@@ -72,22 +72,69 @@ List<WebSearchResult> parseTavilyResults(Map<String, dynamic> json) {
   final rawResults = json['results'];
   if (rawResults is! List) return const [];
   final results = <WebSearchResult>[];
-  for (final raw in rawResults) {
+  for (final raw in rawResults.take(10)) {
     if (raw is! Map) continue;
-    final title = (raw['title'] as String?)?.trim() ?? '';
-    final url = (raw['url'] as String?)?.trim() ?? '';
-    final content = (raw['content'] as String?)?.trim() ?? '';
-    if (url.isEmpty) continue;
+    final title = _boundedText(raw['title'], maxRunes: 300);
+    final url = raw['url'] is String ? (raw['url'] as String).trim() : '';
+    final content = _boundedText(raw['content'], maxRunes: 12000);
+    if (!_isSafeWebResultUrl(url)) continue;
     results.add(
       WebSearchResult(
         title: title,
         url: url,
         content: content,
-        score: (raw['score'] as num?)?.toDouble() ?? 0,
+        score: _boundedScore(raw['score']),
       ),
     );
   }
   return results;
+}
+
+String _boundedText(Object? value, {required int maxRunes}) {
+  if (value is! String) return '';
+  final trimmed = value.trim();
+  return String.fromCharCodes(trimmed.runes.take(maxRunes)).trimRight();
+}
+
+double _boundedScore(Object? value) {
+  if (value is! num) return 0;
+  final score = value.toDouble();
+  if (!score.isFinite) return 0;
+  return score.clamp(0.0, 1.0).toDouble();
+}
+
+bool _isSafeWebResultUrl(String value) {
+  if (value.isEmpty || value.length > 2048) return false;
+  final uri = Uri.tryParse(value);
+  if (uri == null || !uri.hasAuthority) return false;
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme != 'http' && scheme != 'https') return false;
+  if (uri.userInfo.isNotEmpty || uri.authority.contains('@')) return false;
+  if (uri.authority.startsWith('[')) return false;
+
+  final host = uri.host.toLowerCase().replaceFirst(RegExp(r'\.+$'), '');
+  if (host.isEmpty ||
+      host == 'localhost' ||
+      host.endsWith('.localhost') ||
+      host == 'local' ||
+      host.endsWith('.local') ||
+      host == 'internal' ||
+      host.endsWith('.internal') ||
+      _isIpLiteral(host)) {
+    return false;
+  }
+  return true;
+}
+
+bool _isIpLiteral(String host) {
+  if (host.contains(':')) return true;
+  final parts = host.split('.');
+  if (parts.length > 4) return false;
+  return parts.every(
+    (part) =>
+        RegExp(r'^\d+$').hasMatch(part) ||
+        RegExp(r'^0x[0-9a-f]+$').hasMatch(part),
+  );
 }
 
 /// Keeps Tavily queries within its recommended 400-character limit while
@@ -100,7 +147,8 @@ String normalizeWebSearchQuery(String query, {int maxCharacters = 400}) {
   return String.fromCharCodes(runes.take(maxCharacters)).trimRight();
 }
 
-/// Local cache of web search responses, keyed by normalized query.
+/// Local cache of web search responses, keyed by account/provider namespace
+/// and normalized query.
 ///
 /// Stored in a dedicated Hive box (`web_search_cache`). Entries expire after
 /// [ttl] so repeat questions are instant and free while stale results
@@ -109,18 +157,34 @@ String normalizeWebSearchQuery(String query, {int maxCharacters = 400}) {
 class WebSearchCache {
   static const String boxName = 'web_search_cache';
   static const Duration defaultTtl = Duration(hours: 24);
+  static const String _namespaceMigrationKey =
+      '__meta__:namespace-cache-v1-migrated';
 
   final Duration ttl;
+  final String namespace;
   Box<Map>? _box;
 
-  WebSearchCache({this.ttl = defaultTtl});
+  WebSearchCache({this.ttl = defaultTtl, this.namespace = 'local'});
 
   Future<Box<Map>> _openBox() async {
-    _box ??= await Hive.openBox<Map>(boxName);
-    return _box!;
+    final existing = _box;
+    if (existing != null) return existing;
+    final box = await Hive.openBox<Map>(boxName);
+    final migration = box.get(_namespaceMigrationKey);
+    if (migration?['complete'] != true) {
+      // Legacy entries used only the normalized query as their key, so their
+      // account/provider owner cannot be recovered safely. This is a cache:
+      // discard it once instead of risking cross-account stale results.
+      await box.clear();
+      await box.put(_namespaceMigrationKey, {'complete': true});
+    }
+    _box = box;
+    return box;
   }
 
-  String _key(String query) => query.trim().toLowerCase();
+  String _key(String query) =>
+      '${namespace.trim().isEmpty ? 'local' : namespace.trim()}|'
+      '${query.trim().toLowerCase()}';
 
   /// Returns cached results for [query] if fresh, otherwise null.
   Future<List<WebSearchResult>?> get(String query) async {
@@ -178,6 +242,7 @@ class WebSearchCache {
   Future<void> clear() async {
     final box = await _openBox();
     await box.clear();
+    await box.put(_namespaceMigrationKey, {'complete': true});
   }
 
   void dispose() {}

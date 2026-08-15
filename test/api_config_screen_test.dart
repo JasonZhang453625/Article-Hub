@@ -63,6 +63,10 @@ void main() {
       expect(find.text('AI Memory'), findsOneWidget);
       expect(find.text('Image Understanding'), findsOneWidget);
       expect(find.byKey(const ValueKey('hosted-chat-card')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('embedding-config-card')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -93,6 +97,7 @@ void main() {
     expect(find.byKey(const ValueKey('hosted-summary-card')), findsOneWidget);
     expect(find.byKey(const ValueKey('hosted-vision-card')), findsOneWidget);
     expect(find.byType(AnimatedDropdownButton<String>), findsNWidgets(3));
+    expect(find.byKey(const ValueKey('embedding-config-card')), findsOneWidget);
   });
 }
 

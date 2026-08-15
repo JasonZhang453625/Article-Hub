@@ -657,7 +657,10 @@ class _CountingPageLoader implements PageLoader {
   _CountingPageLoader(this.page);
 
   @override
-  Future<FetchedPage?> fetch(String url) async {
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  }) async {
     fetchCount++;
     return page;
   }

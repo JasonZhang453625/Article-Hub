@@ -85,6 +85,32 @@ void main() {
       expect(assessment.content, 'A fallback post body from X metadata.');
     });
 
+    test('prefers target post metadata over an embedded Article card', () {
+      final assessment = assessXPage(
+        _postWithEmbeddedArticleCardHtml,
+        'https://x.com/i/status/2086079311279493389',
+      );
+
+      expect(assessment.hasExtractableContent, isTrue);
+      expect(assessment.content, 'The target post body remains extractable.');
+      expect(assessment.reason, 'x_structured_post_body');
+      expect(
+        assessment.embeddedArticleStatusUrl,
+        'https://x.com/i/status/2064051835636498924',
+      );
+    });
+
+    test('extracts the dynamically rendered X Article rich-text body', () {
+      final assessment = assessXPage(
+        _runtimeXArticleHtml,
+        'https://x.com/author/status/2064051835636498924',
+      );
+
+      expect(assessment.hasCompleteArticleBody, isTrue);
+      expect(assessment.reason, 'x_runtime_article_body');
+      expect(assessment.content, contains('Full dynamic article paragraph'));
+    });
+
     test('does not accept an X login shell without the target post', () {
       final assessment = assessXPage(
         '<html><body><main>Log in to see posts and conversations. '
@@ -211,6 +237,32 @@ const _metadataOnlyXPostHtml = '''
 <html><head>
   <meta property="og:description" content="A fallback post body from X metadata.">
 </head><body><main>Rendered application shell</main></body></html>
+''';
+
+const _postWithEmbeddedArticleCardHtml = '''
+<html><body><article data-tweet-id="2086079311279493389">
+  <meta content="2086079311279493389" itemprop="identifier">
+  <meta itemprop="articleBody"
+    content="The target post body remains extractable.">
+  <p>The target post body remains extractable.</p>
+  <a href="/i/article/2064051835636498924">
+    <img alt="Article cover image" src="cover.jpg">
+    <div>Embedded article card</div>
+  </a>
+</article></body></html>
+''';
+
+const _runtimeXArticleHtml =
+    '''
+<html><body><article data-tweet-id="2064051835636498924">
+  <a href="/author/status/2064051835636498924">Permalink</a>
+  <h1>Full runtime article</h1>
+  <div data-testid="twitterArticleRichTextView">
+    Full dynamic article paragraph one. $_substantiveText
+    Full dynamic article paragraph two. $_substantiveText
+    Full dynamic article paragraph three. $_substantiveText
+  </div>
+</article></body></html>
 ''';
 
 const _substantiveText =

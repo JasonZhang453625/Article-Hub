@@ -153,6 +153,29 @@ void main() {
       },
     );
 
+    test('X Article HTTP preview starts WebView runtime fallback', () async {
+      final primary = _FakeLoader(
+        page: _xArticleHttpPreview(PageLoadSource.http),
+      );
+      final fallback = _FakeLoader(
+        page: _xRuntimeArticle(PageLoadSource.webView),
+      );
+      final loader = ResilientPageLoader(
+        primary: primary,
+        fallback: fallback,
+        ownsLoaders: false,
+      );
+
+      final result = await loader.fetch(
+        'https://x.com/i/status/2064051835636498924',
+        requirement: PageLoadRequirement.completeArticleBody,
+      );
+
+      expect(result?.source, PageLoadSource.webView);
+      expect(primary.fetchCount, 1);
+      expect(fallback.fetchCount, 1);
+    });
+
     test(
       'keeps a loadable X page when fallback has no better content candidate',
       () async {
@@ -171,6 +194,23 @@ void main() {
         expect(result?.source, PageLoadSource.http);
       },
     );
+
+    test('complete article requirement does not return an X preview', () async {
+      final loader = ResilientPageLoader(
+        primary: _FakeLoader(page: _xArticleHttpPreview(PageLoadSource.http)),
+        fallback: _FakeLoader(
+          page: _xArticleHttpPreview(PageLoadSource.webView),
+        ),
+        ownsLoaders: false,
+      );
+
+      final result = await loader.fetch(
+        'https://x.com/i/status/2064051835636498924',
+        requirement: PageLoadRequirement.completeArticleBody,
+      );
+
+      expect(result, isNull);
+    });
 
     test('WebView verification or short page returns failure', () async {
       final verificationFallback = ResilientPageLoader(
@@ -346,6 +386,40 @@ FetchedPage _xMetadataOnlyPage(PageLoadSource source) {
   );
 }
 
+FetchedPage _xArticleHttpPreview(PageLoadSource source) {
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body:
+        '<html><body><article data-tweet-id="2064051835636498924">'
+        '<meta content="2064051835636498924" itemprop="identifier">'
+        '<meta itemprop="articleBody" '
+        'content="A short server-rendered preview of the X Article.">'
+        '</article></body></html>',
+    finalUrl: 'https://x.com/author/status/2064051835636498924',
+    source: source,
+  );
+}
+
+FetchedPage _xRuntimeArticle(PageLoadSource source) {
+  final body = List.filled(
+    8,
+    'The complete dynamically rendered X Article rich-text body is ready.',
+  ).join('\n\n');
+  return FetchedPage(
+    statusCode: 200,
+    contentType: 'text/html; charset=utf-8',
+    body:
+        '<html><body><article data-tweet-id="2064051835636498924">'
+        '<a href="/author/status/2064051835636498924">Permalink</a>'
+        '<h1>X Article title</h1>'
+        '<div data-testid="twitterArticleRichTextView">$body</div>'
+        '</article></body></html>',
+    finalUrl: 'https://x.com/author/status/2064051835636498924',
+    source: source,
+  );
+}
+
 FetchedPage _xCompleteLongArticle(PageLoadSource source) {
   final paragraph = List.filled(
     4,
@@ -375,7 +449,10 @@ class _FakeLoader implements PageLoader {
   _FakeLoader({this.page});
 
   @override
-  Future<FetchedPage?> fetch(String url) async {
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  }) async {
     fetchCount++;
     return page;
   }

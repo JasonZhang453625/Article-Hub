@@ -8,6 +8,7 @@ import '../repositories/passage_repository.dart';
 import 'index_service.dart';
 import 'sync_conflict_service.dart';
 import 'sync_outbox_service.dart';
+import 'sync_payload_policy.dart';
 import 'sync_protocol.dart';
 import 'sync_shadow_service.dart';
 
@@ -427,13 +428,15 @@ class SyncApplyService {
     if (payload is! Map) return null;
 
     final decoded = Map<String, dynamic>.from(payload);
-    if (accountId == null) return decoded;
-    return SyncProtocol.unwrapPayload(
-      decoded,
-      accountId: accountId,
-      collection: collection,
-      itemId: itemId,
-    );
+    final unwrapped = accountId == null
+        ? decoded
+        : SyncProtocol.unwrapPayload(
+            decoded,
+            accountId: accountId,
+            collection: collection,
+            itemId: itemId,
+          );
+    return SyncPayloadPolicy.sanitize(collection, unwrapped);
   }
 
   Future<void> _applyUpsert(
@@ -471,12 +474,11 @@ class SyncApplyService {
         final box = await Hive.openBox<AppSettings>(_settingsBoxName);
         final current = box.get(_settingsKey);
         final merged = incoming.copyWith(
-          aiApiKey: payload.containsKey('aiApiKey')
-              ? incoming.aiApiKey
-              : current?.aiApiKey ?? '',
-          embeddingApiKey: payload.containsKey('embeddingApiKey')
-              ? incoming.embeddingApiKey
-              : current?.embeddingApiKey ?? '',
+          aiApiKey: current?.aiApiKey ?? '',
+          chatAiApiKey: current?.chatAiApiKey ?? '',
+          imageAiApiKey: current?.imageAiApiKey ?? '',
+          embeddingApiKey: current?.embeddingApiKey ?? '',
+          tavilyApiKey: current?.tavilyApiKey ?? '',
         );
         await box.put(_settingsKey, merged);
         return;
@@ -504,8 +506,8 @@ class SyncApplyService {
         await box.delete(itemId);
         return;
       case SyncCollections.appSettings:
-        final box = await Hive.openBox<AppSettings>(_settingsBoxName);
-        await box.delete(_settingsKey);
+        // Settings are a local singleton whose provider credentials are
+        // device-private. A remote/legacy tombstone must not erase them.
         return;
       default:
         throw SyncApplyException('Unsupported sync collection: $collection.');

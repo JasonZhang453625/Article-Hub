@@ -7,6 +7,13 @@ import 'x_page_support.dart';
 
 enum PageLoadSource { http, webView }
 
+/// How complete the returned content must be for the caller's purpose.
+///
+/// Most callers only need a usable page. An extractor that has identified a
+/// linked article, however, can require the full article body instead of
+/// accepting a short server-rendered preview.
+enum PageLoadRequirement { usableContent, completeArticleBody }
+
 class FetchedPage {
   final int statusCode;
   final String? contentType;
@@ -27,7 +34,10 @@ class FetchedPage {
 }
 
 abstract interface class PageLoader {
-  Future<FetchedPage?> fetch(String url);
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  });
 
   void dispose();
 }
@@ -74,7 +84,9 @@ bool fetchedPageHasUsableDocument(
 }
 
 bool fetchedPageHasUsableContentForUrl(FetchedPage page, String requestedUrl) {
-  if (!page.isHtml || fetchedPageLooksBlocked(page)) return false;
+  if (!page.isHtml || fetchedPageLooksBlocked(page)) {
+    return false;
+  }
 
   final finalUrlTarget = XStatusTarget.tryParse(page.finalUrl);
   final target = finalUrlTarget ?? XStatusTarget.tryParse(requestedUrl);
@@ -84,7 +96,31 @@ bool fetchedPageHasUsableContentForUrl(FetchedPage page, String requestedUrl) {
     page.body,
     finalUrlTarget == null ? requestedUrl : page.finalUrl,
   );
+  if (assessment.needsRuntimeArticleBody) return false;
   return assessment.hasExtractableContent;
+}
+
+bool fetchedPageMeetsLoadRequirement(
+  FetchedPage page,
+  String requestedUrl,
+  PageLoadRequirement requirement,
+) {
+  if (requirement == PageLoadRequirement.usableContent) {
+    return fetchedPageHasUsableContentForUrl(page, requestedUrl);
+  }
+
+  if (!page.isHtml || fetchedPageLooksBlocked(page)) return false;
+  final finalUrlTarget = XStatusTarget.tryParse(page.finalUrl);
+  final target = finalUrlTarget ?? XStatusTarget.tryParse(requestedUrl);
+  if (target == null) {
+    return fetchedPageHasUsableContentForUrl(page, requestedUrl);
+  }
+
+  final assessment = assessXPage(
+    page.body,
+    finalUrlTarget == null ? requestedUrl : page.finalUrl,
+  );
+  return assessment.hasCompleteArticleBody;
 }
 
 class ResilientPageLoader implements PageLoader {
@@ -99,9 +135,13 @@ class ResilientPageLoader implements PageLoader {
   });
 
   @override
-  Future<FetchedPage?> fetch(String url) async {
-    final direct = await primary.fetch(url);
-    if (direct != null && fetchedPageHasUsableContentForUrl(direct, url)) {
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  }) async {
+    final direct = await primary.fetch(url, requirement: requirement);
+    if (direct != null &&
+        fetchedPageMeetsLoadRequirement(direct, url, requirement)) {
       return direct;
     }
 
@@ -118,10 +158,18 @@ class ResilientPageLoader implements PageLoader {
       );
     }
 
-    final recovered = await fallback.fetch(url);
+    final recovered = await fallback.fetch(url, requirement: requirement);
     if (recovered != null &&
-        fetchedPageHasUsableContentForUrl(recovered, url)) {
+        fetchedPageMeetsLoadRequirement(recovered, url, requirement)) {
       return recovered;
+    }
+
+    if (requirement == PageLoadRequirement.completeArticleBody) {
+      developer.log(
+        'full article body was unavailable after HTTP and WebView, url: $url',
+        name: 'memora.page_loader',
+      );
+      return null;
     }
 
     // X changes its DOM frequently. A successfully loaded original document

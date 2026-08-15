@@ -144,16 +144,22 @@ void main() {
           aiBaseUrl: 'https://chat.example.com/v1',
           aiApiKey: 'sk-chat-secret',
           aiModel: 'chat-model-v2',
+          chatAiApiKey: 'sk-rag-chat-secret',
+          imageAiApiKey: 'sk-image-secret',
           embeddingBaseUrl: 'https://embedding.example.com/v1',
           embeddingApiKey: 'sk-embedding-secret',
           embeddingModel: 'embedding-model-v3',
+          tavilyApiKey: 'tvly-backup-secret',
         ),
       );
 
       final json = backup.toJson();
       final settingsJson = json['settings'] as Map<String, dynamic>;
       expect(settingsJson['aiApiKey'], 'sk-chat-secret');
+      expect(settingsJson['chatAiApiKey'], 'sk-rag-chat-secret');
+      expect(settingsJson['imageAiApiKey'], 'sk-image-secret');
       expect(settingsJson['embeddingApiKey'], 'sk-embedding-secret');
+      expect(settingsJson['tavilyApiKey'], 'tvly-backup-secret');
 
       final restored = BackupData.fromJsonString(
         backup.toJsonString(),
@@ -162,9 +168,12 @@ void main() {
       expect(restored!.aiBaseUrl, 'https://chat.example.com/v1');
       expect(restored.aiApiKey, 'sk-chat-secret');
       expect(restored.aiModel, 'chat-model-v2');
+      expect(restored.chatAiApiKey, 'sk-rag-chat-secret');
+      expect(restored.imageAiApiKey, 'sk-image-secret');
       expect(restored.embeddingBaseUrl, 'https://embedding.example.com/v1');
       expect(restored.embeddingApiKey, 'sk-embedding-secret');
       expect(restored.embeddingModel, 'embedding-model-v3');
+      expect(restored.tavilyApiKey, 'tvly-backup-secret');
     });
 
     test('skips malformed article entries but keeps valid ones', () {

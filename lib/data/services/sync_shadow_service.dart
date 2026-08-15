@@ -1,5 +1,6 @@
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'sync_payload_policy.dart';
 
 /// The last server-authoritative snapshot that this device has observed for
 /// one sync entity. It is the base of the client's three-way merge.
@@ -25,14 +26,18 @@ class SyncShadow {
   });
 
   factory SyncShadow.fromJson(Map<String, dynamic> json) {
+    final collection = json['collection'] as String;
     final payload = json['payload'];
     return SyncShadow(
       accountId: json['accountId'] as String,
-      collection: json['collection'] as String,
+      collection: collection,
       itemId: json['itemId'] as String,
       entityRevision: _intValue(json['entityRevision']),
       serverSeq: _intValue(json['serverSeq']),
-      payload: payload is Map ? Map<String, dynamic>.from(payload) : null,
+      payload: SyncPayloadPolicy.sanitize(
+        collection,
+        payload is Map ? Map<String, dynamic>.from(payload) : null,
+      ),
       deleted: json['deleted'] == true,
       deviceId: json['deviceId'] as String?,
     );
@@ -45,7 +50,7 @@ class SyncShadow {
       'itemId': itemId,
       'entityRevision': entityRevision,
       'serverSeq': serverSeq,
-      'payload': payload,
+      'payload': SyncPayloadPolicy.sanitize(collection, payload),
       'deleted': deleted,
       'deviceId': deviceId,
     };
@@ -94,7 +99,16 @@ class SyncShadowService {
     final raw = box.get(_key(accountId, collection, itemId));
     if (raw is! Map) return null;
     try {
-      return SyncShadow.fromJson(Map<String, dynamic>.from(raw));
+      final json = Map<String, dynamic>.from(raw);
+      final shadow = SyncShadow.fromJson(json);
+      final rawPayload = json['payload'];
+      if (SyncPayloadPolicy.containsSecrets(
+        shadow.collection,
+        rawPayload is Map ? Map<String, dynamic>.from(rawPayload) : null,
+      )) {
+        await box.put(_key(accountId, collection, itemId), shadow.toJson());
+      }
+      return shadow;
     } catch (_) {
       await box.delete(_key(accountId, collection, itemId));
       return null;

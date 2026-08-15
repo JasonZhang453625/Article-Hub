@@ -40,6 +40,8 @@ class XPageAssessment {
   final bool hasCompleteArticleBody;
   final String? title;
   final String? content;
+  final String? embeddedArticleStatusUrl;
+  final bool needsRuntimeArticleBody;
   final String reason;
 
   const XPageAssessment({
@@ -50,6 +52,8 @@ class XPageAssessment {
     required this.reason,
     this.title,
     this.content,
+    this.embeddedArticleStatusUrl,
+    this.needsRuntimeArticleBody = false,
   });
 
   bool get hasExtractableContent =>
@@ -86,6 +90,9 @@ XPageAssessment assessXPage(String htmlBody, String url) {
 
   final heading = _cleanInline(article.querySelector('h1')?.text ?? '');
   final explicitBody = article.querySelector('.x-article-body');
+  final runtimeBody = _runtimeArticleBody(article);
+  final hasCompleteRuntimeBody =
+      runtimeBody.length >= xLongArticleMinimumTextLength;
   final structuredBody = _cleanInline(
     article
             .querySelector('meta[itemprop="articleBody"]')
@@ -94,26 +101,18 @@ XPageAssessment assessXPage(String htmlBody, String url) {
   );
   final hasArticleCover =
       article.querySelector('img[alt="Article cover image"]') != null;
+  final embeddedArticleStatusUrl = _embeddedArticleStatusUrl(article);
   final looksLikeLongArticle =
-      explicitBody != null || heading.isNotEmpty || hasArticleCover;
+      explicitBody != null ||
+      runtimeBody.isNotEmpty ||
+      heading.isNotEmpty ||
+      hasArticleCover;
 
   final body = explicitBody ?? article;
   final blocks = _contentBlocks(body, excludeHeading: explicitBody == null);
   final bodyText = blocks.isEmpty
       ? _cleanInline(body.text)
       : blocks.join('\n\n');
-
-  if (!looksLikeLongArticle) {
-    return XPageAssessment(
-      isXStatusPage: true,
-      hasTargetArticle: true,
-      looksLikeLongArticle: false,
-      hasCompleteArticleBody: false,
-      reason: 'x_normal_post',
-      content: structuredBody.isNotEmpty ? structuredBody : bodyText,
-    );
-  }
-
   final isExplicitBodyComplete =
       explicitBody != null &&
       bodyText.length >= xLongArticleMinimumTextLength &&
@@ -123,6 +122,55 @@ XPageAssessment assessXPage(String htmlBody, String url) {
       heading.isNotEmpty &&
       blocks.length >= xLongArticleSemanticFallbackMinimumBlocks &&
       bodyText.length >= xLongArticleSemanticFallbackMinimumTextLength;
+  final needsRuntimeArticleBody =
+      looksLikeLongArticle &&
+      !hasCompleteRuntimeBody &&
+      embeddedArticleStatusUrl == null &&
+      !isExplicitBodyComplete &&
+      !isSemanticFallbackComplete;
+
+  if (hasCompleteRuntimeBody) {
+    return XPageAssessment(
+      isXStatusPage: true,
+      hasTargetArticle: true,
+      looksLikeLongArticle: true,
+      hasCompleteArticleBody: true,
+      title: heading.isEmpty ? null : heading,
+      content: [if (heading.isNotEmpty) heading, runtimeBody].join('\n\n'),
+      reason: 'x_runtime_article_body',
+    );
+  }
+
+  // X's server-rendered `articleBody` belongs to the target post itself. It
+  // remains trustworthy even when that post embeds an Article card whose
+  // cover image would otherwise make the post look like an incomplete
+  // long-form article.
+  if (structuredBody.isNotEmpty) {
+    return XPageAssessment(
+      isXStatusPage: true,
+      hasTargetArticle: true,
+      looksLikeLongArticle: looksLikeLongArticle,
+      hasCompleteArticleBody: false,
+      title: heading.isEmpty ? null : heading,
+      content: structuredBody,
+      embeddedArticleStatusUrl: embeddedArticleStatusUrl,
+      needsRuntimeArticleBody: needsRuntimeArticleBody,
+      reason: 'x_structured_post_body',
+    );
+  }
+
+  if (!looksLikeLongArticle) {
+    return XPageAssessment(
+      isXStatusPage: true,
+      hasTargetArticle: true,
+      looksLikeLongArticle: false,
+      hasCompleteArticleBody: false,
+      reason: 'x_normal_post',
+      content: bodyText,
+      embeddedArticleStatusUrl: embeddedArticleStatusUrl,
+    );
+  }
+
   final complete = isExplicitBodyComplete || isSemanticFallbackComplete;
 
   if (!complete) {
@@ -132,13 +180,15 @@ XPageAssessment assessXPage(String htmlBody, String url) {
       looksLikeLongArticle: true,
       hasCompleteArticleBody: false,
       title: heading.isEmpty ? null : heading,
+      embeddedArticleStatusUrl: embeddedArticleStatusUrl,
+      needsRuntimeArticleBody: needsRuntimeArticleBody,
       reason: 'x_long_article_body_missing',
     );
   }
 
   final content = [
     if (heading.isNotEmpty) heading,
-    if (structuredBody.isNotEmpty) structuredBody else bodyText,
+    bodyText,
   ].where((part) => part.trim().isNotEmpty).join('\n\n');
   return XPageAssessment(
     isXStatusPage: true,
@@ -147,6 +197,7 @@ XPageAssessment assessXPage(String htmlBody, String url) {
     hasCompleteArticleBody: true,
     title: heading.isEmpty ? null : heading,
     content: content,
+    embeddedArticleStatusUrl: embeddedArticleStatusUrl,
     reason: 'x_long_article_complete',
   );
 }
@@ -225,6 +276,49 @@ bool _urlContainsStatus(String? value, String statusId) {
   if (value == null) return false;
   final path = Uri.tryParse(value)?.path ?? value;
   return RegExp('/status/$statusId(?:/|\$)').hasMatch(path);
+}
+
+String? _embeddedArticleStatusUrl(Element article) {
+  for (final link in article.querySelectorAll('a[href]')) {
+    final href = link.attributes['href'];
+    if (href == null) continue;
+    final segments =
+        Uri.tryParse(href)?.pathSegments ??
+        Uri.tryParse('https://x.com$href')?.pathSegments;
+    if (segments == null || segments.length < 3) continue;
+    for (var i = 0; i < segments.length - 2; i++) {
+      if (segments[i].toLowerCase() != 'i' ||
+          segments[i + 1].toLowerCase() != 'article') {
+        continue;
+      }
+      final articleId = segments[i + 2];
+      if (RegExp(r'^\d{1,19}$').hasMatch(articleId)) {
+        return 'https://x.com/i/status/$articleId';
+      }
+    }
+  }
+  return null;
+}
+
+String _runtimeArticleBody(Element article) {
+  final candidates = <String>[
+    for (final element in article.querySelectorAll(
+      '[data-testid="twitterArticleRichTextView"], '
+      '[data-testid="longformRichTextComponent"]',
+    ))
+      _cleanArticleText(element.text),
+  ].where((text) => text.isNotEmpty).toList();
+  if (candidates.isEmpty) return '';
+  candidates.sort((a, b) => b.length.compareTo(a.length));
+  return candidates.first;
+}
+
+String _cleanArticleText(String text) {
+  return text
+      .replaceAll('\r\n', '\n')
+      .replaceAll(RegExp(r'[ \t]+\n'), '\n')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
 }
 
 String? _pageMetadataContent(Document document) {

@@ -95,8 +95,7 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   }
 
   /// Persists the AI configuration (base URL, API key, model) to the local
-  /// Hive store. Account sync sends the key as JSON over HTTPS; generic JSON
-  /// serialization still omits it.
+  /// Hive store. Account sync carries only the non-secret configuration.
   Future<void> setAiConfig({
     String? baseUrl,
     String? apiKey,
@@ -134,6 +133,21 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
         imageAiBaseUrl: baseUrl,
         imageAiApiKey: apiKey,
         imageAiModel: model,
+      ),
+    );
+  }
+
+  Future<void> setEmbeddingConfig({
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+  }) async {
+    final current = state.valueOrNull ?? AppSettings();
+    await _save(
+      current.copyWith(
+        embeddingBaseUrl: baseUrl,
+        embeddingApiKey: apiKey,
+        embeddingModel: model,
       ),
     );
   }
@@ -351,9 +365,9 @@ final clipboardDetectionEnabledProvider = Provider<bool>((ref) {
 });
 
 /// True only when base URL, model, AND API key are all present. The key is
-/// stored locally on the device (see [AppSettings.aiApiKey]). Account sync can
-/// copy it as JSON over HTTPS; AI requests send it to the provider selected by
-/// the user.
+/// stored locally on the device (see [AppSettings.aiApiKey]). Account sync
+/// deliberately excludes every provider credential; AI requests send it only
+/// to the provider selected by the user.
 final aiConfiguredProvider = Provider<bool>((ref) {
   return ref
       .watch(settingsProvider)
@@ -406,6 +420,20 @@ String aiLanguagePrompt(int languageIndex) {
       return 'You MUST respond in English.';
     default:
       return 'Respond in the same language as the article title. If the title is in Chinese, respond in Chinese. If in English, respond in English.';
+  }
+}
+
+/// Returns the language instruction for chat, where there may be no article.
+String aiChatLanguagePrompt(int languageIndex) {
+  switch (languageIndex) {
+    case 1:
+      return 'You MUST respond in Chinese (简体中文).';
+    case 2:
+      return 'You MUST respond in English.';
+    default:
+      return "Respond in the same language as the user's current question. "
+          'If the question is in Chinese, respond in Chinese. '
+          'If it is in English, respond in English.';
   }
 }
 

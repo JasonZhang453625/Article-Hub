@@ -34,7 +34,10 @@ class HeadlessWebViewPageLoader implements PageLoader {
   }) : coordinator = coordinator ?? _headlessWebViewCoordinator;
 
   @override
-  Future<FetchedPage?> fetch(String url) async {
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  }) async {
     try {
       return await coordinator.run(
         () => _fetchExclusive(url),
@@ -316,6 +319,9 @@ String _pageSnapshotScript(XStatusTarget? xTarget) {
           article.querySelector('.x-article-body') ||
           article.querySelector('h1')) || null;
       const explicitBody = target?.querySelector('.x-article-body') || null;
+      const runtimeBody = target?.querySelector(
+        '[data-testid="twitterArticleRichTextView"]',
+      ) || target?.querySelector('[data-testid="longformRichTextComponent"]') || null;
       const heading = (target?.querySelector('h1')?.innerText || '').trim();
       const hasCover = !!target?.querySelector('img[alt="Article cover image"]');
       const root = explicitBody || target;
@@ -324,10 +330,14 @@ String _pageSnapshotScript(XStatusTarget? xTarget) {
             .map((element) => (element.innerText || '').trim())
             .filter(Boolean)
         : [];
-      const articleText = explicitBody
-        ? (explicitBody.innerText || '').trim()
-        : blocks.join('\\n\\n').trim();
-      const longArticleHint = !!explicitBody || !!heading || hasCover;
+      const articleText = runtimeBody
+        ? (runtimeBody.innerText || '').trim()
+        : explicitBody
+          ? (explicitBody.innerText || '').trim()
+          : blocks.join('\\n\\n').trim();
+      const longArticleHint = !!runtimeBody || !!explicitBody || !!heading || hasCover;
+      const runtimeReady = !!runtimeBody &&
+        articleText.length >= $xLongArticleMinimumTextLength;
       const explicitReady = !!explicitBody &&
         articleText.length >= $xLongArticleMinimumTextLength &&
         (blocks.length >= 2 || articleText.length >= 500);
@@ -341,7 +351,7 @@ String _pageSnapshotScript(XStatusTarget? xTarget) {
         readyState: document.readyState,
         xTargetFound: !!target,
         xLongArticleHint: longArticleHint,
-        xArticleReady: explicitReady || semanticReady,
+        xArticleReady: runtimeReady || explicitReady || semanticReady,
         xTargetTextLength: (target?.innerText || '').trim().length,
         xArticleTextLength: articleText.length,
         xArticleBlockCount: blocks.length

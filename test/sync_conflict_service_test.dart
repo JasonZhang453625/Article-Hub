@@ -59,6 +59,68 @@ void main() {
   );
 
   test(
+    'legacy settings shadow and conflict records are scrubbed on read',
+    () async {
+      final shadowBox = await Hive.openBox<dynamic>('sync_shadow');
+      const shadowKey = 'user-1::app_settings::settings';
+      await shadowBox.put(shadowKey, {
+        'accountId': 'user-1',
+        'collection': SyncCollections.appSettings,
+        'itemId': 'settings',
+        'entityRevision': 2,
+        'serverSeq': 3,
+        'payload': {'fontSize': 16, 'aiApiKey': 'sk-shadow'},
+        'deleted': false,
+        'deviceId': 'remote-device',
+      });
+
+      final shadow = await SyncShadowService().get(
+        accountId: 'user-1',
+        collection: SyncCollections.appSettings,
+        itemId: 'settings',
+      );
+      expect(shadow?.payload?.containsKey('aiApiKey'), isFalse);
+      expect(shadowBox.get(shadowKey).toString(), isNot(contains('sk-shadow')));
+
+      final conflictBox = await Hive.openBox<dynamic>('sync_conflicts');
+      await conflictBox.put('legacy-conflict', {
+        'id': 'legacy-conflict',
+        'accountId': 'user-1',
+        'collection': SyncCollections.appSettings,
+        'itemId': 'settings',
+        'localMutationId': 'mutation-1',
+        'baseEntityRevision': 1,
+        'remoteEntityRevision': 2,
+        'remoteServerSeq': 3,
+        'basePayload': {'fontSize': 14, 'aiApiKey': 'sk-base'},
+        'localPayload': {'fontSize': 18, 'chatAiApiKey': 'sk-local'},
+        'remotePayload': {'fontSize': 20, 'tavilyApiKey': 'tvly-remote'},
+        'localDeleted': false,
+        'remoteDeleted': false,
+        'conflictPaths': [r'$.fontSize', r'$.aiApiKey'],
+        'createdAt': '2026-08-09T00:00:00.000Z',
+        'status': SyncConflictStatus.pending.name,
+      });
+
+      final conflict = (await SyncConflictService().pending()).single;
+      expect(conflict.basePayload?.containsKey('aiApiKey'), isFalse);
+      expect(conflict.localPayload?.containsKey('chatAiApiKey'), isFalse);
+      expect(conflict.remotePayload?.containsKey('tavilyApiKey'), isFalse);
+      expect(conflict.conflictPaths, [r'$.fontSize']);
+      expect(
+        conflictBox.get('legacy-conflict').toString(),
+        isNot(
+          anyOf(
+            contains('sk-base'),
+            contains('sk-local'),
+            contains('tvly-remote'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'incoming newer event is stored as a conflict and can keep local',
     () async {
       final outbox = SyncOutboxService();

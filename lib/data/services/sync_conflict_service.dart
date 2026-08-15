@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import 'sync_payload_policy.dart';
 
 enum SyncConflictStatus { pending, resolved }
 
@@ -67,12 +68,15 @@ class SyncConflictRecord {
       baseEntityRevision: baseEntityRevision,
       remoteEntityRevision: remoteEntityRevision,
       remoteServerSeq: remoteServerSeq,
-      basePayload: basePayload,
-      localPayload: localPayload,
-      remotePayload: remotePayload,
+      basePayload: SyncPayloadPolicy.sanitize(collection, basePayload),
+      localPayload: SyncPayloadPolicy.sanitize(collection, localPayload),
+      remotePayload: SyncPayloadPolicy.sanitize(collection, remotePayload),
       localDeleted: localDeleted,
       remoteDeleted: remoteDeleted,
-      conflictPaths: conflictPaths,
+      conflictPaths: SyncPayloadPolicy.sanitizeChangedPaths(
+        collection,
+        conflictPaths,
+      ),
       createdAt: DateTime.now().toUtc(),
     );
   }
@@ -82,23 +86,34 @@ class SyncConflictRecord {
       return value is Map ? Map<String, dynamic>.from(value) : null;
     }
 
+    final collection = json['collection'] as String;
     return SyncConflictRecord(
       id: json['id'] as String,
       accountId: json['accountId'] as String,
-      collection: json['collection'] as String,
+      collection: collection,
       itemId: json['itemId'] as String,
       localMutationId: json['localMutationId'] as String,
       baseEntityRevision: _intValue(json['baseEntityRevision']),
       remoteEntityRevision: _intValue(json['remoteEntityRevision']),
       remoteServerSeq: _intValue(json['remoteServerSeq']),
-      basePayload: mapValue(json['basePayload']),
-      localPayload: mapValue(json['localPayload']),
-      remotePayload: mapValue(json['remotePayload']),
+      basePayload: SyncPayloadPolicy.sanitize(
+        collection,
+        mapValue(json['basePayload']),
+      ),
+      localPayload: SyncPayloadPolicy.sanitize(
+        collection,
+        mapValue(json['localPayload']),
+      ),
+      remotePayload: SyncPayloadPolicy.sanitize(
+        collection,
+        mapValue(json['remotePayload']),
+      ),
       localDeleted: json['localDeleted'] == true,
       remoteDeleted: json['remoteDeleted'] == true,
-      conflictPaths:
-          (json['conflictPaths'] as List?)?.whereType<String>().toList() ??
-          const [],
+      conflictPaths: SyncPayloadPolicy.sanitizeChangedPaths(
+        collection,
+        (json['conflictPaths'] as List?)?.whereType<String>() ?? const [],
+      ),
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now().toUtc(),
@@ -119,12 +134,15 @@ class SyncConflictRecord {
       'baseEntityRevision': baseEntityRevision,
       'remoteEntityRevision': remoteEntityRevision,
       'remoteServerSeq': remoteServerSeq,
-      'basePayload': basePayload,
-      'localPayload': localPayload,
-      'remotePayload': remotePayload,
+      'basePayload': SyncPayloadPolicy.sanitize(collection, basePayload),
+      'localPayload': SyncPayloadPolicy.sanitize(collection, localPayload),
+      'remotePayload': SyncPayloadPolicy.sanitize(collection, remotePayload),
       'localDeleted': localDeleted,
       'remoteDeleted': remoteDeleted,
-      'conflictPaths': conflictPaths,
+      'conflictPaths': SyncPayloadPolicy.sanitizeChangedPaths(
+        collection,
+        conflictPaths,
+      ),
       'createdAt': createdAt.toIso8601String(),
       'status': status.name,
     };
@@ -147,12 +165,18 @@ class SyncConflictRecord {
       baseEntityRevision: baseEntityRevision,
       remoteEntityRevision: remoteEntityRevision ?? this.remoteEntityRevision,
       remoteServerSeq: remoteServerSeq ?? this.remoteServerSeq,
-      basePayload: basePayload,
-      localPayload: localPayload,
-      remotePayload: remotePayload ?? this.remotePayload,
+      basePayload: SyncPayloadPolicy.sanitize(collection, basePayload),
+      localPayload: SyncPayloadPolicy.sanitize(collection, localPayload),
+      remotePayload: SyncPayloadPolicy.sanitize(
+        collection,
+        remotePayload ?? this.remotePayload,
+      ),
       localDeleted: localDeleted,
       remoteDeleted: remoteDeleted ?? this.remoteDeleted,
-      conflictPaths: conflictPaths ?? this.conflictPaths,
+      conflictPaths: SyncPayloadPolicy.sanitizeChangedPaths(
+        collection,
+        conflictPaths ?? this.conflictPaths,
+      ),
       createdAt: createdAt,
       status: status ?? this.status,
     );
@@ -200,11 +224,27 @@ class SyncConflictService {
   Future<List<SyncConflictRecord>> pending({String? accountId}) async {
     final box = await _openBox();
     final records = <SyncConflictRecord>[];
-    for (final raw in box.values.whereType<Map>()) {
+    for (final entry in box.toMap().entries) {
+      final raw = entry.value;
+      if (raw is! Map) continue;
       try {
-        final record = SyncConflictRecord.fromJson(
-          Map<String, dynamic>.from(raw),
-        );
+        final json = Map<String, dynamic>.from(raw);
+        final record = SyncConflictRecord.fromJson(json);
+        final storedSecrets =
+            [
+              json['basePayload'],
+              json['localPayload'],
+              json['remotePayload'],
+            ].any(
+              (payload) => SyncPayloadPolicy.containsSecrets(
+                record.collection,
+                payload is Map ? Map<String, dynamic>.from(payload) : null,
+              ),
+            );
+        if (storedSecrets) {
+          if (entry.key != record.id) await box.delete(entry.key);
+          await box.put(record.id, record.toJson());
+        }
         if (record.status != SyncConflictStatus.pending) continue;
         if (accountId != null && record.accountId != accountId) continue;
         records.add(record);

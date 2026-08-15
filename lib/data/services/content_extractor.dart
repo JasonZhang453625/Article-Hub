@@ -29,7 +29,7 @@ class ContentExtractor {
       return null;
     }
 
-    final text = _extractText(page.body, pageUrl: page.finalUrl);
+    final text = await extractFromFetchedPage(page);
     developer.log(
       'extracted text length: ${text?.length ?? 0}',
       name: 'memora.extractor',
@@ -41,6 +41,49 @@ class ContentExtractor {
   String? fromFetchedPage(FetchedPage page) {
     if (!page.isHtml || fetchedPageLooksBlocked(page)) return null;
     return _extractText(page.body, pageUrl: page.finalUrl);
+  }
+
+  /// Extracts page content and, for a post that embeds an X Article card,
+  /// follows the card's canonical status page to prefer its full article text.
+  Future<String?> extractFromFetchedPage(FetchedPage page) async {
+    if (!page.isHtml || fetchedPageLooksBlocked(page)) return null;
+
+    final initialContent = fromFetchedPage(page);
+    final xAssessment = assessXPage(page.body, page.finalUrl);
+    final embeddedArticleUrl = xAssessment.embeddedArticleStatusUrl;
+    if (embeddedArticleUrl == null || xAssessment.hasCompleteArticleBody) {
+      return initialContent;
+    }
+
+    try {
+      final embeddedPage = await _loader.fetch(
+        embeddedArticleUrl,
+        requirement: PageLoadRequirement.completeArticleBody,
+      );
+      if (embeddedPage == null) return initialContent;
+      final embeddedAssessment = assessXPage(
+        embeddedPage.body,
+        embeddedPage.finalUrl,
+      );
+      final embeddedContent = fromFetchedPage(embeddedPage);
+      if (embeddedAssessment.hasCompleteArticleBody &&
+          embeddedContent != null &&
+          embeddedContent.isNotEmpty) {
+        developer.log(
+          'using embedded X Article body: $embeddedArticleUrl',
+          name: 'memora.extractor',
+        );
+        return embeddedContent;
+      }
+    } catch (error, stackTrace) {
+      developer.log(
+        'embedded X Article load failed: $embeddedArticleUrl',
+        name: 'memora.extractor',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    return initialContent;
   }
 
   String? _extractText(String htmlBody, {required String pageUrl}) {

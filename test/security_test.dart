@@ -8,11 +8,19 @@ import 'package:memora/data/services/backup_data.dart';
 /// - Generic settings JSON must omit API keys.
 /// - Explicit full backups include API keys so they can restore the complete
 ///   configuration and therefore must be handled as secrets.
-/// - Account sync includes API keys in its dedicated JSON serialization path.
-///   The transport and server logs must therefore be treated as sensitive.
+/// - Account sync excludes provider API keys from its dedicated serialization
+///   path; only non-secret provider configuration may leave the device.
 /// - Vector data (from IndexRecord) must never enter the backup.
 void main() {
   group('Security: API key serialization boundaries', () {
+    test('does not bundle a default embedding provider credential', () {
+      final settings = AppSettings();
+
+      expect(AppSettings.defaultEmbeddingApiKey, isEmpty);
+      expect(settings.effectiveEmbeddingApiKey, isEmpty);
+      expect(settings.hasCustomEmbeddingConfig, isFalse);
+    });
+
     test('aiApiKey is omitted from AppSettings.toJson()', () {
       final settings = AppSettings(
         aiBaseUrl: 'https://api.openai.com',

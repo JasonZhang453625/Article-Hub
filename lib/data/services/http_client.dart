@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert' show utf8, latin1;
 import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
@@ -6,7 +6,8 @@ import 'package:charset/charset.dart';
 
 import 'page_loader.dart';
 
-export 'page_loader.dart' show FetchedPage, PageLoadSource, PageLoader;
+export 'page_loader.dart'
+    show FetchedPage, PageLoadRequirement, PageLoadSource, PageLoader;
 
 /// Shared browser-like headers for all outgoing HTTP requests.
 const Map<String, String> _browserHeaders = {
@@ -29,12 +30,17 @@ class AppHttpClient implements PageLoader {
   final http.Client _client;
   final Duration timeout;
 
-  AppHttpClient({http.Client? client, this.timeout = const Duration(seconds: 10)})
-      : _client = client ?? http.Client();
+  AppHttpClient({
+    http.Client? client,
+    this.timeout = const Duration(seconds: 10),
+  }) : _client = client ?? http.Client();
 
   /// Fetch [url] once and return a [FetchedPage]. Returns null on any error.
   @override
-  Future<FetchedPage?> fetch(String url) async {
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  }) async {
     try {
       final response = await _client
           .get(Uri.parse(url), headers: _browserHeaders)
@@ -106,12 +112,22 @@ class AppHttpClient implements PageLoader {
 
   String? _extractCharset(String text) {
     // Match Content-Type charset: charset=xxx or charset="xxx"
-    final m1 = RegExp(r'charset=["\x27]?([^\s;"\x27]+)', caseSensitive: false).firstMatch(text);
-    if (m1 != null) return m1.group(1)!.toLowerCase().replaceAll('"', '').replaceAll("'", '');
+    final m1 = RegExp(
+      r'charset=["\x27]?([^\s;"\x27]+)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (m1 != null) {
+      return m1.group(1)!.toLowerCase().replaceAll('"', '').replaceAll("'", '');
+    }
 
     // Match <meta charset="xxx">
-    final m2 = RegExp(r'<meta[^>]+charset=["\x27]?([^\s;"\x27>]+)', caseSensitive: false).firstMatch(text);
-    if (m2 != null) return m2.group(1)!.toLowerCase().replaceAll('"', '').replaceAll("'", '');
+    final m2 = RegExp(
+      r'<meta[^>]+charset=["\x27]?([^\s;"\x27>]+)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (m2 != null) {
+      return m2.group(1)!.toLowerCase().replaceAll('"', '').replaceAll("'", '');
+    }
 
     return null;
   }
@@ -124,7 +140,9 @@ class AppHttpClient implements PageLoader {
         .replaceAll('iso88591', 'latin1');
 
     // GBK / GB2312 / GB18030 — all use the charset package.
-    if (normalized.contains('gbk') || normalized.contains('gb2312') || normalized.contains('gb18030')) {
+    if (normalized.contains('gbk') ||
+        normalized.contains('gb2312') ||
+        normalized.contains('gb18030')) {
       try {
         return gbk.decode(bytes);
       } catch (_) {}

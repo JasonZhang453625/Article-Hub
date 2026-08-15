@@ -158,6 +158,82 @@ void main() {
     }
   });
 
+  test('extracts target post metadata despite an embedded X Article card', () {
+    const page = FetchedPage(
+      statusCode: 200,
+      contentType: 'text/html; charset=utf-8',
+      body:
+          '<html><body><article data-tweet-id="2086079311279493389">'
+          '<meta content="2086079311279493389" itemprop="identifier">'
+          '<meta itemprop="articleBody" '
+          'content="The target post body remains extractable.">'
+          '<p>The target post body remains extractable.</p>'
+          '<a href="/i/article/2064051835636498924">'
+          '<img alt="Article cover image" src="cover.jpg">'
+          '</a></article></body></html>',
+      finalUrl: 'https://x.com/i/status/2086079311279493389',
+      source: PageLoadSource.http,
+    );
+
+    final extractor = ContentExtractor();
+    try {
+      expect(
+        extractor.fromFetchedPage(page),
+        'The target post body remains extractable.',
+      );
+    } finally {
+      extractor.dispose();
+    }
+  });
+
+  test(
+    'follows an embedded X Article and prefers its full runtime body',
+    () async {
+      const embeddedUrl = 'https://x.com/i/status/2064051835636498924';
+      const outerPage = FetchedPage(
+        statusCode: 200,
+        contentType: 'text/html; charset=utf-8',
+        body:
+            '<html><body><article data-tweet-id="2086079311279493389">'
+            '<meta content="2086079311279493389" itemprop="identifier">'
+            '<meta itemprop="articleBody" content="Short outer post preview.">'
+            '<a href="/i/article/2064051835636498924">'
+            '<img alt="Article cover image" src="cover.jpg">'
+            '</a></article></body></html>',
+        finalUrl: 'https://x.com/i/status/2086079311279493389',
+        source: PageLoadSource.http,
+      );
+      final fullArticleText = List.filled(
+        20,
+        'Full article body from the dynamically rendered X Article view.',
+      ).join('\n\n');
+      final embeddedPage = FetchedPage(
+        statusCode: 200,
+        contentType: 'text/html; charset=utf-8',
+        body:
+            '<html><body><article data-tweet-id="2064051835636498924">'
+            '<a href="/author/status/2064051835636498924">Permalink</a>'
+            '<h1>Full X Article title</h1>'
+            '<div data-testid="twitterArticleRichTextView">$fullArticleText</div>'
+            '</article></body></html>',
+        finalUrl: embeddedUrl,
+        source: PageLoadSource.webView,
+      );
+      final loader = _RoutingPageLoader({embeddedUrl: embeddedPage});
+      final extractor = ContentExtractor(loader: loader, ownsLoader: false);
+
+      final content = await extractor.extractFromFetchedPage(outerPage);
+
+      expect(content, startsWith('Full X Article title'));
+      expect(
+        content,
+        contains('Full article body from the dynamically rendered'),
+      );
+      expect(loader.requestedUrls, [embeddedUrl]);
+      expect(loader.requirements, [PageLoadRequirement.completeArticleBody]);
+    },
+  );
+
   test('does not extract an X long-article preview as full content', () {
     const page = FetchedPage(
       statusCode: 200,
@@ -202,4 +278,25 @@ void main() {
       extractor.dispose();
     }
   });
+}
+
+class _RoutingPageLoader implements PageLoader {
+  final Map<String, FetchedPage> pages;
+  final requestedUrls = <String>[];
+  final requirements = <PageLoadRequirement>[];
+
+  _RoutingPageLoader(this.pages);
+
+  @override
+  Future<FetchedPage?> fetch(
+    String url, {
+    PageLoadRequirement requirement = PageLoadRequirement.usableContent,
+  }) async {
+    requestedUrls.add(url);
+    requirements.add(requirement);
+    return pages[url];
+  }
+
+  @override
+  void dispose() {}
 }

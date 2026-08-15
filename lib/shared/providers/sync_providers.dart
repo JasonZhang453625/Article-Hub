@@ -10,6 +10,7 @@ import '../../data/services/sync_conflict_service.dart';
 import '../../data/services/sync_conflict_resolver.dart';
 import '../../data/services/sync_mutation_service.dart';
 import '../../data/services/sync_outbox_service.dart';
+import '../../data/services/sync_payload_policy.dart';
 import '../../data/services/sync_protocol.dart';
 import '../../data/services/sync_service.dart';
 import '../../data/services/sync_shadow_service.dart';
@@ -229,10 +230,15 @@ Future<void> _enqueueSnapshotMutation(
   required String itemId,
   required Map<String, dynamic> payload,
 }) async {
+  final sanitizedPayload = SyncPayloadPolicy.sanitize(collection, payload)!;
   final base = await ref
       .read(syncShadowProvider)
       .get(accountId: accountId, collection: collection, itemId: itemId);
-  final changedPaths = jsonChangedPaths(base?.payload, payload);
+  final sanitizedBasePayload = SyncPayloadPolicy.sanitize(
+    collection,
+    base?.payload,
+  );
+  final changedPaths = jsonChangedPaths(sanitizedBasePayload, sanitizedPayload);
   if (base != null && !base.deleted && changedPaths.isEmpty) return;
   await ref
       .read(syncOutboxProvider)
@@ -242,9 +248,9 @@ Future<void> _enqueueSnapshotMutation(
           collection: collection,
           itemId: itemId,
           operation: SyncOperation.upsert,
-          payload: payload,
+          payload: sanitizedPayload,
           baseEntityRevision: base?.entityRevision ?? 0,
-          basePayload: base?.payload,
+          basePayload: sanitizedBasePayload,
           changedPaths: changedPaths,
         ),
       );

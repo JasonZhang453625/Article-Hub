@@ -1,5 +1,6 @@
 import 'sync_conflict_service.dart';
 import 'sync_outbox_service.dart';
+import 'sync_payload_policy.dart';
 import 'sync_shadow_service.dart';
 
 /// Records local mutations together with the last server snapshot they were
@@ -26,16 +27,21 @@ class SyncMutationService {
             collection: collection,
             itemId: itemId,
           );
+    final sanitizedPayload = SyncPayloadPolicy.sanitize(collection, payload)!;
+    final sanitizedBasePayload = SyncPayloadPolicy.sanitize(
+      collection,
+      basePayload ?? base?.payload,
+    );
     await outbox.enqueue(
       SyncOutboxRecord.create(
         accountId: accountId,
         collection: collection,
         itemId: itemId,
         operation: SyncOperation.upsert,
-        payload: payload,
+        payload: sanitizedPayload,
         baseEntityRevision: baseEntityRevision ?? base?.entityRevision ?? 0,
-        basePayload: basePayload ?? base?.payload,
-        changedPaths: jsonChangedPaths(basePayload ?? base?.payload, payload),
+        basePayload: sanitizedBasePayload,
+        changedPaths: jsonChangedPaths(sanitizedBasePayload, sanitizedPayload),
       ),
     );
   }
@@ -54,6 +60,10 @@ class SyncMutationService {
             collection: collection,
             itemId: itemId,
           );
+    final sanitizedBasePayload = SyncPayloadPolicy.sanitize(
+      collection,
+      basePayload ?? base?.payload,
+    );
     await outbox.enqueue(
       SyncOutboxRecord.create(
         accountId: accountId,
@@ -62,7 +72,7 @@ class SyncMutationService {
         operation: SyncOperation.delete,
         payload: null,
         baseEntityRevision: baseEntityRevision ?? base?.entityRevision ?? 0,
-        basePayload: basePayload ?? base?.payload,
+        basePayload: sanitizedBasePayload,
         changedPaths: const [r'$'],
       ),
     );

@@ -66,38 +66,50 @@ void main() {
     expect(articleBox.get(article.id), isNull);
   });
 
-  test('applies AI provider keys from account settings JSON', () async {
-    final settingsBox = await Hive.openBox<AppSettings>('app_settings');
-    await settingsBox.put(
-      'settings',
-      AppSettings(
-        aiApiKey: 'sk-local-ai',
-        embeddingApiKey: 'sk-local-embedding',
-      ),
-    );
+  test(
+    'legacy account settings cannot overwrite device provider keys',
+    () async {
+      final settingsBox = await Hive.openBox<AppSettings>('app_settings');
+      await settingsBox.put(
+        'settings',
+        AppSettings(
+          aiApiKey: 'sk-local-ai',
+          chatAiApiKey: 'sk-local-chat',
+          imageAiApiKey: 'sk-local-image',
+          embeddingApiKey: 'sk-local-embedding',
+          tavilyApiKey: 'tvly-local',
+        ),
+      );
 
-    final incoming = AppSettings(
-      fontSize: 18,
-      aiBaseUrl: 'https://ai.example',
-      aiApiKey: 'sk-remote-ai',
-      embeddingApiKey: 'sk-remote-embedding',
-    );
-    final result = await applier.applyEvents([
-      _plainEvent(
-        collection: SyncCollections.appSettings,
-        itemId: 'settings',
-        payload: incoming.toSyncJson(),
-        accountId: 'user-1',
-      ),
-    ], accountId: 'user-1');
-    expect(result.applied, 1);
+      final incoming = AppSettings(
+        fontSize: 18,
+        aiBaseUrl: 'https://ai.example',
+        aiApiKey: 'sk-remote-ai',
+        chatAiApiKey: 'sk-remote-chat',
+        imageAiApiKey: 'sk-remote-image',
+        embeddingApiKey: 'sk-remote-embedding',
+        tavilyApiKey: 'tvly-remote',
+      );
+      final result = await applier.applyEvents([
+        _plainEvent(
+          collection: SyncCollections.appSettings,
+          itemId: 'settings',
+          payload: {'schemaVersion': 1, ...incoming.toBackupJson()},
+          accountId: 'user-1',
+        ),
+      ], accountId: 'user-1');
+      expect(result.applied, 1);
 
-    final restored = settingsBox.get('settings')!;
-    expect(restored.fontSize, 18);
-    expect(restored.aiBaseUrl, 'https://ai.example');
-    expect(restored.aiApiKey, 'sk-remote-ai');
-    expect(restored.embeddingApiKey, 'sk-remote-embedding');
-  });
+      final restored = settingsBox.get('settings')!;
+      expect(restored.fontSize, 18);
+      expect(restored.aiBaseUrl, 'https://ai.example');
+      expect(restored.aiApiKey, 'sk-local-ai');
+      expect(restored.chatAiApiKey, 'sk-local-chat');
+      expect(restored.imageAiApiKey, 'sk-local-image');
+      expect(restored.embeddingApiKey, 'sk-local-embedding');
+      expect(restored.tavilyApiKey, 'tvly-local');
+    },
+  );
 
   test('legacy plaintext settings without keys preserve local keys', () async {
     final settingsBox = await Hive.openBox<AppSettings>('app_settings');
@@ -105,7 +117,10 @@ void main() {
       'settings',
       AppSettings(
         aiApiKey: 'sk-local-ai',
+        chatAiApiKey: 'sk-local-chat',
+        imageAiApiKey: 'sk-local-image',
         embeddingApiKey: 'sk-local-embedding',
+        tavilyApiKey: 'tvly-local',
       ),
     );
 
@@ -121,7 +136,59 @@ void main() {
     final restored = settingsBox.get('settings')!;
     expect(restored.fontSize, 17);
     expect(restored.aiApiKey, 'sk-local-ai');
+    expect(restored.chatAiApiKey, 'sk-local-chat');
+    expect(restored.imageAiApiKey, 'sk-local-image');
     expect(restored.embeddingApiKey, 'sk-local-embedding');
+    expect(restored.tavilyApiKey, 'tvly-local');
+  });
+
+  test(
+    'legacy settings keys are discarded without local credentials',
+    () async {
+      final settingsBox = await Hive.openBox<AppSettings>('app_settings');
+      await applier.applyEvents([
+        _plainEvent(
+          collection: SyncCollections.appSettings,
+          itemId: 'settings',
+          payload: {
+            'fontSize': 19,
+            'aiApiKey': 'sk-remote-ai',
+            'chatAiApiKey': 'sk-remote-chat',
+            'imageAiApiKey': 'sk-remote-image',
+            'embeddingApiKey': 'sk-remote-embedding',
+            'tavilyApiKey': 'tvly-remote',
+          },
+        ),
+      ]);
+
+      final restored = settingsBox.get('settings')!;
+      expect(restored.fontSize, 19);
+      expect(restored.aiApiKey, isEmpty);
+      expect(restored.chatAiApiKey, isEmpty);
+      expect(restored.imageAiApiKey, isEmpty);
+      expect(restored.embeddingApiKey, isEmpty);
+      expect(restored.tavilyApiKey, isEmpty);
+    },
+  );
+
+  test('remote settings delete does not erase device settings', () async {
+    final settingsBox = await Hive.openBox<AppSettings>('app_settings');
+    await settingsBox.put(
+      'settings',
+      AppSettings(fontSize: 21, aiApiKey: 'sk-local-ai'),
+    );
+
+    final result = await applier.applyEvents([
+      {
+        'collection': SyncCollections.appSettings,
+        'itemId': 'settings',
+        'op': SyncOperation.delete.name,
+      },
+    ]);
+
+    expect(result.applied, 1);
+    expect(settingsBox.get('settings')?.fontSize, 21);
+    expect(settingsBox.get('settings')?.aiApiKey, 'sk-local-ai');
   });
 
   test(

@@ -14,11 +14,12 @@ class AppSettings {
     'sensenova-6.7-flash-lite',
   ];
 
-  /// Built-in default embedding configuration (SiliconFlow BGE-M3).
-  /// Used when the user hasn't provided their own config (BYOK).
+  /// Suggested OpenAI-compatible embedding configuration.
+  ///
+  /// No provider credential may be bundled in the client. Without a user BYOK
+  /// key, retrieval falls back to the local keyword path.
   static const String defaultEmbeddingBaseUrl = 'https://api.siliconflow.cn/v1';
-  static const String defaultEmbeddingApiKey =
-      'sk-goxkdsfshuekimktyiwdkexdnkdantwuhfylssothjhetcjh';
+  static const String defaultEmbeddingApiKey = '';
   static const String defaultEmbeddingModel = 'BAAI/bge-m3';
 
   double fontSize;
@@ -36,14 +37,14 @@ class AppSettings {
   /// AI configuration for auto-summarization (BYOK).
   ///
   /// The API key is stored locally on the device and sent directly to the
-  /// user's chosen AI provider. Account sync also carries it as JSON over
-  /// HTTPS. We deliberately do NOT
-  /// additionally encrypt it: the threat model is "attacker has the unlocked
+  /// user's chosen AI provider. Account sync never carries provider keys;
+  /// only an explicit user-requested local backup includes them. We deliberately
+  /// do NOT additionally encrypt it: the threat model is "attacker has the unlocked
   /// device or root access", against which app-level encryption provides no
   /// real protection (the decryption path lives in the same app). The one
   /// protection that does matter is controlling which serialization path is
-  /// used: [toJson] excludes the key, while the user-requested full backup and
-  /// complete account sync use [toBackupJson] and [toSyncJson].
+  /// used: [toJson] and [toSyncJson] exclude the key, while the user-requested
+  /// full local backup uses [toBackupJson].
   /// See `docs/PRD.md` (AI key storage decision) for the full rationale.
   String aiBaseUrl;
   String aiApiKey;
@@ -72,17 +73,17 @@ class AppSettings {
 
   /// Embedding configuration for semantic search / RAG (BYOK).
   ///
-  /// Follows the same threat model as [aiApiKey]. Generic [toJson] output omits
-  /// the key; complete backups and account sync include it via
-  /// [toBackupJson] and [toSyncJson].
+  /// Follows the same threat model as [aiApiKey]. Generic and account-sync JSON
+  /// omit the key; an explicit full local backup includes it via
+  /// [toBackupJson].
   String embeddingBaseUrl;
   String embeddingApiKey;
   String embeddingModel;
 
   /// Tavily API key for the RAG chat web-search fallback (BYOK).
   ///
-  /// Same threat model as [aiApiKey]: omitted from generic [toJson], included
-  /// in [toBackupJson] / [toSyncJson].
+  /// Same threat model as [aiApiKey]: omitted from generic/account-sync JSON,
+  /// included only in an explicit full local backup via [toBackupJson].
   String tavilyApiKey;
 
   /// Language: 0 = follow system, 1 = Chinese, 2 = English
@@ -232,7 +233,10 @@ class AppSettings {
       ? embeddingBaseUrl
       : defaultEmbeddingBaseUrl;
 
-  /// Returns the effective embedding API key (user-provided or built-in default).
+  /// Returns the user-provided embedding API key.
+  ///
+  /// The empty default is intentional: a shared key in an application binary
+  /// is recoverable by every installer.
   String get effectiveEmbeddingApiKey => embeddingApiKey.trim().isNotEmpty
       ? embeddingApiKey
       : defaultEmbeddingApiKey;
@@ -384,7 +388,7 @@ class AppSettings {
   }
 
   /// Serializes every setting needed to restore a complete local backup,
-  /// including both provider API keys and their base URL/model selections.
+  /// including provider API keys and their base URL/model selections.
   Map<String, dynamic> toBackupJson() {
     return {
       ...toJson(),
@@ -396,11 +400,11 @@ class AppSettings {
     };
   }
 
-  /// Serializes the complete cross-device configuration. This map contains
-  /// provider secrets and is sent to the account sync API as JSON over HTTPS.
-  /// It must never be written to application or server logs.
+  /// Serializes only the non-secret cross-device configuration.
+  ///
+  /// Provider credentials are device-local and must never enter account sync.
   Map<String, dynamic> toSyncJson() {
-    return {'schemaVersion': 1, ...toBackupJson()};
+    return {'schemaVersion': 2, ...toJson()};
   }
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {

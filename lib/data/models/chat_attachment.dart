@@ -111,3 +111,20 @@ List<ChatAttachment> chatAttachmentsFromStored(dynamic value) {
   }
   return List.unmodifiable(attachments);
 }
+
+/// Extracts only validated ownership ids from stored attachment metadata.
+///
+/// File cleanup must not depend on unrelated display metadata such as MIME,
+/// original name, size, or digest remaining parseable.
+List<String> chatAttachmentIdsFromStored(dynamic value) {
+  if (value is! List) return const [];
+  final ids = <String>{};
+  for (final item in value) {
+    final dynamic candidate = item is Map ? item['id'] : item;
+    if (candidate is String && isValidChatAttachmentId(candidate)) {
+      ids.add(candidate);
+    }
+  }
+  final result = ids.toList()..sort();
+  return List.unmodifiable(result);
+}

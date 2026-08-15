@@ -7,12 +7,12 @@
 实现并验证以下结果：
 
 1. 用户使用同一账号登录不同设备后，可以同步文章、文件夹、筛选组和完整应用设置。
-2. 应用设置必须包含 AI 与 Embedding 的 Base URL、模型名、API Key 等配置。
+2. 应用设置只同步 AI、Image、Embedding 的 Base URL、模型名等非敏感配置；所有 provider API Key 必须保持设备本地。
 3. 同步协议固定为 v3，所有实体使用同一种版本化 JSON 信封格式。
 4. 客户端不做同步负载加密。服务端直接接收和保存 JSON；传输必须使用 HTTPS。
 5. 同步请求内部仍可分批，但一次自动同步任务必须持续推送和拉取，直到所有页面处理完，不能让用户反复点击“再同步 50 个”。
 6. 服务端必须按已认证账号强制隔离数据，绝不能信任客户端提交的 userId/accountId 来决定归属。
-7. API Key 属于高敏感数据：允许随账号同步并存入数据库，但严禁进入应用日志、访问日志正文、错误响应、APM span、指标标签、审计截图和客服导出。
+7. API Key 属于高敏感数据：服务端必须在写入事件/当前状态前拒绝或剔除密钥字段，并清理历史数据库、日志副本和备份；严禁在 pull/bootstrap 中返回。
 
 ## 二、先做代码与部署审计
 
@@ -136,22 +136,19 @@ v3 首批只允许：
 
 ### 4.3 app_settings 标准
 
-`app_settings` 固定使用 `itemId = "settings"`。payload.data 至少允许并原样保存：
+`app_settings` 固定使用 `itemId = "settings"`。payload.data 只允许保存非敏感配置，例如：
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "aiBaseUrl": "https://api.example.com/v1",
-  "aiApiKey": "sk-...",
   "aiModel": "model-name",
   "embeddingBaseUrl": "https://embedding.example.com/v1",
-  "embeddingApiKey": "sk-...",
-  "embeddingModel": "embedding-model",
-  "reuseAiCredentialsForEmbedding": false
+  "embeddingModel": "embedding-model"
 }
 ```
 
-还要保留客户端传入的其他 AppSettings 字段。禁止在保存前清空 API Key，否则另一设备无法恢复完整配置。
+还要保留客户端传入的其他非敏感 AppSettings 字段。以下顶层字段无论来自新旧客户端都必须在持久化前剔除，并返回受控校验结果或安全接受净化后的 payload：`aiApiKey`、`chatAiApiKey`、`imageAiApiKey`、`embeddingApiKey`、`tavilyApiKey`。不得把它们复制到事件表、当前状态、冲突表、审计数据或响应。
 
 ## 五、接口契约
 
@@ -229,7 +226,7 @@ Flutter 客户端会持续拉取，直到某页数量小于 limit。因此不要
 - 同一 collection + itemId 只返回最新状态；
 - 已删除项目可返回 tombstone，确保旧本地记录被删除；
 - 大账号不能无限响应：可以稳定分页，但必须与客户端契约一起实现完整遍历；
-- app_settings 必须返回完整 data，包括 AI/Embedding API Key；
+- app_settings 返回完整的非敏感 data，且不得包含任何 provider API Key；
 - bootstrap 完成后，增量 pull 不能漏掉 bootstrap 期间发生的写入。
 
 ## 六、数据库建议
@@ -268,19 +265,20 @@ sync_events
 
 ## 七、敏感数据保护
 
-因为 v3 的 app_settings 会包含 API Key，必须完成：
+即使新客户端不再上传 API Key，服务端仍必须按高敏感数据边界完成：
 
 - 全站 HTTPS，HTTP 重定向或拒绝，生产环境启用 HSTS；
 - 数据库连接 TLS、最小权限账号、生产数据库访问审批；
-- 数据库磁盘和备份使用云平台静态加密；
-- 备份保留周期、恢复演练和删除策略明确；
+- 对同步入口做服务端强制字段净化，不能只信任客户端版本；
+- 一次性扫描并净化物化状态、事件历史、冲突记录与可检索审计副本；
+- 对含历史 Key 的备份制定轮换/到期删除方案，并记录不含明文的迁移计数；
 - Web/API/反向代理禁止记录 `/sync/push` 请求体和 `/sync/*` 响应体；
-- Authorization、refresh token、OTP、AI API Key 一律脱敏；
+- Authorization、refresh token、OTP、provider API Key 一律脱敏；
 - 异常上报只记录 event 数、collection、状态码、耗时，不记录 payload；
-- 管理后台默认不展示 payload；确需排障时也不能展示 API Key；
+- 管理后台默认不展示 payload；排障接口也必须经过同一字段净化；
 - 数据导出与账号删除覆盖同步事件、当前状态、设备、token 和备份生命周期。
 
-不得声称服务端“看不到”这些 Key。数据库管理员或拥有生产数据访问权的人理论上可以看到，因此访问控制和审计必须真实有效。
+迁移完成前不得声称服务端“没有”这些 Key。若历史日志或备份可能包含真实凭据，应按安全事件处理并通知用户轮换，而不是仅覆盖最新状态。
 
 ## 八、v2 到 v3 迁移
 
@@ -292,6 +290,8 @@ sync_events
 4. 若某账号只剩服务器旧数据、没有任何仍持有本地副本的设备，则服务器无法恢复其内容；必须明确告知用户，不能宣称迁移成功。
 5. 迁移期间可保留旧表只读用于回滚；确认账号 v3 快照完整后，再按审批过的保留策略清理旧数据。
 6. 用指标统计“已完成 v3 快照的账号数”，但指标标签不得含邮箱、用户 ID、API Key 或正文。
+7. 增加一次性凭据净化迁移：先只读统计五个禁用字段在当前状态、事件、冲突/审计表中的数量，再事务化清理；验证 pull/bootstrap、数据库查询和新备份均不再返回这些字段。
+8. 服务端必须对不具备无密钥同步契约的旧客户端实施版本门禁，防止迁移后再次上传。
 
 ## 九、自动同步与一致性
 
@@ -320,8 +320,8 @@ sync_events
 - v3 article/folder/filter_group/app_settings upsert 与 delete；
 - payload 信封身份不一致时拒绝；
 - 缺少 payload、错误 payloadFormat、未知 collection、超限 body 时拒绝；
-- API Key 原样写入并由另一设备 bootstrap 恢复；
-- 响应和日志中除同步 payload 外不意外复制 API Key。
+- 五个禁用 Key 字段在 push 时被拒绝或净化，数据库、pull/bootstrap、冲突与日志均不存在其值；
+- 旧客户端版本门禁生效，无法在清理后重新写入密钥。
 
 ### 幂等与游标
 
@@ -336,14 +336,14 @@ sync_events
 
 使用账号 A 的设备 1 和设备 2 做真实 API 验收：
 
-1. 设备 1 保存文章、文件夹、筛选组和完整 AI/Embedding 配置。
+1. 设备 1 保存文章、文件夹、筛选组和 AI/Embedding 非敏感配置，并为两台设备分别设置不同的测试 Key。
 2. 等待自动同步完成，不重复手点按钮。
 3. 设备 2 首次登录并 bootstrap。
 4. 核对每条记忆的 id、URL、标题、来源、标签、备注、文件夹、记忆内容、处理状态、时间戳及 schemaVersion。
-5. 核对 AI/Embedding Base URL、模型名和 API Key 完全一致。
+5. 核对 AI/Embedding Base URL、模型名一致；两台设备各自 Key 保持本地值，互不覆盖、互不上传。
 6. 设备 2 修改内容，设备 1 自动拉回。
 7. 检查数据库只属于账号 A；账号 B 完全不可见。
-8. 检查后端、代理和 APM 日志，确认找不到测试 API Key。
+8. 检查数据库当前状态/历史事件/备份以及后端、代理和 APM 日志，确认找不到测试 API Key。
 
 ## 十一、交付报告格式
 
@@ -353,7 +353,7 @@ sync_events
 2. 最终 API 请求/响应示例；
 3. 数据库约束、索引和账号隔离证据；
 4. 自动分批同步、幂等、游标和双设备测试结果；
-5. API Key 日志检查结果；
+5. API Key 入口净化、历史迁移、旧版本门禁及数据库/日志/备份检查结果；
 6. v2 账号迁移统计和不可恢复场景说明；
 7. 尚未完成的风险与上线前阻塞项。
 

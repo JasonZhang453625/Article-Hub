@@ -35,7 +35,7 @@
   → 查看引用卡片并返回原文
 ```
 
-记忆海 不提供云内容后端或 AI 代理后端。文章、记忆、标签、文件夹、处理状态和向量索引默认保存在本机，亦可选择端到端加密云端同步；记忆和对话请求直接发送到用户配置的兼容服务，embedding 使用内置默认服务或用户自定义服务。
+文章、记忆、标签、文件夹、处理状态和向量索引默认保存在本机。可选账号同步会把选定实体通过 HTTPS 发送到记忆海服务端，当前同步负载并非端到端加密；BYOK 模式直接请求用户配置的兼容服务，Hosted Agent 模式经记忆海后端执行。Embedding 只使用用户配置的服务，未配置时降级为本地关键词检索。
 
 ## 核心特点
 
@@ -94,7 +94,7 @@
 
 - 核心数据使用 Hive 保存在设备本地。
 - JSON 备份支持文章、标签、文件夹、筛选和设置的导出与恢复。
-- AI API Key 和 embedding API Key 不写入导出的备份文件。
+- AI、embedding 与联网搜索 Key 不进入账号同步；用户主动导出的完整 JSON 备份会包含这些 Key，必须安全保管。
 - 向量索引属于可重建数据，不作为核心备份内容。
 
 ### 记忆共享
@@ -155,7 +155,7 @@ RAG 流程先在本地召回，再把候选记忆交给聊天模型。回答中�
 | 阅读 | 记忆优先页面、应用内 WebView、外部浏览器入口 |
 | AI 兼容 | OpenAI-compatible、MiMo 思考模型、DeepSeek/o1/o3 等思考模型自动兼容 |
 | 设置 | 中英文界面、主题、字体、WebView 缩放、来源排序与隐藏 |
-| 数据 | JSON 备份恢复、API Key 排除、索引可重建 |
+| 数据 | JSON 完整备份恢复、账号同步密钥隔离、索引可重建 |
 
 ## 平台状态
 
@@ -182,7 +182,7 @@ RAG 流程先在本地召回，再把候选记忆交给聊天模型。回答中�
 | HTML 解析 | `html` |
 | AI | OpenAI-compatible Chat Completions |
 | Embedding | OpenAI-compatible Embeddings |
-| 自有后端 | 无 |
+| 托管后端 | 可选账号同步、认证与 Hosted Agent；核心知识库仍以本地数据为准 |
 
 ```text
 lib/
@@ -231,7 +231,7 @@ flutter test
 - Chat Completions Base URL
 - API Key
 - 模型名称
-- 可选的 Embeddings Base URL、API Key 和模型名称；留空时使用内置默认 embedding 服务
+- 可选的 Embeddings Base URL、API Key 和模型名称；未配置 Key 时使用本地关键词检索
 
 接口需要兼容 OpenAI 的请求和响应结构。不同供应商对参数、模型能力和限流策略的实现可能不同。
 
@@ -240,9 +240,9 @@ flutter test
 - 记忆海 不运营内容服务器或 AI 中转服务器。
 - 本地文章数据不会因为使用应用而自动上传到 记忆海。
 - 生成记忆时，提取后的正文会发送到用户选择的聊天模型服务。
-- 建立语义索引时，标题、记忆和标签会发送到内置默认 embedding 服务，或用户主动配置的自定义服务。
+- 用户配置 embedding 服务后，建立语义索引时会向该服务发送标题、记忆和标签；未配置时不发送并降级为本地关键词检索。
 - 提问时，问题和召回到的记忆会发送到用户选择的聊天模型服务。
-- API Key 保存在本机 Hive 设置中，并从 JSON 备份中排除。
+- API Key 保存在本机 Hive 设置中，不进入账号同步；用户主动导出的完整 JSON 备份包含 Key，应视为敏感文件。
 
 ## 文档
 
@@ -278,7 +278,7 @@ Capture a link
   → inspect cited cards and return to the original source
 ```
 
-Memora has no hosted content backend or AI proxy backend. Articles, summaries, organization data, processing state, and vector indexes are stored locally by default, with optional end-to-end encrypted cloud sync. Summary and chat requests go directly to the user-configured service; embeddings use either the built-in default service or a custom endpoint.
+Articles, summaries, organization data, processing state, and vector indexes are stored locally by default. Optional account sync sends selected entities to Memora's backend over HTTPS; its payload is not currently end-to-end encrypted. BYOK calls go directly to the configured provider, while Hosted Agent calls run through Memora's backend. Embeddings require a user-configured provider and otherwise fall back to local keyword retrieval.
 
 ## Key Features
 
@@ -337,7 +337,7 @@ Memora has no hosted content backend or AI proxy backend. Articles, summaries, o
 
 - Core data is stored locally with Hive.
 - JSON backup and restore covers articles, tags, folders, filters, and settings.
-- Chat and embedding API keys are excluded from exported backups.
+- AI, embedding, and web-search keys are excluded from account sync. User-requested full JSON backups include them and must be stored securely.
 - Vector indexes are treated as rebuildable derived data.
 
 ### Memory sharing
@@ -398,7 +398,7 @@ RAG queries retrieve locally before calling the chat model. Citation numbers are
 | Reading | Summary-first view, in-app WebView, external browser access |
 | AI compatibility | OpenAI-compatible, MiMo thinking model, DeepSeek/o1/o3-style thinking models |
 | Settings | Chinese/English UI, theme, font size, WebView zoom, source management |
-| Data | JSON backup/restore, API-key exclusion, rebuildable indexes |
+| Data | Full JSON backup/restore, account-sync key isolation, rebuildable indexes |
 
 ## Platform Status
 
@@ -425,7 +425,7 @@ Plugin behavior is not identical across platforms. Android is currently the plat
 | HTML parsing | `html` |
 | Chat AI | OpenAI-compatible Chat Completions |
 | Embeddings | OpenAI-compatible Embeddings |
-| Hosted backend | None |
+| Hosted backend | Optional auth/account sync and Hosted Agent; the local library remains authoritative |
 
 ```text
 lib/
@@ -474,7 +474,7 @@ Configure the following in Settings:
 - Chat Completions base URL
 - API key
 - Model name
-- Optional embeddings base URL, API key, and model name; the built-in default embedding service is used when these fields are empty
+- Optional embeddings base URL, API key, and model name; local keyword retrieval is used when no embedding key is configured
 
 The endpoint must follow an OpenAI-compatible request and response structure. Parameter support, model capabilities, and rate limits vary by provider.
 
@@ -483,9 +483,9 @@ The endpoint must follow an OpenAI-compatible request and response structure. Pa
 - Memora does not operate a content server or AI relay.
 - Local article data is not automatically uploaded to Memora.
 - Extracted article text is sent to the selected chat model when generating summaries.
-- Titles, summaries, and tags are sent to the built-in default embedding service or the user-configured custom service when building semantic indexes.
+- When an embedding provider is configured, titles, summaries, and tags are sent to it while building semantic indexes; otherwise nothing is sent and retrieval falls back to local keywords.
 - Questions and retrieved summaries are sent to the selected chat model during RAG conversations.
-- API keys are stored in local Hive settings and excluded from JSON exports.
+- API keys are stored in local Hive settings and excluded from account sync. User-requested full JSON backups contain them and must be treated as sensitive files.
 
 ## Documentation
 

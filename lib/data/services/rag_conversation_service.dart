@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:uuid/uuid.dart';
@@ -63,6 +64,7 @@ typedef RagAgentCompletionStreamWithRun =
     Stream<String> Function({
       required String systemPrompt,
       required String userMessage,
+      required String userQuestion,
       List<Map<String, String>> history,
       double temperature,
       int maxTokens,
@@ -170,12 +172,19 @@ class HistoryAwareQueryRewriter {
       if (recent.isEmpty) return original;
       final transcript = recent
           .where((turn) => turn.content.trim().isNotEmpty)
-          .map((turn) => '${turn.role}: ${turn.content.trim()}')
-          .join('\n');
+          .map(
+            (turn) => <String, String>{
+              'role': turn.role,
+              'content': turn.content.trim(),
+            },
+          )
+          .toList(growable: false);
       final response = await _complete(
         systemPrompt: systemPrompt,
-        userMessage:
-            'Conversation:\n$transcript\n\nLatest question:\n$original',
+        userMessage: jsonEncode({
+          'conversation_history': transcript,
+          'latest_question': original,
+        }),
         history: const [],
         temperature: 0,
         maxTokens: 160,
@@ -196,6 +205,7 @@ class RagConversationService {
   final RagAgentCompletionStream? _agentCompleteStream;
   final RagAgentCompletionStreamWithRun? _agentRunStream;
   final RagCompletionError? _completionError;
+  final RagCompletionError? _agentCompletionError;
   final void Function(AiThinkingLevel level)? _configureThinking;
   final List<String> Function()? _agentWebUrls;
   final RagSaveLog _saveLog;
@@ -214,6 +224,7 @@ class RagConversationService {
     RagAgentCompletionStream? agentCompleteStream,
     RagAgentCompletionStreamWithRun? agentRunStream,
     RagCompletionError? completionError,
+    RagCompletionError? agentCompletionError,
     void Function(AiThinkingLevel level)? configureThinking,
     List<String> Function()? agentWebUrls,
     required RagSaveLog saveLog,
@@ -230,6 +241,7 @@ class RagConversationService {
        _agentCompleteStream = agentCompleteStream,
        _agentRunStream = agentRunStream,
        _completionError = completionError,
+       _agentCompletionError = agentCompletionError,
        _configureThinking = configureThinking,
        _agentWebUrls = agentWebUrls,
        _saveLog = saveLog,
@@ -262,26 +274,42 @@ class RagConversationService {
     FutureOr<void> Function(String runId)? onRunCreated,
     String? idempotencyKey,
   }) async {
-    _configureThinking?.call(request.thinkingLevel);
     final question = request.question.trim();
     final logId = const Uuid().v4();
-    final rewrittenQuery = await _queryRewriter.rewrite(
-      question: question,
-      history: request.history,
-    );
+    final hasAttachments =
+        request.attachmentContext.trim().isNotEmpty ||
+        request.imageInputs.isNotEmpty;
+    if (hasAttachments) {
+      _configureThinking?.call(request.thinkingLevel);
+      return _askWithAttachmentsDirectly(
+        request,
+        question: question,
+        logId: logId,
+        onDelta: onDelta,
+        onAgentEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+      );
+    }
+
+    _configureThinking?.call(AiThinkingLevel.none);
+    late final String rewrittenQuery;
+    try {
+      rewrittenQuery = await _queryRewriter.rewrite(
+        question: question,
+        history: request.history,
+      );
+    } finally {
+      _configureThinking?.call(request.thinkingLevel);
+    }
 
     // Start both operations before awaiting either one. Dart futures are
     // eager, so local retrieval and Tavily overlap instead of running in
     // sequence.
     final retrievalStopwatch = Stopwatch()..start();
     final retrievalFuture = _attemptRetrieval(rewrittenQuery, request.articles);
-    final hasAttachments =
-        request.attachmentContext.trim().isNotEmpty ||
-        request.imageInputs.isNotEmpty;
-    final agentCanSearch =
-        request.webSearch &&
-        request.imageInputs.isEmpty &&
-        _agentCompleteStream != null;
+    final usesAgentCompletion = _hasAgentCompletion;
+    final agentCanSearch = request.webSearch && usesAgentCompletion;
     final webFuture = request.webSearch && !agentCanSearch && _webSearch != null
         ? _attemptWebSearch(rewrittenQuery)
         : Future.value((fatalError: null, results: const <WebSearchResult>[]));
@@ -303,8 +331,7 @@ class RagConversationService {
 
     if (retrievalAttempt.result == null &&
         webResults.isEmpty &&
-        !agentCanSearch &&
-        !hasAttachments) {
+        !agentCanSearch) {
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
         error: retrievalAttempt.error.toString(),
@@ -328,20 +355,16 @@ class RagConversationService {
 
     final useLocalContext = retrieval.articles.isNotEmpty;
     final useWebContext = webResults.isNotEmpty;
-    final method = _methodWithAttachments(
-      _methodFor(
-        local: useLocalContext,
-        web: useWebContext,
-        retrievalMethod: retrieval.method,
-      ),
-      hasAttachments: hasAttachments,
+    final method = _methodFor(
+      local: useLocalContext,
+      web: useWebContext,
+      retrievalMethod: retrieval.method,
     );
 
     if (!useLocalContext &&
         !useWebContext &&
         request.knowledgeOnly &&
-        !agentCanSearch &&
-        !hasAttachments) {
+        !agentCanSearch) {
       await _writeLog(
         logId: logId,
         question: question,
@@ -390,30 +413,16 @@ class RagConversationService {
             : '\n${request.languageHint}',
       });
       final maxTokens = request.detailedAnswer ? 2500 : 1000;
-      final baseQuestionMessage = await _prompts.load(userPromptPath, {
+      final baseUserMessage = await _prompts.load(userPromptPath, {
         'context': '',
         'question': question,
       });
-      final attachmentBlock = hasAttachments
-          ? await _prompts.load('chat/attachments.txt', {
-              'attachments': request.attachmentContext.trim().isEmpty
-                  ? 'Images are attached to this message.'
-                  : request.attachmentContext.trim(),
-            })
-          : '';
-      final baseUserMessage = [
-        baseQuestionMessage,
-        if (attachmentBlock.isNotEmpty) attachmentBlock,
-      ].join('\n\n');
       final fixedTokens = _contextWindow.estimateFixedPromptTokens(
         systemPrompt: systemPrompt,
         userMessage: baseUserMessage,
         maxOutputTokens: maxTokens,
       );
-      final availableContextTokens =
-          request.contextWindowTokens -
-          fixedTokens -
-          request.imageInputs.length * 600;
+      final availableContextTokens = request.contextWindowTokens - fixedTokens;
       if (availableContextTokens <= 0) {
         await _writeLog(
           logId: logId,
@@ -482,10 +491,7 @@ class RagConversationService {
         'context': contextText,
         'question': question,
       });
-      final userMessage = [
-        questionMessage,
-        if (attachmentBlock.isNotEmpty) attachmentBlock,
-      ].join('\n\n');
+      final userMessage = questionMessage;
       final history = _contextWindow.selectForPrompt(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
@@ -496,6 +502,7 @@ class RagConversationService {
       final response = await _completeWithProgress(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
+        userQuestion: question,
         history: history.map((turn) => turn.toMessage()).toList(),
         maxTokens: maxTokens,
         temperature: 0.3,
@@ -504,23 +511,23 @@ class RagConversationService {
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
         idempotencyKey: idempotencyKey,
-        images: request.imageInputs,
+        images: const [],
       );
 
-      final agentWebUrls = _agentCompleteStream == null
-          ? const <String>[]
-          : (_agentWebUrls?.call() ?? const <String>[]);
+      final agentWebUrls = usesAgentCompletion
+          ? (_agentWebUrls?.call() ?? const <String>[])
+          : const <String>[];
       final effectiveWebUrls = webUrls.isNotEmpty ? webUrls : agentWebUrls;
-      final effectiveMethod = _methodWithAttachments(
-        _methodFor(
-          local: useLocalContext,
-          web: effectiveWebUrls.isNotEmpty,
-          retrievalMethod: retrieval.method,
-        ),
-        hasAttachments: hasAttachments,
+      final effectiveMethod = _methodFor(
+        local: useLocalContext,
+        web: effectiveWebUrls.isNotEmpty,
+        retrievalMethod: retrieval.method,
       );
 
-      final rawCompletionError = _completionError?.call()?.trim();
+      final completionErrorReader = usesAgentCompletion
+          ? (_agentCompletionError ?? _completionError)
+          : _completionError;
+      final rawCompletionError = completionErrorReader?.call()?.trim();
       final hasAnswer = response != null && response.trim().isNotEmpty;
       // Some Agent runs emit all answer deltas and then incorrectly report an
       // empty-response status. That status contradicts the completed text, so
@@ -614,9 +621,150 @@ class RagConversationService {
     }
   }
 
+  /// Sends user-supplied attachments straight to the selected chat model.
+  /// This path deliberately performs no query rewrite, local retrieval, web
+  /// search, context packing, or citation extraction.
+  Future<RagConversationResult> _askWithAttachmentsDirectly(
+    RagConversationRequest request, {
+    required String question,
+    required String logId,
+    void Function(String delta)? onDelta,
+    void Function(HostedAgentEvent event)? onAgentEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
+  }) async {
+    const method = 'attachment';
+    try {
+      final lengthRulePath = request.detailedAnswer
+          ? 'chat/length_detailed.txt'
+          : 'chat/length_concise.txt';
+      final lengthRule = await _prompts.load(lengthRulePath);
+      final systemPrompt = await _prompts
+          .load('chat/attachments_direct_system.txt', {
+            'lengthRule': lengthRule,
+            'langHint': request.languageHint.isEmpty
+                ? ''
+                : '\n${request.languageHint}',
+          });
+      final attachmentBlock = await _prompts.load('chat/attachments.txt', {
+        'attachments': request.attachmentContext.trim().isEmpty
+            ? 'Images are attached to this message.'
+            : request.attachmentContext.trim(),
+      });
+      final userMessage = [
+        '<user_question>\n$question\n</user_question>',
+        attachmentBlock,
+      ].join('\n\n');
+      final maxTokens = request.detailedAnswer ? 2500 : 1000;
+      final effectiveContextWindow =
+          request.contextWindowTokens - request.imageInputs.length * 600;
+      final fixedTokens = _contextWindow.estimateFixedPromptTokens(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        maxOutputTokens: maxTokens,
+      );
+      if (effectiveContextWindow <= 0 || fixedTokens > effectiveContextWindow) {
+        await _writeLog(
+          logId: logId,
+          question: question,
+          rewrittenQuery: question,
+          method: method,
+        );
+        return RagConversationResult(
+          outcome: RagConversationOutcome.error,
+          error: 'message exceeds the configured context window',
+          rewrittenQuery: question,
+          method: method,
+          logId: logId,
+        );
+      }
+
+      final history = _contextWindow.selectForPrompt(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: request.history,
+        maxOutputTokens: maxTokens,
+        contextWindowTokens: effectiveContextWindow,
+      );
+      final usesAgentCompletion =
+          request.imageInputs.isEmpty && _hasAgentCompletion;
+      final response = await _completeWithProgress(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        userQuestion: question,
+        history: history.map((turn) => turn.toMessage()).toList(),
+        temperature: 0.3,
+        maxTokens: maxTokens,
+        webSearch: false,
+        onDelta: onDelta,
+        onAgentEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+        images: request.imageInputs,
+      );
+
+      final completionErrorReader = usesAgentCompletion
+          ? (_agentCompletionError ?? _completionError)
+          : _completionError;
+      final rawCompletionError = completionErrorReader?.call()?.trim();
+      final hasAnswer = response != null && response.trim().isNotEmpty;
+      final completionError =
+          hasAnswer && _isEmptyResponseError(rawCompletionError)
+          ? null
+          : rawCompletionError;
+      if (hasAnswer && completionError == null && rawCompletionError != null) {
+        developer.log(
+          'Ignoring contradictory empty-response completion error after text',
+          name: 'memora.chat.attachments',
+        );
+      }
+
+      await _writeLog(
+        logId: logId,
+        question: question,
+        rewrittenQuery: question,
+        method: method,
+      );
+      if (!hasAnswer || completionError != null && completionError.isNotEmpty) {
+        return RagConversationResult(
+          outcome: RagConversationOutcome.error,
+          answer: hasAnswer ? response : null,
+          error: completionError == null || completionError.isEmpty
+              ? 'empty response'
+              : completionError,
+          rewrittenQuery: question,
+          method: method,
+          logId: logId,
+        );
+      }
+      return RagConversationResult(
+        outcome: RagConversationOutcome.answer,
+        answer: response,
+        rewrittenQuery: question,
+        method: method,
+        logId: logId,
+      );
+    } catch (error) {
+      await _writeLog(
+        logId: logId,
+        question: question,
+        rewrittenQuery: question,
+        method: method,
+      );
+      return RagConversationResult(
+        outcome: RagConversationOutcome.error,
+        error: error.toString(),
+        rewrittenQuery: question,
+        method: method,
+        logId: logId,
+      );
+    }
+  }
+
   Future<String?> _completeWithProgress({
     required String systemPrompt,
     required String userMessage,
+    required String userQuestion,
     required List<Map<String, String>> history,
     required double temperature,
     required int maxTokens,
@@ -655,6 +803,7 @@ class RagConversationService {
       await for (final delta in agentRunStream(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
+        userQuestion: userQuestion,
         history: history,
         temperature: temperature,
         maxTokens: maxTokens,
@@ -717,6 +866,9 @@ class RagConversationService {
     final response = buffer.toString();
     return response.trim().isEmpty ? null : response;
   }
+
+  bool get _hasAgentCompletion =>
+      _agentRunStream != null || _agentCompleteStream != null;
 
   Future<({Object? error, RetrievalResult? result})> _attemptRetrieval(
     String query,
@@ -855,13 +1007,6 @@ String _methodFor({
   if (local && web) return '${retrievalMethod.name}+web';
   if (web) return 'web';
   return retrievalMethod.name;
-}
-
-String _methodWithAttachments(String method, {required bool hasAttachments}) {
-  if (!hasAttachments) return method;
-  return method == RetrievalMethod.none.name
-      ? 'attachment'
-      : '$method+attachment';
 }
 
 List<String> _weakCandidates(String query, List<Article> articles) {

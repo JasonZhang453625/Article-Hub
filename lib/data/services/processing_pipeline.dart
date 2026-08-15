@@ -507,7 +507,9 @@ class ProcessingPipeline {
     await _notifyStage(article, ProcessingStage.content);
     try {
       final page = _fetchedPageCache.remove(article.id);
-      final content = page == null ? null : _extractor.fromFetchedPage(page);
+      final content = page == null
+          ? null
+          : await _extractor.extractFromFetchedPage(page);
 
       if (content == null || content.isEmpty) {
         return _fail(article, 'content', 'Could not extract page content');

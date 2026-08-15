@@ -37,9 +37,19 @@ class ChatMessageRecord {
   /// connectivity.
   final int? aiRunEventSeq;
 
+  /// Idempotency key for one concrete server generation attempt.
+  ///
+  /// It is deliberately distinct from [id]: a transport replay of the same
+  /// attempt reuses this value, while an explicit user retry creates a new one.
+  final String? aiRunRequestKey;
+
   /// Files owned by this message. User messages may have attachments;
   /// assistant messages normally keep this empty.
   final List<ChatAttachment> attachments;
+
+  /// Validated storage ownership ids retained even when the rest of an old
+  /// attachment record is corrupt. This exists solely for idempotent cleanup.
+  final List<String> attachmentIdsForCleanup;
 
   /// Bounded text extracted from files and, when required, the vision-model
   /// interpretation. It is cached for retry and bounded follow-up context,
@@ -66,7 +76,9 @@ class ChatMessageRecord {
     this.webUrls = const [],
     this.aiRunId,
     this.aiRunEventSeq,
+    this.aiRunRequestKey,
     this.attachments = const [],
+    this.attachmentIdsForCleanup = const [],
     this.attachmentContext,
     this.attachmentContextIncludesImages = false,
   });
@@ -85,7 +97,9 @@ class ChatMessageRecord {
     List<String>? webUrls,
     String? aiRunId,
     int? aiRunEventSeq,
+    String? aiRunRequestKey,
     List<ChatAttachment>? attachments,
+    List<String>? attachmentIdsForCleanup,
     String? attachmentContext,
     bool? attachmentContextIncludesImages,
   }) {
@@ -107,7 +121,10 @@ class ChatMessageRecord {
       webUrls: webUrls ?? this.webUrls,
       aiRunId: aiRunId ?? this.aiRunId,
       aiRunEventSeq: aiRunEventSeq ?? this.aiRunEventSeq,
+      aiRunRequestKey: aiRunRequestKey ?? this.aiRunRequestKey,
       attachments: attachments ?? this.attachments,
+      attachmentIdsForCleanup:
+          attachmentIdsForCleanup ?? this.attachmentIdsForCleanup,
       attachmentContext: attachmentContext ?? this.attachmentContext,
       attachmentContextIncludesImages:
           attachmentContextIncludesImages ??
@@ -119,7 +136,7 @@ class ChatMessageRecord {
   /// and question. Retrying in place avoids duplicating the user's question
   /// and prevents stale citations, feedback, or provider metadata from being
   /// shown while the new answer is being generated.
-  ChatMessageRecord retrying() {
+  ChatMessageRecord retrying({required String aiRunRequestKey}) {
     return ChatMessageRecord(
       id: id,
       threadId: threadId,
@@ -130,6 +147,8 @@ class ChatMessageRecord {
       status: ChatMessageStatus.sending,
       aiRunId: null,
       aiRunEventSeq: null,
+      aiRunRequestKey: aiRunRequestKey,
+      attachmentIdsForCleanup: attachmentIdsForCleanup,
     );
   }
 }
@@ -163,15 +182,17 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       aiRunId: fields[15] as String?,
       aiRunEventSeq: (fields[16] as num?)?.toInt(),
       attachments: chatAttachmentsFromStored(fields[17]),
+      attachmentIdsForCleanup: _cleanupAttachmentIds(fields[17], fields[21]),
       attachmentContext: fields[18] as String?,
       attachmentContextIncludesImages: fields[19] as bool? ?? false,
+      aiRunRequestKey: fields[20] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(20)
+      ..writeByte(22)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -211,13 +232,34 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(18)
       ..write(obj.attachmentContext)
       ..writeByte(19)
-      ..write(obj.attachmentContextIncludesImages);
+      ..write(obj.attachmentContextIncludesImages)
+      ..writeByte(20)
+      ..write(obj.aiRunRequestKey)
+      ..writeByte(21)
+      ..write(
+        _cleanupAttachmentIds(
+          obj.attachments.map((attachment) => attachment.toJson()).toList(),
+          obj.attachmentIdsForCleanup,
+        ),
+      );
   }
 }
 
 List<String> _stringList(dynamic value) {
   if (value is! List) return const [];
   return value.whereType<String>().toList(growable: false);
+}
+
+List<String> _cleanupAttachmentIds(
+  dynamic storedAttachments,
+  dynamic storedIds,
+) {
+  final ids = <String>{
+    ...chatAttachmentIdsFromStored(storedAttachments),
+    ..._stringList(storedIds).where(isValidChatAttachmentId),
+  };
+  final result = ids.toList()..sort();
+  return List.unmodifiable(result);
 }
 
 int _roleToStoredValue(ChatMessageRole role) {

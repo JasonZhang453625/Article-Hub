@@ -94,6 +94,20 @@ Future<void> _run({
     throw _ReleaseError('no app changes to release', exitCode: 2);
   }
 
+  // ── Scope summary ──────────────────────────────────────────────────────
+  final unrelated = lines.where(_isUnrelatedPath).toList();
+  stdout.writeln('scope: ${appChanges.length} app change(s) to release');
+  for (final path in appChanges) {
+    stdout.writeln('  + $path');
+  }
+  if (unrelated.isNotEmpty) {
+    stdout.writeln('excluded (unrelated, preserved): '
+        '${unrelated.length} path(s)');
+    for (final path in unrelated) {
+      stdout.writeln('  - $path');
+    }
+  }
+
   // ── Bump (reuse an intentional unpublished version) ────────────────────
   final current = _readVersion(pubspec);
   final currentTag = 'v$current';
@@ -222,6 +236,7 @@ bool _isUnrelatedPath(String path) {
       path.startsWith('.git/') ||
       path == 'skills-lock.json' ||
       path.startsWith('_backend_staging/') ||
+      path.startsWith('scratchpad/') ||
       path.endsWith('.lock');
 }
 
