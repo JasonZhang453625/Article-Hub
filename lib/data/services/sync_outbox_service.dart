@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
 
@@ -254,10 +255,20 @@ class SyncOutboxService {
     if (_useMemoryFallback) return null;
     try {
       await Hive.initFlutter();
+    } on MissingPluginException {
+      // path_provider is unavailable (unit-test environments). Hive still
+      // works when it was initialized explicitly via Hive.init() — probe
+      // its storage path. With no backend at all, fall back to memory:
+      // a failed open would also surface an uncaught zone error in tests.
+      final hive = Hive as dynamic;
+      final homePath = hive.homePath as String?;
+      if (homePath == null || homePath.isEmpty) {
+        _useMemoryFallback = true;
+        return null;
+      }
     } catch (_) {
-      // Hive may already be initialized by another path (Hive.init or an
-      // earlier initFlutter). That is not a failure — opening the box below
-      // is the real check; only a failed open falls back to memory.
+      // Hive is already initialized by another path. Not a failure —
+      // opening the box below is the real check.
     }
     try {
       return _box ??= await Hive.openBox<dynamic>(_boxName);
