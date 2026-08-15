@@ -252,16 +252,12 @@ class SyncOutboxService {
 
   Future<Box<dynamic>?> _openBox() async {
     if (_useMemoryFallback) return null;
-    var initFailed = false;
     try {
       await Hive.initFlutter();
     } catch (_) {
-      // Hive may already be initialized.
-      initFailed = !Hive.isBoxOpen(_boxName);
-    }
-    if (initFailed) {
-      _useMemoryFallback = true;
-      return null;
+      // Hive may already be initialized by another path (Hive.init or an
+      // earlier initFlutter). That is not a failure — opening the box below
+      // is the real check; only a failed open falls back to memory.
     }
     try {
       return _box ??= await Hive.openBox<dynamic>(_boxName);
