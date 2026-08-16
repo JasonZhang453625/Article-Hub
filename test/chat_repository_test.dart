@@ -174,6 +174,7 @@ void main() {
           status: ChatMessageStatus.sending,
           aiRunId: 'run-live-1',
           aiRunRequestKey: 'attempt-1',
+          aiRunOwnerUserId: 'user-owner',
         ),
       );
 
@@ -222,12 +223,14 @@ void main() {
           createdAt: now,
           status: ChatMessageStatus.sending,
           aiRunRequestKey: 'attempt-attach',
+          aiRunOwnerUserId: 'user-owner',
         ),
       );
 
       final attached = await repository.attachAiRunToPendingMessage(
         messageId: 'attach-delete-message',
         expectedRequestKey: 'attempt-attach',
+        expectedOwnerUserId: 'user-owner',
         runId: 'run-attached',
       );
       expect(attached?.aiRunId, 'run-attached');
@@ -237,6 +240,7 @@ void main() {
         await repository.attachAiRunToPendingMessage(
           messageId: 'attach-delete-message',
           expectedRequestKey: 'attempt-attach',
+          expectedOwnerUserId: 'user-owner',
           runId: 'run-too-late',
         ),
         isNull,
@@ -255,6 +259,7 @@ void main() {
       current = await repository.queueAiRunCancellation(
         'attach-delete',
         'run-too-late',
+        ownerUserId: 'user-owner',
       );
       expect(current.dataDeleted, isTrue);
       expect(current.aiRunIdsToCancel, ['run-too-late']);
@@ -387,6 +392,40 @@ void main() {
     expect(deletions.containsKey(malformed.threadId), isTrue);
     expect(deletions.containsKey(unknown.threadId), isTrue);
     expect(deletions.containsKey(wrongTypes.threadId), isTrue);
+  });
+
+  test('schema 4 run cancellation without owner stays quarantined', () async {
+    final deletions = Hive.box<Map>(HiveChatRepository.deletionsBoxName);
+    await deletions.put('legacy-run-delete', {
+      'schemaVersion': 4,
+      'threadId': 'legacy-run-delete',
+      'dataDeleted': true,
+      'revision': 3,
+      'canAcknowledge': true,
+      'attachmentIds': <String>[],
+      'aiRunIdsToCancel': <String>['run-legacy-ownerless'],
+      'aiRunLookups': <Map<String, String>>[],
+    });
+
+    final pending = repository.getPendingThreadDeletions().singleWhere(
+      (item) => item.threadId == 'legacy-run-delete',
+    );
+    expect(pending.aiRunIdsToCancel, ['run-legacy-ownerless']);
+    expect(pending.aiRunOwnerUserIds, isEmpty);
+    expect(pending.canAcknowledge, isFalse);
+
+    final unchanged = await repository.completeAiRunCancellation(
+      pending.threadId,
+      'run-legacy-ownerless',
+    );
+    expect(unchanged?.aiRunIdsToCancel, ['run-legacy-ownerless']);
+    await expectLater(
+      repository.completeThreadDeletion(
+        pending.threadId,
+        expectedRevision: pending.revision,
+      ),
+      throwsStateError,
+    );
   });
 
   test(
@@ -710,6 +749,7 @@ void main() {
           aiRunId: 'run-9',
           aiRunEventSeq: 4,
           aiRunRequestKey: 'request-attempt-1',
+          aiRunOwnerUserId: 'user-1',
         ),
       );
 
@@ -719,6 +759,153 @@ void main() {
       expect(restored.aiRunId, 'run-9');
       expect(restored.aiRunEventSeq, 4);
       expect(restored.aiRunRequestKey, 'request-attempt-1');
+      expect(restored.aiRunOwnerUserId, 'user-1');
+    },
+  );
+
+  test('reads pre-owner chat records with a null owner', () async {
+    final now = DateTime.utc(2026, 8, 12);
+    await repository.putThread(
+      ChatThread(
+        id: 'legacy-owner-thread',
+        title: 'Legacy owner',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await Hive.close();
+    Hive.init(tempDir.path);
+    Hive.registerAdapter(_PreOwnerChatMessageRecordAdapter(), override: true);
+    final legacyBox = await Hive.openBox<ChatMessageRecord>(
+      HiveChatRepository.messagesBoxName,
+    );
+    await legacyBox.put(
+      'legacy-owner-message',
+      ChatMessageRecord(
+        id: 'legacy-owner-message',
+        threadId: 'legacy-owner-thread',
+        role: ChatMessageRole.assistant,
+        content: 'partial',
+        createdAt: now,
+        query: 'Question',
+        status: ChatMessageStatus.sending,
+        aiRunRequestKey: 'legacy-attempt',
+      ),
+    );
+    await Hive.close();
+    Hive.init(tempDir.path);
+    Hive.registerAdapter(ChatMessageRecordAdapter(), override: true);
+
+    final reopened = HiveChatRepository();
+    await reopened.init();
+    final restored = reopened.getMessage('legacy-owner-message');
+
+    expect(restored, isNotNull);
+    expect(restored?.aiRunRequestKey, 'legacy-attempt');
+    expect(restored?.aiRunOwnerUserId, isNull);
+  });
+
+  test(
+    'create owner and run attachment share one repository CAS attempt',
+    () async {
+      final now = DateTime.utc(2026, 8, 12, 1);
+      await repository.putThread(
+        ChatThread(
+          id: 'owner-cas-thread',
+          title: 'Owner CAS',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'owner-cas-message',
+          threadId: 'owner-cas-thread',
+          role: ChatMessageRole.assistant,
+          content: '',
+          createdAt: now,
+          status: ChatMessageStatus.sending,
+          aiRunRequestKey: 'attempt-owner-cas',
+        ),
+      );
+
+      final marked = await repository.markAiRunCreateStarted(
+        messageId: 'owner-cas-message',
+        expectedRequestKey: 'attempt-owner-cas',
+        ownerUserId: 'user-owner',
+      );
+      expect(marked?.aiRunOwnerUserId, 'user-owner');
+      expect(
+        await repository.markAiRunCreateStarted(
+          messageId: 'owner-cas-message',
+          expectedRequestKey: 'attempt-owner-cas',
+          ownerUserId: 'different-user',
+        ),
+        isNull,
+      );
+      expect(
+        await repository.attachAiRunToPendingMessage(
+          messageId: 'owner-cas-message',
+          expectedRequestKey: 'attempt-owner-cas',
+          expectedOwnerUserId: 'different-user',
+          runId: 'run-wrong-owner',
+        ),
+        isNull,
+      );
+      final attached = await repository.attachAiRunToPendingMessage(
+        messageId: 'owner-cas-message',
+        expectedRequestKey: 'attempt-owner-cas',
+        expectedOwnerUserId: 'user-owner',
+        runId: 'run-owner-cas',
+      );
+      expect(attached?.aiRunId, 'run-owner-cas');
+    },
+  );
+
+  test(
+    'thread deletion retains an unresolved owner lookup tombstone',
+    () async {
+      final now = DateTime.utc(2026, 8, 12, 2);
+      await repository.putThread(
+        ChatThread(
+          id: 'lookup-delete-thread',
+          title: 'Lookup tombstone',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'lookup-delete-message',
+          threadId: 'lookup-delete-thread',
+          role: ChatMessageRole.assistant,
+          content: '',
+          createdAt: now,
+          status: ChatMessageStatus.sending,
+          aiRunRequestKey: 'attempt-delete-lookup',
+          aiRunOwnerUserId: 'user-owner',
+        ),
+      );
+
+      final deletion = await repository.deleteThread('lookup-delete-thread');
+      expect(deletion.aiRunLookups, hasLength(1));
+      expect(deletion.aiRunLookups.single.requestKey, 'attempt-delete-lookup');
+      await expectLater(
+        repository.completeThreadDeletion(
+          deletion.threadId,
+          expectedRevision: deletion.revision,
+        ),
+        throwsStateError,
+      );
+
+      final resolved = await repository.resolveAiRunLookup(
+        deletion.threadId,
+        ownerUserId: 'user-owner',
+        requestKey: 'attempt-delete-lookup',
+        runId: 'run-delete-lookup',
+      );
+      expect(resolved?.aiRunLookups, isEmpty);
+      expect(resolved?.aiRunIdsToCancel, ['run-delete-lookup']);
     },
   );
 
@@ -808,4 +995,137 @@ void main() {
     expect(chatAttachmentsFromStored(stored), isEmpty);
     expect(chatAttachmentIdsFromStored(stored), ['recoverable-attachment']);
   });
+
+  test('client-tool run tuple is immutable across late attach races', () async {
+    final now = DateTime.utc(2026, 8, 12);
+    await repository.putThread(
+      ChatThread(
+        id: 'tool-thread',
+        title: 'Tool run',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await repository.putMessage(
+      ChatMessageRecord(
+        id: 'tool-message',
+        threadId: 'tool-thread',
+        role: ChatMessageRole.assistant,
+        content: '',
+        createdAt: now,
+        status: ChatMessageStatus.sending,
+        aiRunRequestKey: 'tool-attempt',
+      ),
+    );
+    final toolsRepository = repository as ClientToolChatRepository;
+    final marked = await toolsRepository.markAiRunClientToolsCreateStarted(
+      messageId: 'tool-message',
+      expectedRequestKey: 'tool-attempt',
+      ownerUserId: 'user-1',
+      ownerDeviceId: 'device-1',
+      protocolVersion: 3,
+      clientToolsVersion: 1,
+      knowledgeMode: 'only',
+    );
+    expect(marked?.usesDeviceClientTools, isTrue);
+    expect(marked?.aiRunOwnerDeviceId, 'device-1');
+    expect(
+      await toolsRepository.attachAiRunClientToolsToPendingMessage(
+        messageId: 'tool-message',
+        expectedRequestKey: 'tool-attempt',
+        expectedOwnerUserId: 'user-1',
+        expectedOwnerDeviceId: 'device-2',
+        expectedProtocolVersion: 3,
+        expectedClientToolsVersion: 1,
+        expectedKnowledgeMode: 'only',
+        runId: 'wrong-device-run',
+      ),
+      isNull,
+    );
+    final attached = await toolsRepository
+        .attachAiRunClientToolsToPendingMessage(
+          messageId: 'tool-message',
+          expectedRequestKey: 'tool-attempt',
+          expectedOwnerUserId: 'user-1',
+          expectedOwnerDeviceId: 'device-1',
+          expectedProtocolVersion: 3,
+          expectedClientToolsVersion: 1,
+          expectedKnowledgeMode: 'only',
+          runId: 'correct-run',
+        );
+    expect(attached?.aiRunId, 'correct-run');
+
+    await Hive.close();
+    Hive.init(tempDir.path);
+    final reopened = HiveChatRepository();
+    await reopened.init();
+    final restored = reopened.getMessage('tool-message');
+    expect(restored?.aiRunOwnerUserId, 'user-1');
+    expect(restored?.aiRunOwnerDeviceId, 'device-1');
+    expect(restored?.aiRunProtocolVersion, 3);
+    expect(restored?.aiRunClientToolsVersion, 1);
+    expect(restored?.aiRunKnowledgeMode, 'only');
+  });
+}
+
+/// Writer matching schema fields 0..21 from builds before owner-scoped run
+/// reconciliation. The production adapter's null-aware field 22 read must
+/// accept this payload without migration.
+class _PreOwnerChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
+  @override
+  int get typeId => ChatMessageRecord.typeId;
+
+  @override
+  ChatMessageRecord read(BinaryReader reader) =>
+      throw UnsupportedError('Legacy adapter is write-only in this test.');
+
+  @override
+  void write(BinaryWriter writer, ChatMessageRecord obj) {
+    writer
+      ..writeByte(22)
+      ..writeByte(0)
+      ..write(obj.id)
+      ..writeByte(1)
+      ..write(obj.threadId)
+      ..writeByte(2)
+      ..write(2)
+      ..writeByte(3)
+      ..write(obj.content)
+      ..writeByte(4)
+      ..write(obj.createdAt)
+      ..writeByte(5)
+      ..write(obj.articleIds)
+      ..writeByte(6)
+      ..write(obj.weakArticleIds)
+      ..writeByte(7)
+      ..write(obj.method)
+      ..writeByte(8)
+      ..write(obj.logId)
+      ..writeByte(9)
+      ..write(obj.isNoResult)
+      ..writeByte(10)
+      ..write(obj.query)
+      ..writeByte(11)
+      ..write(obj.feedback)
+      ..writeByte(12)
+      ..write(0)
+      ..writeByte(13)
+      ..write(obj.errorCode)
+      ..writeByte(14)
+      ..write(obj.webUrls)
+      ..writeByte(15)
+      ..write(obj.aiRunId)
+      ..writeByte(16)
+      ..write(obj.aiRunEventSeq)
+      ..writeByte(17)
+      ..write(const <Map<String, dynamic>>[])
+      ..writeByte(18)
+      ..write(obj.attachmentContext)
+      ..writeByte(19)
+      ..write(obj.attachmentContextIncludesImages)
+      ..writeByte(20)
+      ..write(obj.aiRunRequestKey)
+      ..writeByte(21)
+      ..write(obj.attachmentIdsForCleanup);
+  }
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/ai_image_input.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
+import '../../data/services/agent_client_tool_store.dart';
 import '../../data/services/chat_model_capabilities.dart';
 import '../../data/services/conversation_feedback_service.dart';
 import '../../data/services/embedding_service.dart';
@@ -59,6 +60,11 @@ final retrievalLogServiceProvider = Provider<RetrievalLogService>((ref) {
   return RetrievalLogService();
 });
 
+final agentClientToolStoreProvider = Provider<AgentClientToolStore>((ref) {
+  ref.watch(hiveInitProvider);
+  return AgentClientToolStore();
+});
+
 final conversationFeedbackServiceProvider =
     Provider<ConversationFeedbackService>((ref) {
       final service = ConversationFeedbackService(
@@ -105,16 +111,32 @@ final hostedAiCapabilitiesProvider = FutureProvider<HostedAiCapabilities?>((
 /// Whether the currently selected chat model can receive native image blocks.
 /// Hosted capability metadata is authoritative when available; BYOK falls
 /// back to conservative model-family detection.
+final hostedAgentImageInputCapabilitiesProvider =
+    Provider<HostedAgentImageInputCapabilities?>((ref) {
+      final settings = ref.watch(settingsProvider).valueOrNull;
+      if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
+      final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
+      return hostedAgentImageInputForModel(
+        capabilities,
+        settings.hostedChatModel,
+      );
+    });
+
+final hostedAgentClientToolsCapabilitiesProvider =
+    Provider<HostedAgentClientToolsCapabilities?>((ref) {
+      final settings = ref.watch(settingsProvider).valueOrNull;
+      if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
+      return hostedAgentClientToolsForModel(
+        ref.watch(hostedAiCapabilitiesProvider).valueOrNull,
+        settings.hostedChatModel,
+      );
+    });
+
 final chatModelSupportsImageInputProvider = Provider<bool>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null) return false;
   if (ref.watch(hostedAiEnabledProvider)) {
-    final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
-    return chatModelSupportsImageInput(
-      settings.hostedChatModel,
-      declaredVisionModels:
-          capabilities?.visionModels ?? AppSettings.hostedVisionModels,
-    );
+    return ref.watch(hostedAgentImageInputCapabilitiesProvider) != null;
   }
   return chatModelSupportsImageInput(settings.chatAiModel);
 });
@@ -169,12 +191,72 @@ final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
   if (settings.hostedChatModel.trim().isEmpty) return null;
+  final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
+  if (capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < 2) {
+    return null;
+  }
+  final imageCapabilities = ref.watch(
+    hostedAgentImageInputCapabilitiesProvider,
+  );
   return HostedAgentService(
     getSession: () => ref.read(currentSessionProvider),
     refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
     model: settings.hostedChatModel.trim(),
+    maxImages: imageCapabilities == null
+        ? maxHostedAgentImages
+        : _lowerLimit(imageCapabilities.maxImages, maxHostedAgentImages),
+    maxImageBytes: imageCapabilities == null
+        ? maxHostedAgentImageBytes
+        : _lowerLimit(
+            imageCapabilities.maxImageBytes,
+            maxHostedAgentImageBytes,
+          ),
+    maxTotalImageBytes: imageCapabilities == null
+        ? maxHostedAgentImageTotalBytes
+        : _lowerLimit(
+            imageCapabilities.maxTotalImageBytes,
+            maxHostedAgentImageTotalBytes,
+          ),
+    maxBodyBytes: imageCapabilities == null
+        ? maxHostedAgentBodyBytes
+        : _lowerLimit(imageCapabilities.maxBodyBytes, maxHostedAgentBodyBytes),
+    allowedImageMimeTypes: imageCapabilities == null
+        ? hostedAgentImageMimeTypes
+        : imageCapabilities.mimeTypes.intersection(hostedAgentImageMimeTypes),
+    imageInputEnabled: imageCapabilities != null,
+    onClientToolWake: ref.read(hostedAgentClientToolWakeProvider).emit,
   );
 });
+
+/// App-global, payload-free wake channel for protocol-v3 client tools.
+///
+/// It is intentionally independent of ChatScreen. The app-global host
+/// consumes only the run id and always reconciles through REST pending.
+final hostedAgentClientToolWakeProvider = Provider<HostedAgentClientToolWakes>((
+  ref,
+) {
+  final wakes = HostedAgentClientToolWakes();
+  ref.onDispose(wakes.dispose);
+  return wakes;
+});
+
+class HostedAgentClientToolWakes {
+  final StreamController<HostedAgentClientToolWake> _controller =
+      StreamController<HostedAgentClientToolWake>.broadcast(sync: true);
+
+  Stream<HostedAgentClientToolWake> get stream => _controller.stream;
+
+  void emit(HostedAgentClientToolWake wake) {
+    if (!_controller.isClosed) _controller.add(wake);
+  }
+
+  void dispose() => _controller.close();
+}
+
+int _lowerLimit(int advertised, int localHardLimit) =>
+    advertised < localHardLimit ? advertised : localHardLimit;
 
 final summaryAiGatewayProvider = Provider<AiGateway?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
@@ -255,6 +337,9 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
   final logService = ref.watch(retrievalLogServiceProvider);
   final webSearch = ref.watch(webSearchServiceProvider);
   final hostedAgent = ref.watch(hostedAgentServiceProvider);
+  final clientToolsCapabilities = ref.watch(
+    hostedAgentClientToolsCapabilitiesProvider,
+  );
   final MultimodalAiGateway? multimodalAi = ai is MultimodalAiGateway
       ? ai as MultimodalAiGateway
       : null;
@@ -318,6 +403,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             required String systemPrompt,
             required String userMessage,
             required String userQuestion,
+            required List<AiImageInput> images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -330,10 +416,44 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               systemPrompt: systemPrompt,
               userMessage: userMessage,
               userQuestion: userQuestion,
+              images: images,
               history: history,
               temperature: temperature,
               maxTokens: maxTokens,
               webSearch: webSearch,
+              onEvent: onEvent,
+              onRunCreated: onRunCreated,
+              idempotencyKey: idempotencyKey,
+            );
+          },
+    agentRunStreamV3: hostedAgent == null || clientToolsCapabilities == null
+        ? null
+        : ({
+            required String systemPrompt,
+            required String userMessage,
+            required String userQuestion,
+            required List<AiImageInput> images,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+            required bool webSearch,
+            required bool localKnowledge,
+            String? knowledgeMode,
+            void Function(HostedAgentEvent event)? onEvent,
+            FutureOr<void> Function(String runId)? onRunCreated,
+            String? idempotencyKey,
+          }) {
+            return hostedAgent.chatStreamV3(
+              systemPrompt: systemPrompt,
+              userMessage: userMessage,
+              userQuestion: userQuestion,
+              images: images,
+              history: history,
+              temperature: temperature,
+              maxTokens: maxTokens,
+              webSearch: webSearch,
+              localKnowledge: localKnowledge,
+              knowledgeMode: knowledgeMode,
               onEvent: onEvent,
               onRunCreated: onRunCreated,
               idempotencyKey: idempotencyKey,
@@ -348,6 +468,46 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
       if (hostedAgent != null) hostedAgent.thinkingLevel = level;
     },
     agentWebUrls: hostedAgent == null ? null : () => hostedAgent.lastWebUrls,
+    agentRunId: hostedAgent == null ? null : () => hostedAgent.lastRunId,
+    agentLocalSources: hostedAgent == null
+        ? null
+        : () => hostedAgent.lastLocalSources,
+    agentClientToolsEnabled: clientToolsCapabilities != null,
+    resolveAgentLocalCitations: hostedAgent == null
+        ? null
+        : ({
+            required String runId,
+            required String answer,
+            required List<HostedAgentLocalSource> sources,
+          }) async {
+            final session = ref.read(currentSessionProvider);
+            if (session == null ||
+                session.user.id != hostedAgent.currentUserId ||
+                session.device.id != hostedAgent.currentDeviceId) {
+              return const <String>[];
+            }
+            final repository = await ref.read(articleRepositoryProvider.future);
+            return ref
+                .read(agentClientToolStoreProvider)
+                .resolveCitedArticleIds(
+                  binding: AgentToolRunBinding(
+                    ownerUserId: session.user.id,
+                    ownerDeviceId: session.device.id,
+                    runId: runId,
+                  ),
+                  answer: answer,
+                  localSources: sources
+                      .map(
+                        (source) =>
+                            (id: source.id, articleRef: source.articleRef),
+                      )
+                      .toList(growable: false),
+                  existingArticleIds: repository
+                      .getAll()
+                      .map((article) => article.id)
+                      .toSet(),
+                );
+          },
     saveLog: logService.save,
     promptService: PromptService(),
     webSearch: webSearch == null

@@ -1,14 +1,82 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:memora/data/models/ai_thinking_level.dart';
+import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'client-tool SSE emits only a run-id wake and retains no payload',
+    () async {
+      final wakes = <HostedAgentClientToolWake>[];
+      final publicEvents = <HostedAgentEvent>[];
+      final client = MockClient.streaming((request, _) async {
+        if (request.method == 'POST') {
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode('{"id":"run-wake","status":"queued"}'),
+            ),
+            202,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              'id: 1\n'
+              'event: agent\n'
+              'data: {"type":"client_tool.pending","runId":"run-other",'
+              '"arguments":{"query":"wrong run"}}\n\n'
+              'id: 2\n'
+              'event: agent\n'
+              'data: {"type":"client_tool.pending","runId":"run-wake",'
+              '"callId":"private-call","tool":"local_search",'
+              '"arguments":{"query":"private query"}}\n\n'
+              'id: 3\n'
+              'event: agent\n'
+              'data: {"type":"run.result","runId":"run-wake",'
+              '"answer":"Done","sources":[]}\n\n',
+            ),
+          ),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('wake')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        onClientToolWake: wakes.add,
+      );
+
+      final chunks = await http.runWithClient(
+        () => service
+            .chatStreamV3(
+              systemPrompt: 'system',
+              userMessage: 'question',
+              userQuestion: 'question',
+              localKnowledge: true,
+              knowledgeMode: 'only',
+              onEvent: publicEvents.add,
+            )
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks, ['Done']);
+      expect(wakes.map((wake) => wake.runId), ['run-wake']);
+      expect(service.lastEvents, isEmpty);
+      expect(publicEvents, isEmpty);
+    },
+  );
 
   test(
     'streams Agent answer and captures tool events and web sources',
@@ -88,6 +156,197 @@ void main() {
     },
   );
 
+  test('sends native image blocks through the durable Agent run', () async {
+    Map<String, dynamic>? payload;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-image","status":"queued"}'),
+          ),
+          202,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-image",'
+            '"answer":"A chart.","sources":[]}\n\n',
+          ),
+        ),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final session = _session(_jwt('image'));
+    final service = HostedAgentService(
+      getSession: () => session,
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+      imageInputEnabled: true,
+    );
+    final bytes = Uint8List.fromList([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+    ]);
+
+    final chunks = await http.runWithClient(
+      () => service
+          .chatStream(
+            systemPrompt: 'system',
+            userMessage: 'Describe this image.',
+            userQuestion: 'Describe this image.',
+            images: [
+              AiImageInput(
+                id: 'image-1',
+                fileName: 'chart.png',
+                mimeType: 'image/png',
+                bytes: bytes,
+              ),
+            ],
+          )
+          .toList(),
+      () => client,
+    );
+
+    final messages = payload?['messages'] as List<dynamic>;
+    final user = Map<String, dynamic>.from(messages.last as Map);
+    final content = (user['content'] as List<dynamic>)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    expect(chunks, ['A chart.']);
+    expect(content.first, {'type': 'text', 'text': 'Describe this image.'});
+    expect(content.last, {
+      'type': 'image',
+      'data': base64.encode(bytes),
+      'mimeType': 'image/png',
+    });
+  });
+
+  test('Stop closes an in-flight create upload without replaying it', () async {
+    final client = _CloseAwareClient();
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('cancel-create')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+      imageInputEnabled: true,
+    );
+
+    final completion = http.runWithClient(
+      () => service
+          .chatStream(
+            systemPrompt: 'system',
+            userMessage: 'Describe this image.',
+            userQuestion: 'Describe this image.',
+            images: [
+              AiImageInput(
+                id: 'image-1',
+                fileName: 'chart.png',
+                mimeType: 'image/png',
+                bytes: Uint8List.fromList([
+                  0x89,
+                  0x50,
+                  0x4e,
+                  0x47,
+                  0x0d,
+                  0x0a,
+                  0x1a,
+                  0x0a,
+                ]),
+              ),
+            ],
+            idempotencyKey: 'stable-image-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+
+    await client.started.future;
+    service.cancelPendingCreate();
+
+    expect(await completion, isEmpty);
+    expect(client.sendCount, 1);
+    expect(client.closed, isTrue);
+    expect(service.lastRunId, isNull);
+    expect(service.lastError, 'Hosted Agent request was cancelled.');
+  });
+
+  test(
+    'rejects images unless Agent protocol capability was negotiated',
+    () async {
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('no-image-capability')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+      );
+
+      await expectLater(
+        service
+            .chatStream(
+              systemPrompt: 'system',
+              userMessage: 'image',
+              userQuestion: 'image',
+              images: [
+                AiImageInput(
+                  id: 'image-1',
+                  fileName: 'image.png',
+                  mimeType: 'image/png',
+                  bytes: Uint8List.fromList([1]),
+                ),
+              ],
+            )
+            .toList(),
+        throwsA(
+          isA<HostedAgentInputException>().having(
+            (error) => error.code,
+            'code',
+            'image_input_not_negotiated',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'rejects a request above the advertised body limit before POST',
+    () async {
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('small-body-cap')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        maxBodyBytes: 64,
+      );
+
+      await expectLater(
+        service
+            .chatStream(
+              systemPrompt: 'system prompt that exceeds the tiny cap',
+              userMessage: 'question that also exceeds the tiny cap',
+              userQuestion: 'question',
+              idempotencyKey: 'small-body-cap',
+            )
+            .toList(),
+        throwsA(
+          isA<HostedAgentInputException>().having(
+            (error) => error.code,
+            'code',
+            'request_too_large',
+          ),
+        ),
+      );
+    },
+  );
+
   test('refreshes once when Agent endpoint rejects the access token', () async {
     var calls = 0;
     var refreshes = 0;
@@ -156,6 +415,127 @@ void main() {
     expect(refreshes, 1);
     expect(service.lastError, isNull);
   });
+
+  test(
+    'device client-tools create rejects a same-user device refresh race',
+    () async {
+      var active = _session(_jwt('old-device'));
+      final differentDevice = AuthSession(
+        user: active.user,
+        device: AuthDevice(
+          id: 'device-2',
+          userId: active.device.userId,
+          deviceName: active.device.deviceName,
+          platform: active.device.platform,
+          appVersion: active.device.appVersion,
+        ),
+        accessToken: _jwt('new-device'),
+        refreshToken: active.refreshToken,
+        refreshTokenExpiresAt: active.refreshTokenExpiresAt,
+      );
+      var posts = 0;
+      final client = MockClient.streaming((request, _) async {
+        if (request.method == 'POST') {
+          posts++;
+          return http.StreamedResponse(
+            Stream<List<int>>.value(utf8.encode('{"error":"expired"}')),
+            401,
+          );
+        }
+        throw StateError('events must not be opened');
+      });
+      final service = HostedAgentService(
+        getSession: () => active,
+        refreshSession: () async {
+          active = differentDevice;
+          return differentDevice;
+        },
+        model: 'mimo-v2.5',
+      );
+      expect(service.currentDeviceId, 'device-1');
+
+      final chunks = await http.runWithClient(
+        () => service
+            .chatStreamV3(
+              systemPrompt: 'system',
+              userMessage: 'question',
+              userQuestion: 'question',
+              localKnowledge: true,
+              knowledgeMode: 'only',
+            )
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks, isEmpty);
+      expect(posts, 1);
+      expect(service.lastStatusCode, 401);
+      expect(service.lastError, contains('device changed'));
+    },
+  );
+
+  test(
+    'v3 wire adds local knowledge while legacy v2 wire stays exact',
+    () async {
+      final payloads = <Map<String, dynamic>>[];
+      var run = 0;
+      final client = MockClient.streaming((request, bodyStream) async {
+        if (request.method == 'POST') {
+          run++;
+          payloads.add(jsonDecode(await bodyStream.bytesToString()));
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode('{"id":"wire-$run","status":"queued"}'),
+            ),
+            202,
+          );
+        }
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              'id: 1\nevent: agent\ndata: {"type":"run.result",'
+              '"runId":"wire-$run","answer":"ok","sources":[]}\n\n',
+            ),
+          ),
+          200,
+        );
+      });
+      HostedAgentService service() => HostedAgentService(
+        getSession: () => _session(_jwt('wire')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+      );
+      await http.runWithClient(
+        () => service()
+            .chatStream(
+              systemPrompt: 'system',
+              userMessage: 'legacy',
+              userQuestion: 'legacy',
+            )
+            .toList(),
+        () => client,
+      );
+      await http.runWithClient(
+        () => service()
+            .chatStreamV3(
+              systemPrompt: 'system',
+              userMessage: 'v3',
+              userQuestion: 'v3',
+              localKnowledge: true,
+              knowledgeMode: 'hybrid',
+            )
+            .toList(),
+        () => client,
+      );
+      expect(payloads[0]['memora_tools'], {'web_search': false});
+      expect(payloads[0].containsKey('knowledge_mode'), isFalse);
+      expect(payloads[1]['memora_tools'], {
+        'web_search': false,
+        'local_knowledge': true,
+      });
+      expect(payloads[1]['knowledge_mode'], 'hybrid');
+    },
+  );
 
   test('replays an ambiguous create with the same idempotency key', () async {
     var createCalls = 0;
@@ -1034,7 +1414,7 @@ void main() {
             ..lastRunStatus = 'running';
 
       await http.runWithClient(
-        () => service.cancelRun('run-state-1'),
+        () => service.cancelRun('run-state-1', expectedOwnerUserId: 'user-1'),
         () => client,
       );
 
@@ -1043,6 +1423,156 @@ void main() {
       expect(service.lastRunId, 'observed-run');
       expect(service.lastEventSeq, 9);
       expect(service.lastRunStatus, 'running');
+    },
+  );
+
+  test(
+    'reconciles a create with GET and the exact idempotency header',
+    () async {
+      final session = _session(_jwt('lookup'));
+      var requests = 0;
+      final client = MockClient.streaming((request, _) async {
+        requests++;
+        expect(request.method, 'GET');
+        expect(request.url.path, '/ai/runs');
+        expect(request.headers['idempotency-key'], 'attempt-lookup-1');
+        expect(
+          request.headers['authorization'],
+          'Bearer ${session.accessToken}',
+        );
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-lookup-1","status":"running"}'),
+          ),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final control = HostedAgentControlService(
+        getSession: () => session,
+        refreshSession: () async => null,
+      );
+
+      final result = await http.runWithClient(
+        () => control.lookupRunByIdempotencyKey(' attempt-lookup-1 '),
+        () => client,
+      );
+
+      expect(result.runId, 'run-lookup-1');
+      expect(result.status, 'running');
+      expect(requests, 1);
+    },
+  );
+
+  test('lookup refreshes one 401 and classifies 404 without POST', () async {
+    final old = _session(_jwt('lookup-old'));
+    final fresh = _session(_jwt('lookup-fresh'));
+    var requests = 0;
+    var refreshes = 0;
+    final client = MockClient.streaming((request, _) async {
+      requests++;
+      expect(request.method, 'GET');
+      if (requests == 1) {
+        expect(request.headers['authorization'], 'Bearer ${old.accessToken}');
+        return http.StreamedResponse(
+          Stream<List<int>>.value(utf8.encode('{"error":"expired"}')),
+          401,
+        );
+      }
+      expect(request.headers['authorization'], 'Bearer ${fresh.accessToken}');
+      return http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode('{"error":"not_found"}')),
+        404,
+      );
+    });
+    final control = HostedAgentControlService(
+      getSession: () => old,
+      refreshSession: () async {
+        refreshes++;
+        return fresh;
+      },
+    );
+
+    await expectLater(
+      http.runWithClient(
+        () => control.lookupRunByIdempotencyKey('attempt-missing'),
+        () => client,
+      ),
+      throwsA(
+        isA<HostedAgentLookupException>()
+            .having((error) => error.statusCode, 'statusCode', 404)
+            .having((error) => error.notFound, 'notFound', isTrue)
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+    expect(requests, 2);
+    expect(refreshes, 1);
+  });
+
+  test('lookup timeout remains retryable and never replays create', () async {
+    var requests = 0;
+    final client = MockClient.streaming((request, _) async {
+      requests++;
+      expect(request.method, 'GET');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      return http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode('{}')),
+        200,
+      );
+    });
+    final control = HostedAgentControlService(
+      getSession: () => _session(_jwt('lookup-timeout')),
+      refreshSession: () async => null,
+      timeout: const Duration(milliseconds: 10),
+    );
+
+    await expectLater(
+      http.runWithClient(
+        () => control.lookupRunByIdempotencyKey('attempt-timeout'),
+        () => client,
+      ),
+      throwsA(
+        isA<HostedAgentLookupException>()
+            .having((error) => error.statusCode, 'statusCode', isNull)
+            .having((error) => error.retryable, 'retryable', isTrue)
+            .having((error) => error.notFound, 'notFound', isFalse),
+      ),
+    );
+    expect(requests, 1);
+  });
+
+  test(
+    'lookup refuses an account mismatch before any network request',
+    () async {
+      var requests = 0;
+      final client = MockClient.streaming((_, _) async {
+        requests++;
+        return http.StreamedResponse(Stream<List<int>>.empty(), 500);
+      });
+      final control = HostedAgentControlService(
+        getSession: () => _session(_jwt('lookup-owner')),
+        refreshSession: () async => null,
+      );
+
+      await expectLater(
+        http.runWithClient(
+          () => control.lookupRunByIdempotencyKey(
+            'attempt-other-owner',
+            expectedOwnerUserId: 'user-2',
+          ),
+          () => client,
+        ),
+        throwsA(
+          isA<HostedAgentLookupException>()
+              .having(
+                (error) => error.accountMismatch,
+                'accountMismatch',
+                isTrue,
+              )
+              .having((error) => error.retryable, 'retryable', isFalse),
+        ),
+      );
+      expect(requests, 0);
     },
   );
 
@@ -1074,7 +1604,10 @@ void main() {
       },
     );
 
-    await http.runWithClient(() => control.cancelRun('run-gone'), () => client);
+    await http.runWithClient(
+      () => control.cancelRun('run-gone', expectedOwnerUserId: 'user-1'),
+      () => client,
+    );
 
     expect(requests, 2);
     expect(refreshes, 1);
@@ -1113,4 +1646,29 @@ String _jwt(String marker) {
     ),
   );
   return 'header.${payload.replaceAll('=', '')}.signature';
+}
+
+class _CloseAwareClient extends http.BaseClient {
+  final started = Completer<void>();
+  final _response = Completer<http.StreamedResponse>();
+  int sendCount = 0;
+  bool closed = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    sendCount++;
+    if (!started.isCompleted) started.complete();
+    return _response.future;
+  }
+
+  @override
+  void close() {
+    if (closed) return;
+    closed = true;
+    if (!_response.isCompleted) {
+      _response.completeError(
+        http.ClientException('request closed before response'),
+      );
+    }
+  }
 }

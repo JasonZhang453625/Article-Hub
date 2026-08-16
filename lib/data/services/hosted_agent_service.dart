@@ -4,9 +4,21 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../config/backend_config.dart';
+import '../models/ai_image_input.dart';
 import '../models/ai_thinking_level.dart';
 import 'ai_service.dart';
 import 'auth_service.dart';
+
+const int maxHostedAgentImages = 4;
+const int maxHostedAgentImageBytes = 5 * 1024 * 1024;
+const int maxHostedAgentImageTotalBytes = 12 * 1024 * 1024;
+const int maxHostedAgentBodyBytes = 18 * 1024 * 1024;
+const Set<String> hostedAgentImageMimeTypes = {
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+};
 
 class HostedAgentSource {
   final String id;
@@ -34,11 +46,44 @@ class HostedAgentSource {
   }
 }
 
+class HostedAgentLocalSource {
+  final String id;
+  final String articleRef;
+
+  const HostedAgentLocalSource({required this.id, required this.articleRef});
+
+  factory HostedAgentLocalSource.fromJson(Map<String, dynamic> json) {
+    if (json.length != 2 ||
+        json['id'] is! String ||
+        !RegExp(r'^[1-9]\d{0,5}$').hasMatch(json['id'] as String) ||
+        json['articleRef'] is! String ||
+        !RegExp(
+          r'^ar_[A-Za-z0-9_-]{22,64}$',
+        ).hasMatch(json['articleRef'] as String)) {
+      throw const FormatException('Invalid local source response.');
+    }
+    return HostedAgentLocalSource(
+      id: json['id'] as String,
+      articleRef: json['articleRef'] as String,
+    );
+  }
+}
+
 class HostedAgentEvent {
   final String type;
   final Map<String, dynamic> data;
 
   const HostedAgentEvent({required this.type, required this.data});
+}
+
+/// Process-local wake-up emitted by the durable Agent SSE observer.
+///
+/// The server event payload is deliberately discarded. Device-tool REST
+/// pending remains the sole source of truth for arguments and execution.
+class HostedAgentClientToolWake {
+  final String runId;
+
+  const HostedAgentClientToolWake(this.runId);
 }
 
 /// A failure while reconnecting to an already-created durable Agent run.
@@ -80,6 +125,69 @@ class HostedAgentCancelException implements Exception {
   String toString() => message;
 }
 
+/// Result of the read-only idempotency lookup used after an ambiguous create.
+class HostedAgentRunLookup {
+  static const Set<String> supportedStatuses = {
+    'queued',
+    'running',
+    'waiting_client',
+    'completed',
+    'failed',
+    'cancelled',
+  };
+
+  final String runId;
+  final String status;
+
+  const HostedAgentRunLookup({required this.runId, required this.status});
+
+  factory HostedAgentRunLookup.fromJson(Map<String, dynamic> json) {
+    final runId = (json['id'] ?? json['runId'] ?? '').toString().trim();
+    final status = (json['status'] ?? '').toString().trim();
+    if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(runId) ||
+        !supportedStatuses.contains(status)) {
+      throw const FormatException(
+        'Hosted Agent returned an invalid reconciliation response.',
+      );
+    }
+    return HostedAgentRunLookup(runId: runId, status: status);
+  }
+}
+
+/// A read-only idempotency lookup failure.
+///
+/// [notFound] is deliberately separate from [retryable]. A 404 can prove
+/// absence only after the caller's short visibility backoff; transport and
+/// authentication failures must leave the local attempt pending.
+class HostedAgentLookupException implements Exception {
+  final String message;
+  final int? statusCode;
+  final bool retryable;
+  final bool notFound;
+  final bool accountMismatch;
+
+  const HostedAgentLookupException({
+    required this.message,
+    this.statusCode,
+    required this.retryable,
+    this.notFound = false,
+    this.accountMismatch = false,
+  });
+
+  @override
+  String toString() => message;
+}
+
+class HostedAgentInputException implements Exception {
+  final String code;
+  final String message;
+
+  const HostedAgentInputException({required this.code, required this.message});
+
+  @override
+  String toString() => message;
+}
+
 /// Stateless control-plane client for durable hosted Agent runs.
 ///
 /// Each request owns its HTTP client and all response state stays local to the
@@ -99,6 +207,119 @@ class HostedAgentControlService {
   }) : _getSession = getSession,
        _refreshSession = refreshSession;
 
+  /// Finds the run owned by this account and [idempotencyKey] through the
+  /// backend's read-only `GET /ai/runs` control endpoint.
+  ///
+  /// This method never replays `POST /ai/runs`: once a create may have been
+  /// accepted, only this lookup can safely resolve the missing 202 response.
+  Future<HostedAgentRunLookup> lookupRunByIdempotencyKey(
+    String idempotencyKey, {
+    String? expectedOwnerUserId,
+  }) async {
+    final normalizedKey = idempotencyKey.trim();
+    if (normalizedKey.isEmpty || normalizedKey.length > 200) {
+      throw const HostedAgentLookupException(
+        message: 'Hosted Agent reconciliation key is invalid.',
+        retryable: false,
+      );
+    }
+
+    AuthSession? session;
+    try {
+      session = _getSession();
+      if (session == null || !session.hasValidAccessToken) {
+        session = await _refreshSession();
+      }
+    } catch (error) {
+      throw HostedAgentLookupException(
+        message: 'Hosted Agent authentication failed: $error',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+    if (session == null) {
+      throw const HostedAgentLookupException(
+        message: 'Sign in to reconcile hosted AI.',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+    if (expectedOwnerUserId != null && session.user.id != expectedOwnerUserId) {
+      throw const HostedAgentLookupException(
+        message: 'The hosted AI account does not own this pending attempt.',
+        statusCode: 401,
+        retryable: false,
+        accountMismatch: true,
+      );
+    }
+
+    var activeSession = session;
+    var refreshedAfterUnauthorized = false;
+    while (true) {
+      try {
+        return await _getRunByIdempotencyKey(activeSession, normalizedKey);
+      } on _RunHttpException catch (error) {
+        if (error.statusCode == 401 && !refreshedAfterUnauthorized) {
+          refreshedAfterUnauthorized = true;
+          AuthSession? refreshed;
+          try {
+            refreshed = await _refreshSession();
+          } catch (refreshError) {
+            throw HostedAgentLookupException(
+              message: 'Hosted Agent authentication failed: $refreshError',
+              statusCode: 401,
+              retryable: true,
+            );
+          }
+          if (refreshed != null) {
+            if (expectedOwnerUserId != null &&
+                refreshed.user.id != expectedOwnerUserId) {
+              throw const HostedAgentLookupException(
+                message:
+                    'The hosted AI account does not own this pending attempt.',
+                statusCode: 401,
+                retryable: false,
+                accountMismatch: true,
+              );
+            }
+            activeSession = refreshed;
+            continue;
+          }
+        }
+        final statusCode = error.statusCode;
+        throw HostedAgentLookupException(
+          message:
+              'HTTP $statusCode: '
+              '${HostedAgentService._responseError(error.body)}',
+          statusCode: statusCode,
+          retryable:
+              statusCode == 401 ||
+              statusCode == 408 ||
+              statusCode == 425 ||
+              statusCode == 429 ||
+              statusCode >= 500,
+          notFound: statusCode == 404,
+        );
+      } on TimeoutException {
+        throw HostedAgentLookupException(
+          message:
+              'Hosted Agent reconciliation timed out after ${timeout.inSeconds} seconds',
+          retryable: true,
+        );
+      } on http.ClientException catch (error) {
+        throw HostedAgentLookupException(
+          message: 'Hosted Agent reconciliation request failed: $error',
+          retryable: true,
+        );
+      } on FormatException catch (error) {
+        throw HostedAgentLookupException(
+          message: error.message,
+          retryable: true,
+        );
+      }
+    }
+  }
+
   /// Cancels [runId] through the backend's idempotent
   /// `POST /ai/runs/:runId/cancel` endpoint.
   ///
@@ -106,7 +327,7 @@ class HostedAgentControlService {
   /// this account that the client can cancel. Transient transport failures are
   /// retried because repeating this control request has no additional side
   /// effect once the server run is terminal.
-  Future<void> cancelRun(String runId) async {
+  Future<void> cancelRun(String runId, {String? expectedOwnerUserId}) async {
     final normalizedRunId = runId.trim();
     if (normalizedRunId.isEmpty) {
       throw const HostedAgentCancelException(
@@ -135,6 +356,15 @@ class HostedAgentControlService {
         retryable: true,
       );
     }
+    if (expectedOwnerUserId == null ||
+        expectedOwnerUserId.trim().isEmpty ||
+        session.user.id != expectedOwnerUserId) {
+      throw const HostedAgentCancelException(
+        message: 'The hosted AI account does not own this pending run.',
+        statusCode: 401,
+        retryable: false,
+      );
+    }
 
     var activeSession = session;
     var refreshedAfterUnauthorized = false;
@@ -158,6 +388,13 @@ class HostedAgentControlService {
             );
           }
           if (refreshed != null) {
+            if (refreshed.user.id != expectedOwnerUserId) {
+              throw const HostedAgentCancelException(
+                message: 'The hosted AI account does not own this pending run.',
+                statusCode: 401,
+                retryable: false,
+              );
+            }
             activeSession = refreshed;
             continue;
           }
@@ -213,6 +450,35 @@ class HostedAgentControlService {
       client.close();
     }
   }
+
+  Future<HostedAgentRunLookup> _getRunByIdempotencyKey(
+    AuthSession session,
+    String idempotencyKey,
+  ) async {
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', BackendConfig.uri('/ai/runs'))
+        ..headers.addAll({
+          'Authorization': 'Bearer ${session.accessToken}',
+          'Accept': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        });
+      final response = await client.send(request).timeout(timeout);
+      final body = await response.stream.bytesToString().timeout(timeout);
+      if (response.statusCode != 200) {
+        throw _RunHttpException(response.statusCode, body);
+      }
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException(
+          'Hosted Agent returned invalid reconciliation JSON.',
+        );
+      }
+      return HostedAgentRunLookup.fromJson(decoded);
+    } finally {
+      client.close();
+    }
+  }
 }
 
 /// Client for a durable server-side Agent run.
@@ -226,16 +492,28 @@ class HostedAgentService {
   final Future<AuthSession?> Function() _refreshSession;
   final String model;
   final Duration timeout;
+  final int maxImages;
+  final int maxImageBytes;
+  final int maxTotalImageBytes;
+  final int maxBodyBytes;
+  final Set<String> allowedImageMimeTypes;
+  final bool imageInputEnabled;
+  final void Function(HostedAgentClientToolWake wake)? _onClientToolWake;
 
   String? lastError;
   int? lastStatusCode;
   String? lastRunId;
   int lastEventSeq = 0;
   List<HostedAgentSource> lastSources = const [];
+  List<HostedAgentLocalSource> lastLocalSources = const [];
   List<HostedAgentEvent> lastEvents = const [];
   String? lastRunStatus;
   bool lastChunkIsFullAnswer = false;
   bool _lastRunResultWasEmpty = false;
+  http.Client? _activeCreateClient;
+  bool _createCancelled = false;
+  String? _boundOwnerUserId;
+  String? _boundOwnerDeviceId;
   AiThinkingLevel thinkingLevel;
 
   HostedAgentService({
@@ -244,11 +522,33 @@ class HostedAgentService {
     required this.model,
     this.timeout = AiService.defaultTimeout,
     this.thinkingLevel = AiThinkingLevel.none,
+    this.maxImages = maxHostedAgentImages,
+    this.maxImageBytes = maxHostedAgentImageBytes,
+    this.maxTotalImageBytes = maxHostedAgentImageTotalBytes,
+    this.maxBodyBytes = maxHostedAgentBodyBytes,
+    this.allowedImageMimeTypes = hostedAgentImageMimeTypes,
+    this.imageInputEnabled = false,
+    void Function(HostedAgentClientToolWake wake)? onClientToolWake,
   }) : _getSession = getSession,
-       _refreshSession = refreshSession;
+       _refreshSession = refreshSession,
+       _onClientToolWake = onClientToolWake;
 
   bool get isConfigured =>
       BackendConfig.isConfigured && model.trim().isNotEmpty;
+
+  /// Account currently backing this observer. The create coordinator stores
+  /// it before POST so a later process can scope idempotency reconciliation.
+  String? get currentUserId {
+    final session = _getSession();
+    if (session == null || !_bindOrValidateSession(session)) return null;
+    return _boundOwnerUserId;
+  }
+
+  String? get currentDeviceId {
+    final session = _getSession();
+    if (session == null || !_bindOrValidateSession(session)) return null;
+    return _boundOwnerDeviceId;
+  }
 
   List<String> get lastWebUrls => lastSources
       .map((source) => source.url.trim())
@@ -258,11 +558,23 @@ class HostedAgentService {
   /// Sends a control-plane cancellation without mutating this stream
   /// observer's `last*` fields. Callers that do not need the observer should
   /// prefer constructing [HostedAgentControlService] directly.
-  Future<void> cancelRun(String runId) {
+  Future<void> cancelRun(String runId, {String? expectedOwnerUserId}) {
     return HostedAgentControlService(
       getSession: _getSession,
       refreshSession: _refreshSession,
-    ).cancelRun(runId);
+    ).cancelRun(runId, expectedOwnerUserId: expectedOwnerUserId);
+  }
+
+  /// Stops an in-flight `POST /ai/runs` upload owned by this observer.
+  ///
+  /// A server run may already have been committed even when its 202 response
+  /// has not reached the device. The stable Idempotency-Key remains the source
+  /// of truth for subsequent reconciliation; closing this transport only
+  /// prevents a superseded large upload from continuing to occupy memory and
+  /// a socket in the current process.
+  void cancelPendingCreate() {
+    _createCancelled = true;
+    _activeCreateClient?.close();
   }
 
   Future<AuthSession?> _freshSession() async {
@@ -280,7 +592,74 @@ class HostedAgentService {
         return null;
       }
     }
+    if (!_bindOrValidateSession(session)) return null;
     return session;
+  }
+
+  bool _bindOrValidateSession(AuthSession session) {
+    final owner = session.user.id.trim();
+    final device = session.device.id.trim();
+    if (owner.isEmpty || device.isEmpty) {
+      lastError = 'The hosted AI session identity is invalid.';
+      lastStatusCode = 401;
+      return false;
+    }
+    _boundOwnerUserId ??= owner;
+    _boundOwnerDeviceId ??= device;
+    if (_boundOwnerUserId != owner || _boundOwnerDeviceId != device) {
+      lastError =
+          'The hosted AI account or device changed before the request started.';
+      lastStatusCode = 401;
+      return false;
+    }
+    return true;
+  }
+
+  bool _isCurrentSessionIdentity(AuthSession session) {
+    if (!_bindOrValidateSession(session)) return false;
+    final current = _getSession();
+    return current != null &&
+        current.user.id.trim() == _boundOwnerUserId &&
+        current.device.id.trim() == _boundOwnerDeviceId;
+  }
+
+  void _validateImages(List<AiImageInput> images) {
+    if (images.isNotEmpty && !imageInputEnabled) {
+      throw const HostedAgentInputException(
+        code: 'image_input_not_negotiated',
+        message: 'Hosted Agent image input is not available.',
+      );
+    }
+    if (images.length > maxImages) {
+      throw HostedAgentInputException(
+        code: 'too_many_images',
+        message: 'Hosted Agent accepts at most $maxImages images per message.',
+      );
+    }
+    var totalBytes = 0;
+    for (final image in images) {
+      final mimeType = image.mimeType.trim().toLowerCase();
+      if (!allowedImageMimeTypes.contains(mimeType)) {
+        throw HostedAgentInputException(
+          code: 'unsupported_image_type',
+          message: 'Hosted Agent does not support image type $mimeType.',
+        );
+      }
+      if (image.bytes.isEmpty || image.bytes.length > maxImageBytes) {
+        throw HostedAgentInputException(
+          code: 'image_too_large',
+          message:
+              'Hosted Agent image ${image.fileName} exceeds the configured limit.',
+        );
+      }
+      totalBytes += image.bytes.length;
+    }
+    if (totalBytes > maxTotalImageBytes) {
+      throw const HostedAgentInputException(
+        code: 'images_too_large',
+        message: 'Hosted Agent images exceed the configured combined limit.',
+      );
+    }
   }
 
   /// Creates a durable hosted run and yields its answer events.
@@ -288,10 +667,77 @@ class HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
     bool webSearch = false,
+    void Function(HostedAgentEvent event)? onEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
+  }) {
+    return _chatStreamInternal(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      userQuestion: userQuestion,
+      images: images,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      webSearch: webSearch,
+      clientToolsV3: false,
+      localKnowledge: false,
+      onEvent: onEvent,
+      onRunCreated: onRunCreated,
+      idempotencyKey: idempotencyKey,
+    );
+  }
+
+  Stream<String> chatStreamV3({
+    required String systemPrompt,
+    required String userMessage,
+    required String userQuestion,
+    List<AiImageInput> images = const [],
+    List<Map<String, String>> history = const [],
+    double temperature = 0.3,
+    int maxTokens = 800,
+    bool webSearch = false,
+    bool localKnowledge = false,
+    String? knowledgeMode,
+    void Function(HostedAgentEvent event)? onEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
+  }) {
+    return _chatStreamInternal(
+      systemPrompt: systemPrompt,
+      userMessage: userMessage,
+      userQuestion: userQuestion,
+      images: images,
+      history: history,
+      temperature: temperature,
+      maxTokens: maxTokens,
+      webSearch: webSearch,
+      clientToolsV3: true,
+      localKnowledge: localKnowledge,
+      knowledgeMode: knowledgeMode,
+      onEvent: onEvent,
+      onRunCreated: onRunCreated,
+      idempotencyKey: idempotencyKey,
+    );
+  }
+
+  Stream<String> _chatStreamInternal({
+    required String systemPrompt,
+    required String userMessage,
+    required String userQuestion,
+    required List<AiImageInput> images,
+    required List<Map<String, String>> history,
+    required double temperature,
+    required int maxTokens,
+    required bool webSearch,
+    required bool clientToolsV3,
+    required bool localKnowledge,
+    String? knowledgeMode,
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
     String? idempotencyKey,
@@ -305,18 +751,43 @@ class HostedAgentService {
     var session = await _freshSession();
     if (session == null) return;
 
+    _validateImages(images);
+    if (clientToolsV3 &&
+        localKnowledge &&
+        knowledgeMode != 'only' &&
+        knowledgeMode != 'hybrid') {
+      throw const HostedAgentInputException(
+        code: 'invalid_knowledge_mode',
+        message: 'Hosted Agent local knowledge mode is invalid.',
+      );
+    }
+    final userContent = images.isEmpty
+        ? userMessage
+        : <Map<String, dynamic>>[
+            {'type': 'text', 'text': userMessage},
+            for (final image in images)
+              {
+                'type': 'image',
+                'data': base64.encode(image.bytes),
+                'mimeType': image.mimeType.trim().toLowerCase(),
+              },
+          ];
     final requestBody = <String, dynamic>{
       'model': model,
       'messages': [
         {'role': 'system', 'content': systemPrompt},
         ...history,
-        {'role': 'user', 'content': userMessage},
+        {'role': 'user', 'content': userContent},
       ],
       'user_question': userQuestion,
       'temperature': temperature,
       'max_completion_tokens': maxTokens,
       'stream': true,
-      'memora_tools': {'web_search': webSearch},
+      'memora_tools': {
+        'web_search': webSearch,
+        if (clientToolsV3) 'local_knowledge': localKnowledge,
+      },
+      if (clientToolsV3 && localKnowledge) 'knowledge_mode': knowledgeMode,
       if (supportsDeepSeekThinking(model: model))
         ...deepSeekThinkingOptions(thinkingLevel),
     };
@@ -325,16 +796,22 @@ class HostedAgentService {
     var refreshedCreateSession = false;
     final canReplayCreate = idempotencyKey?.trim().isNotEmpty == true;
     for (var attempt = 0; attempt < 3; attempt++) {
+      if (_createCancelled) {
+        lastError = 'Hosted Agent request was cancelled.';
+        return;
+      }
       try {
         created = await _createRun(session!, requestBody, idempotencyKey);
         break;
+      } on HostedAgentInputException {
+        rethrow;
       } on _RunHttpException catch (error) {
         lastStatusCode = error.statusCode;
         lastError = 'HTTP ${error.statusCode}: ${_responseError(error.body)}';
         if (error.statusCode == 401 && !refreshedCreateSession) {
           refreshedCreateSession = true;
           final refreshed = await _refreshSession();
-          if (refreshed != null) {
+          if (refreshed != null && _bindOrValidateSession(refreshed)) {
             session = refreshed;
             lastError = null;
             continue;
@@ -342,10 +819,18 @@ class HostedAgentService {
         }
         return;
       } on TimeoutException {
+        if (_createCancelled) {
+          lastError = 'Hosted Agent request was cancelled.';
+          return;
+        }
         lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';
         if (canReplayCreate && attempt < 2) continue;
         return;
       } on http.ClientException catch (error) {
+        if (_createCancelled) {
+          lastError = 'Hosted Agent request was cancelled.';
+          return;
+        }
         lastError = 'Hosted Agent request failed: $error';
         if (canReplayCreate && attempt < 2) continue;
         return;
@@ -354,6 +839,10 @@ class HostedAgentService {
         if (canReplayCreate && attempt < 2) continue;
         return;
       } catch (error) {
+        if (_createCancelled) {
+          lastError = 'Hosted Agent request was cancelled.';
+          return;
+        }
         lastError = 'Hosted Agent request failed: $error';
         return;
       }
@@ -444,6 +933,13 @@ class HostedAgentService {
             );
           }
           if (refreshed != null) {
+            if (!_bindOrValidateSession(refreshed)) {
+              throw HostedAgentResumeException(
+                message: lastError!,
+                statusCode: 401,
+                retryable: false,
+              );
+            }
             session = refreshed;
             continue;
           }
@@ -550,8 +1046,25 @@ class HostedAgentService {
     Map<String, dynamic> body,
     String? idempotencyKey,
   ) async {
+    if (!_isCurrentSessionIdentity(session)) {
+      throw const HostedAgentInputException(
+        code: 'hosted_identity_changed',
+        message: 'The hosted AI account or device changed before create.',
+      );
+    }
     final client = http.Client();
+    _activeCreateClient = client;
     try {
+      if (_createCancelled) {
+        throw http.ClientException('Hosted Agent request was cancelled.');
+      }
+      final encodedBody = utf8.encode(jsonEncode(body));
+      if (encodedBody.length > maxBodyBytes) {
+        throw const HostedAgentInputException(
+          code: 'request_too_large',
+          message: 'Hosted Agent request exceeds the advertised body limit.',
+        );
+      }
       final request = http.Request('POST', BackendConfig.uri('/ai/runs'))
         ..headers.addAll({
           'Authorization': 'Bearer ${session.accessToken}',
@@ -560,7 +1073,7 @@ class HostedAgentService {
           if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
             'Idempotency-Key': idempotencyKey.trim(),
         })
-        ..body = jsonEncode(body);
+        ..bodyBytes = encodedBody;
       final response = await client.send(request).timeout(timeout);
       lastStatusCode = response.statusCode;
       final text = await response.stream.bytesToString().timeout(timeout);
@@ -573,6 +1086,9 @@ class HostedAgentService {
       }
       return decoded;
     } finally {
+      if (identical(_activeCreateClient, client)) {
+        _activeCreateClient = null;
+      }
       client.close();
     }
   }
@@ -661,6 +1177,9 @@ class HostedAgentService {
           refreshedAfterUnauthorized = true;
           final refreshed = await _refreshSession();
           if (refreshed == null) break;
+          if (!_bindOrValidateSession(refreshed)) {
+            throw StateError(lastError!);
+          }
           activeSession = refreshed;
           continue;
         }
@@ -768,13 +1287,25 @@ class HostedAgentService {
       return completion.text;
     }
 
+    final type = (decoded['type'] ?? eventName).toString();
+    if (type == 'client_tool.pending') {
+      final runId = decoded['runId'];
+      if (runId is String && runId == lastRunId && _validRunId(runId)) {
+        _onClientToolWake?.call(HostedAgentClientToolWake(runId));
+      }
+      // A client-tool SSE event is a wake-up only. Do not retain or surface
+      // its untrusted payload; the global host fetches authoritative REST.
+      return null;
+    }
+
     final event = HostedAgentEvent(
-      type: (decoded['type'] ?? eventName).toString(),
-      data: decoded,
+      type: type,
+      data: _sanitizePublicEvent(decoded),
     );
     _captureSources(decoded['sources']);
     if (event.type == 'run.result') {
       _captureSources(decoded['sources']);
+      _captureLocalSources(decoded['localSources']);
       _runIsTerminal = true;
       lastRunStatus = 'completed';
       lastChunkIsFullAnswer = true;
@@ -808,6 +1339,7 @@ class HostedAgentService {
     void Function(HostedAgentEvent event)? onEvent,
   }) {
     _captureSources(decoded['sources']);
+    _captureLocalSources(decoded['localSources']);
     final status = (decoded['status'] ?? '').toString();
     if (status.isNotEmpty) lastRunStatus = status;
     if (status == 'failed' || status == 'cancelled') {
@@ -821,12 +1353,25 @@ class HostedAgentService {
     if (rawError is Map) {
       lastError = (rawError['message'] ?? 'Hosted Agent failed.').toString();
     }
-    final event = HostedAgentEvent(type: 'run.snapshot', data: decoded);
+    final event = HostedAgentEvent(
+      type: 'run.snapshot',
+      data: _sanitizePublicEvent(decoded),
+    );
     onEvent?.call(event);
   }
 
   void _captureSources(dynamic rawSources) {
     if (rawSources is! List || rawSources.isEmpty) return;
+    if (rawSources.any(
+      (source) =>
+          source is Map &&
+          (source.containsKey('articleRef') ||
+              source.containsKey('article_ref')),
+    )) {
+      throw const FormatException(
+        'Hosted Agent mixed device references into web sources.',
+      );
+    }
     lastSources = List.unmodifiable(
       rawSources
           .whereType<Map>()
@@ -838,12 +1383,64 @@ class HostedAgentService {
     );
   }
 
+  void _captureLocalSources(dynamic rawSources) {
+    if (rawSources == null) return;
+    if (rawSources is! List) {
+      throw const FormatException('Invalid local source response.');
+    }
+    final parsed = rawSources
+        .map(
+          (source) => HostedAgentLocalSource.fromJson(
+            Map<String, dynamic>.from(source as Map),
+          ),
+        )
+        .toList(growable: false);
+    if (parsed.map((item) => item.id).toSet().length != parsed.length ||
+        parsed.map((item) => item.articleRef).toSet().length != parsed.length) {
+      throw const FormatException('Duplicate local source response.');
+    }
+    lastLocalSources = List.unmodifiable(parsed);
+  }
+
+  static Map<String, dynamic> _sanitizePublicEvent(Map<String, dynamic> value) {
+    dynamic sanitize(dynamic item) {
+      if (item is String) {
+        return item.replaceAll(
+          RegExp(r'\bar_[A-Za-z0-9_-]{22,64}\b'),
+          '[device-reference]',
+        );
+      }
+      if (item is List) return item.map(sanitize).toList(growable: false);
+      if (item is Map) {
+        final result = <String, dynamic>{};
+        for (final entry in item.entries) {
+          final key = entry.key.toString();
+          if (key == 'localSources' ||
+              key == 'articleRef' ||
+              key == 'article_ref') {
+            continue;
+          }
+          result[key] = sanitize(entry.value);
+        }
+        return result;
+      }
+      return item;
+    }
+
+    return Map<String, dynamic>.from(sanitize(value) as Map);
+  }
+
+  static bool _validRunId(String value) =>
+      RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(value);
+
   void _resetRunState() {
+    _createCancelled = false;
     lastError = null;
     lastStatusCode = null;
     lastRunId = null;
     lastEventSeq = 0;
     lastSources = const [];
+    lastLocalSources = const [];
     lastEvents = const [];
     lastRunStatus = null;
     lastChunkIsFullAnswer = false;

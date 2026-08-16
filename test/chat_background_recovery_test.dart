@@ -6,10 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memora/data/models/chat_message_record.dart';
 import 'package:memora/data/models/chat_thread.dart';
+import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/data/repositories/chat_repository.dart';
+import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
@@ -17,11 +19,33 @@ import 'package:memora/data/services/retrieval_service.dart';
 import 'package:memora/features/chat/chat_screen.dart';
 import 'package:memora/features/chat/chat_typing_indicator.dart';
 import 'package:memora/shared/providers/chat_providers.dart';
+import 'package:memora/shared/providers/auth_provider.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
 
 final _hostedAgentAvailabilityProvider = StateProvider<HostedAgentService?>(
   (ref) => null,
+);
+
+final _testAuthSession = AuthSession(
+  accessToken: 'header.payload.signature',
+  refreshToken: 'refresh-user-1',
+  refreshTokenExpiresAt: null,
+  user: const AuthUser(
+    id: 'user-1',
+    email: 'user-1@example.com',
+    displayName: null,
+    status: 'active',
+    plan: 'free',
+    storageUsedBytes: '0',
+  ),
+  device: const AuthDevice(
+    id: 'device-1',
+    userId: 'user-1',
+    deviceName: 'Test device',
+    platform: 'test',
+    appVersion: null,
+  ),
 );
 
 /// Background/foreground lifecycle regression tests.
@@ -73,6 +97,8 @@ void main() {
             (ref) async => _InMemoryArticleRepository(articles),
           ),
           chatRepositoryProvider.overrideWith((ref) async => repository),
+          if (runCanceller != null)
+            currentSessionProvider.overrideWithValue(_testAuthSession),
           if (runCanceller != null)
             hostedAgentRunCancellerProvider.overrideWithValue(runCanceller),
         ],
@@ -140,6 +166,7 @@ void main() {
             required String systemPrompt,
             required String userMessage,
             required String userQuestion,
+            required images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -151,6 +178,7 @@ void main() {
             systemPrompt: systemPrompt,
             userMessage: userMessage,
             userQuestion: userQuestion,
+            images: images,
             history: history,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -286,6 +314,7 @@ void main() {
             required String systemPrompt,
             required String userMessage,
             required String userQuestion,
+            required images,
             List<Map<String, String>> history = const [],
             double temperature = 0.3,
             int maxTokens = 800,
@@ -297,6 +326,7 @@ void main() {
             systemPrompt: systemPrompt,
             userMessage: userMessage,
             userQuestion: userQuestion,
+            images: images,
             history: history,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -845,7 +875,10 @@ void main() {
       articles: [],
       conversation: durableConversation(hostedAgent),
       hostedAgent: hostedAgent,
-      runCanceller: (runId) async => cancelled.add(runId),
+      runCanceller: (runId, {expectedOwnerUserId}) async {
+        expect(expectedOwnerUserId, 'user-1');
+        cancelled.add(runId);
+      },
     );
 
     await tester.enterText(find.byType(TextField), 'stop before create');
@@ -892,7 +925,10 @@ void main() {
       threads: [thread],
       conversation: durableConversation(hostedAgent),
       hostedAgent: hostedAgent,
-      runCanceller: (runId) async => cancelled.add(runId),
+      runCanceller: (runId, {expectedOwnerUserId}) async {
+        expect(expectedOwnerUserId, 'user-1');
+        cancelled.add(runId);
+      },
     );
 
     await tester.enterText(find.byType(TextField), 'delete before create');
@@ -902,7 +938,10 @@ void main() {
       tester.element(find.byType(ChatScreen)),
     );
     await container.read(chatSessionsProvider.notifier).deleteThread(thread.id);
-    expect(repository.getPendingThreadDeletions(), isEmpty);
+    final pendingDeletion = repository.getPendingThreadDeletions().single;
+    expect(pendingDeletion.aiRunIdsToCancel, isEmpty);
+    expect(pendingDeletion.aiRunLookups, hasLength(1));
+    expect(pendingDeletion.aiRunLookups.single.ownerUserId, 'user-1');
 
     hostedAgent.allowRunCreation();
     await pumpUntil(tester, () => hostedAgent.runCreated.isCompleted);
@@ -953,6 +992,9 @@ class _GatedHostedAgentService extends HostedAgentService {
   @override
   bool get isConfigured => true;
 
+  @override
+  String? get currentUserId => 'user-1';
+
   void complete() => _gate.complete();
 
   @override
@@ -960,6 +1002,7 @@ class _GatedHostedAgentService extends HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
@@ -1004,6 +1047,9 @@ class _TransportInterruptedHostedAgentService extends HostedAgentService {
   @override
   bool get isConfigured => true;
 
+  @override
+  String? get currentUserId => 'user-1';
+
   void completeResume() => _resumeGate.complete();
 
   @override
@@ -1011,6 +1057,7 @@ class _TransportInterruptedHostedAgentService extends HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
@@ -1141,6 +1188,9 @@ class _PreCreateGatedHostedAgentService extends HostedAgentService {
   @override
   bool get isConfigured => true;
 
+  @override
+  String? get currentUserId => 'user-1';
+
   void allowRunCreation() {
     if (!_allowRunCreation.isCompleted) _allowRunCreation.complete();
   }
@@ -1154,6 +1204,7 @@ class _PreCreateGatedHostedAgentService extends HostedAgentService {
     required String systemPrompt,
     required String userMessage,
     required String userQuestion,
+    List<AiImageInput> images = const [],
     List<Map<String, String>> history = const [],
     double temperature = 0.3,
     int maxTokens = 800,
@@ -1336,15 +1387,37 @@ class _InMemoryChatRepository implements ChatRepository {
   }
 
   @override
+  Future<ChatMessageRecord?> markAiRunCreateStarted({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        current.status != ChatMessageStatus.sending ||
+        current.aiRunId != null ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        (current.aiRunOwnerUserId != null &&
+            current.aiRunOwnerUserId != ownerUserId)) {
+      return null;
+    }
+    final updated = current.copyWith(aiRunOwnerUserId: ownerUserId);
+    await putMessage(updated);
+    return updated;
+  }
+
+  @override
   Future<ChatMessageRecord?> attachAiRunToPendingMessage({
     required String messageId,
     required String? expectedRequestKey,
+    required String? expectedOwnerUserId,
     required String runId,
   }) async {
     final current = _messages[messageId];
     if (current == null ||
         !_threads.containsKey(current.threadId) ||
         current.aiRunRequestKey != expectedRequestKey ||
+        current.aiRunOwnerUserId != expectedOwnerUserId ||
         (current.status != ChatMessageStatus.sending &&
             current.errorCode != 'hosted_cancel_requested')) {
       return null;
@@ -1355,6 +1428,29 @@ class _InMemoryChatRepository implements ChatRepository {
     } on StateError {
       return null;
     }
+    return updated;
+  }
+
+  @override
+  Future<ChatMessageRecord?> completeAiRunReconciliationNotFound({
+    required String messageId,
+    required String expectedRequestKey,
+    required String ownerUserId,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null ||
+        current.aiRunId != null ||
+        current.aiRunRequestKey != expectedRequestKey ||
+        current.aiRunOwnerUserId != ownerUserId) {
+      return null;
+    }
+    final updated = current.copyWith(
+      status: ChatMessageStatus.interrupted,
+      errorCode: current.errorCode == 'hosted_cancel_requested'
+          ? 'hosted_run_cancelled'
+          : 'hosted_run_not_found',
+    );
+    _messages[messageId] = updated;
     return updated;
   }
 
@@ -1406,16 +1502,24 @@ class _InMemoryChatRepository implements ChatRepository {
   @override
   Future<PendingChatThreadDeletion> queueAiRunCancellation(
     String threadId,
-    String runId,
-  ) async {
+    String runId, {
+    String? ownerUserId,
+  }) async {
     final existing = _deletions[threadId];
     final runIds = {...?existing?.aiRunIdsToCancel, runId}.toList()..sort();
+    final runOwners = <String, String>{
+      ...?existing?.aiRunOwnerUserIds,
+      runId: ?ownerUserId,
+    };
     final updated = PendingChatThreadDeletion(
       threadId: threadId,
       attachmentIds: existing?.attachmentIds ?? const [],
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
+      aiRunLookups: existing?.aiRunLookups ?? const [],
       dataDeleted: true,
       revision: (existing?.revision ?? 0) + 1,
+      canAcknowledge: (existing?.canAcknowledge ?? true) && ownerUserId != null,
     );
     _deletions[threadId] = updated;
     return updated;
@@ -1433,6 +1537,38 @@ class _InMemoryChatRepository implements ChatRepository {
       attachmentIds: existing.attachmentIds,
       aiRunIdsToCancel: existing.aiRunIdsToCancel
           .where((id) => id != runId)
+          .toList(),
+      aiRunOwnerUserIds: Map<String, String>.from(existing.aiRunOwnerUserIds)
+        ..remove(runId),
+      aiRunLookups: existing.aiRunLookups,
+      dataDeleted: existing.dataDeleted,
+      revision: existing.revision + 1,
+      canAcknowledge: existing.canAcknowledge,
+    );
+    _deletions[threadId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<PendingChatThreadDeletion?> resolveAiRunLookup(
+    String threadId, {
+    required String ownerUserId,
+    required String requestKey,
+    String? runId,
+  }) async {
+    final existing = _deletions[threadId];
+    if (existing == null) return null;
+    final updated = PendingChatThreadDeletion(
+      threadId: threadId,
+      attachmentIds: existing.attachmentIds,
+      aiRunIdsToCancel: {...existing.aiRunIdsToCancel, ?runId}.toList(),
+      aiRunOwnerUserIds: {...existing.aiRunOwnerUserIds, ?runId: ownerUserId},
+      aiRunLookups: existing.aiRunLookups
+          .where(
+            (item) =>
+                item.ownerUserId != ownerUserId ||
+                item.requestKey != requestKey,
+          )
           .toList(),
       dataDeleted: existing.dataDeleted,
       revision: existing.revision + 1,
@@ -1465,13 +1601,45 @@ class _InMemoryChatRepository implements ChatRepository {
             .toSet()
             .toList()
           ..sort();
+    final runOwners = <String, String>{};
+    var canAcknowledge = true;
+    for (final message in _messages.values.where(
+      (message) => message.threadId == id && runIds.contains(message.aiRunId),
+    )) {
+      final owner = message.aiRunOwnerUserId;
+      if (owner == null) {
+        canAcknowledge = false;
+      } else {
+        runOwners[message.aiRunId!] = owner;
+      }
+    }
+    final lookups = _messages.values
+        .where(
+          (message) =>
+              message.threadId == id &&
+              message.aiRunId == null &&
+              message.aiRunOwnerUserId != null &&
+              message.aiRunRequestKey != null &&
+              (message.status == ChatMessageStatus.sending ||
+                  message.errorCode == 'hosted_cancel_requested'),
+        )
+        .map(
+          (message) => PendingAiRunLookup(
+            ownerUserId: message.aiRunOwnerUserId!,
+            requestKey: message.aiRunRequestKey!,
+          ),
+        )
+        .toList();
     _threads.remove(id);
     _messages.removeWhere((_, message) => message.threadId == id);
     final deletion = PendingChatThreadDeletion(
       threadId: id,
       aiRunIdsToCancel: runIds,
+      aiRunOwnerUserIds: runOwners,
+      aiRunLookups: lookups,
       dataDeleted: true,
       revision: 1,
+      canAcknowledge: canAcknowledge,
     );
     _deletions[id] = deletion;
     return deletion;

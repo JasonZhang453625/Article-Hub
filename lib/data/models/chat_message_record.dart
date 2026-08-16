@@ -43,6 +43,25 @@ class ChatMessageRecord {
   /// attempt reuses this value, while an explicit user retry creates a new one.
   final String? aiRunRequestKey;
 
+  /// Account that authorized the concrete hosted Agent create attempt.
+  ///
+  /// This is written before `POST /ai/runs`. Together with
+  /// [aiRunRequestKey], it lets a later process safely reconcile a create
+  /// whose 202 response may have been lost. A different signed-in account
+  /// must never use this key for lookup.
+  final String? aiRunOwnerUserId;
+
+  /// Device that authorized the durable Agent attempt. Device-local tools
+  /// must never be claimed by another installation, even for the same user.
+  final String? aiRunOwnerDeviceId;
+
+  /// Immutable protocol metadata negotiated before `POST /ai/runs`.
+  final int? aiRunProtocolVersion;
+  final int? aiRunClientToolsVersion;
+
+  /// Local-knowledge policy frozen for this concrete run (`only`/`hybrid`).
+  final String? aiRunKnowledgeMode;
+
   /// Files owned by this message. User messages may have attachments;
   /// assistant messages normally keep this empty.
   final List<ChatAttachment> attachments;
@@ -57,6 +76,19 @@ class ChatMessageRecord {
   final String? attachmentContext;
 
   final bool attachmentContextIncludesImages;
+
+  bool get hasUnresolvedAiRunCreate =>
+      aiRunId == null &&
+      aiRunOwnerUserId?.trim().isNotEmpty == true &&
+      aiRunRequestKey?.trim().isNotEmpty == true &&
+      (status == ChatMessageStatus.sending ||
+          errorCode == 'hosted_cancel_requested');
+
+  bool get usesDeviceClientTools =>
+      aiRunProtocolVersion != null &&
+      aiRunProtocolVersion! >= 3 &&
+      aiRunClientToolsVersion == 1 &&
+      (aiRunKnowledgeMode == 'only' || aiRunKnowledgeMode == 'hybrid');
 
   const ChatMessageRecord({
     required this.id,
@@ -77,6 +109,11 @@ class ChatMessageRecord {
     this.aiRunId,
     this.aiRunEventSeq,
     this.aiRunRequestKey,
+    this.aiRunOwnerUserId,
+    this.aiRunOwnerDeviceId,
+    this.aiRunProtocolVersion,
+    this.aiRunClientToolsVersion,
+    this.aiRunKnowledgeMode,
     this.attachments = const [],
     this.attachmentIdsForCleanup = const [],
     this.attachmentContext,
@@ -98,6 +135,11 @@ class ChatMessageRecord {
     String? aiRunId,
     int? aiRunEventSeq,
     String? aiRunRequestKey,
+    String? aiRunOwnerUserId,
+    String? aiRunOwnerDeviceId,
+    int? aiRunProtocolVersion,
+    int? aiRunClientToolsVersion,
+    String? aiRunKnowledgeMode,
     List<ChatAttachment>? attachments,
     List<String>? attachmentIdsForCleanup,
     String? attachmentContext,
@@ -122,6 +164,12 @@ class ChatMessageRecord {
       aiRunId: aiRunId ?? this.aiRunId,
       aiRunEventSeq: aiRunEventSeq ?? this.aiRunEventSeq,
       aiRunRequestKey: aiRunRequestKey ?? this.aiRunRequestKey,
+      aiRunOwnerUserId: aiRunOwnerUserId ?? this.aiRunOwnerUserId,
+      aiRunOwnerDeviceId: aiRunOwnerDeviceId ?? this.aiRunOwnerDeviceId,
+      aiRunProtocolVersion: aiRunProtocolVersion ?? this.aiRunProtocolVersion,
+      aiRunClientToolsVersion:
+          aiRunClientToolsVersion ?? this.aiRunClientToolsVersion,
+      aiRunKnowledgeMode: aiRunKnowledgeMode ?? this.aiRunKnowledgeMode,
       attachments: attachments ?? this.attachments,
       attachmentIdsForCleanup:
           attachmentIdsForCleanup ?? this.attachmentIdsForCleanup,
@@ -137,6 +185,11 @@ class ChatMessageRecord {
   /// and prevents stale citations, feedback, or provider metadata from being
   /// shown while the new answer is being generated.
   ChatMessageRecord retrying({required String aiRunRequestKey}) {
+    if (hasUnresolvedAiRunCreate) {
+      throw StateError(
+        'Cannot retry while a hosted Agent create is unresolved.',
+      );
+    }
     return ChatMessageRecord(
       id: id,
       threadId: threadId,
@@ -148,6 +201,11 @@ class ChatMessageRecord {
       aiRunId: null,
       aiRunEventSeq: null,
       aiRunRequestKey: aiRunRequestKey,
+      aiRunOwnerUserId: null,
+      aiRunOwnerDeviceId: null,
+      aiRunProtocolVersion: null,
+      aiRunClientToolsVersion: null,
+      aiRunKnowledgeMode: null,
       attachmentIdsForCleanup: attachmentIdsForCleanup,
     );
   }
@@ -186,13 +244,18 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       attachmentContext: fields[18] as String?,
       attachmentContextIncludesImages: fields[19] as bool? ?? false,
       aiRunRequestKey: fields[20] as String?,
+      aiRunOwnerUserId: fields[22] as String?,
+      aiRunOwnerDeviceId: fields[23] as String?,
+      aiRunProtocolVersion: (fields[24] as num?)?.toInt(),
+      aiRunClientToolsVersion: (fields[25] as num?)?.toInt(),
+      aiRunKnowledgeMode: fields[26] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(22)
+      ..writeByte(27)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -241,7 +304,17 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
           obj.attachments.map((attachment) => attachment.toJson()).toList(),
           obj.attachmentIdsForCleanup,
         ),
-      );
+      )
+      ..writeByte(22)
+      ..write(obj.aiRunOwnerUserId)
+      ..writeByte(23)
+      ..write(obj.aiRunOwnerDeviceId)
+      ..writeByte(24)
+      ..write(obj.aiRunProtocolVersion)
+      ..writeByte(25)
+      ..write(obj.aiRunClientToolsVersion)
+      ..writeByte(26)
+      ..write(obj.aiRunKnowledgeMode);
   }
 }
 

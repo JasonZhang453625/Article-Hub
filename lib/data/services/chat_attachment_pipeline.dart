@@ -24,6 +24,39 @@ class PreparedChatAttachments {
   });
 }
 
+void validateNativeImageAttachmentEnvelope(
+  Iterable<ChatAttachment> attachments, {
+  required int maxImages,
+  required int maxImageBytes,
+  required int maxTotalImageBytes,
+  Set<String>? allowedMimeTypes,
+}) {
+  final images = attachments.where((item) => item.isImage).toList();
+  if (images.length > maxImages) {
+    throw const ChatAttachmentException('too_many');
+  }
+  var imageBytes = 0;
+  for (final image in images) {
+    if (allowedMimeTypes != null &&
+        !allowedMimeTypes.contains(image.mimeType.trim().toLowerCase())) {
+      throw ChatAttachmentException(
+        'unsupported_type',
+        fileName: image.originalFileName,
+      );
+    }
+    if (image.byteLength > maxImageBytes) {
+      throw ChatAttachmentException(
+        'too_large',
+        fileName: image.originalFileName,
+      );
+    }
+    imageBytes += image.byteLength;
+  }
+  if (imageBytes > maxTotalImageBytes) {
+    throw const ChatAttachmentException('total_too_large');
+  }
+}
+
 /// Converts durable chat attachments into one bounded prompt context and, when
 /// supported by the selected chat model, native image message blocks.
 class ChatAttachmentPipeline {
@@ -37,6 +70,10 @@ class ChatAttachmentPipeline {
   Future<PreparedChatAttachments> prepare({
     required List<ChatAttachment> attachments,
     required bool useNativeImageInput,
+    int maxNativeImages = maxChatAttachments,
+    int maxNativeImageBytes = maxChatAttachmentBytes,
+    int maxNativeImageTotalBytes = maxChatAttachmentTotalBytes,
+    Set<String>? allowedNativeImageMimeTypes,
     String? cachedTextContext,
     bool cachedIncludesImageUnderstanding = false,
   }) async {
@@ -47,6 +84,13 @@ class ChatAttachmentPipeline {
     if (images.isNotEmpty && !useNativeImageInput) {
       throw const ChatAttachmentException('chat_model_no_image_input');
     }
+    validateNativeImageAttachmentEnvelope(
+      images,
+      maxImages: maxNativeImages,
+      maxImageBytes: maxNativeImageBytes,
+      maxTotalImageBytes: maxNativeImageTotalBytes,
+      allowedMimeTypes: allowedNativeImageMimeTypes,
+    );
 
     // Older builds could cache a separate vision model's description here.
     // Do not replay that fallback into a direct-to-chat-model request; rebuild

@@ -164,6 +164,66 @@ class RetrievalService {
       candidateIds: output.candidateIds,
     );
   }
+
+  /// Device-only keyword retrieval for Pi client tools.
+  ///
+  /// The query may be derived from evidence returned by an earlier tool hop,
+  /// so this path deliberately performs no embedding request and reads no
+  /// vector index. Keeping it on [RetrievalService] preserves the normal
+  /// retrieval boundary while making the privacy property explicit.
+  Future<RetrievalResult> retrieveLocalOnly(
+    String query,
+    List<Article> articles,
+  ) async {
+    final stopwatch = Stopwatch()..start();
+    final articleMaps = articles
+        .map(
+          (article) => <String, dynamic>{
+            'id': article.id,
+            'title': article.title,
+            'summary': article.retrievalText,
+            'tags': article.tags,
+          },
+        )
+        .toList(growable: false);
+    RetrievalComputeOutput output;
+    try {
+      output = await _compute(
+        query: query,
+        queryVector: const [],
+        embeddingModel: '',
+        records: const [],
+        articles: articleMaps,
+        minRelevance: _minRelevance,
+        topK: _topK,
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'local-only retrieval isolate failed; using in-process keyword retrieval',
+        name: 'memora.retrieval',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      output = runKeywordRetrievalInProcess(
+        query: query,
+        articles: articleMaps,
+        topK: _topK,
+      );
+    }
+    stopwatch.stop();
+    final byId = {for (final article in articles) article.id: article};
+    return RetrievalResult(
+      articles: output.resultIds
+          .map((id) => byId[id])
+          .whereType<Article>()
+          .toList(growable: false),
+      method: output.method == 'keyword'
+          ? RetrievalMethod.keyword
+          : RetrievalMethod.none,
+      duration: stopwatch.elapsed,
+      candidateIds: output.candidateIds,
+    );
+  }
 }
 
 /// Fuse vector and keyword rankings via Reciprocal Rank Fusion (RRF).

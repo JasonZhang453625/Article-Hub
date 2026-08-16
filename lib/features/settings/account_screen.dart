@@ -10,6 +10,7 @@ import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/sync_providers.dart';
 import '../../shared/utils/snackbar_helpers.dart';
 import '../../shared/widgets/delayed_reveal.dart';
+import '../../shared/widgets/agent_client_tool_host.dart';
 
 class AccountScreen extends ConsumerWidget {
   const AccountScreen({super.key});
@@ -275,6 +276,9 @@ class AccountScreen extends ConsumerWidget {
                               ),
                             );
                             if (confirm == true) {
+                              await ref
+                                  .read(agentClientToolLifecycleProvider)
+                                  .beforeSignOut();
                               await ref
                                   .read(authControllerProvider.notifier)
                                   .signOut();

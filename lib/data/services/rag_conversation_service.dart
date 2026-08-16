@@ -65,6 +65,7 @@ typedef RagAgentCompletionStreamWithRun =
       required String systemPrompt,
       required String userMessage,
       required String userQuestion,
+      required List<AiImageInput> images,
       List<Map<String, String>> history,
       double temperature,
       int maxTokens,
@@ -74,7 +75,31 @@ typedef RagAgentCompletionStreamWithRun =
       String? idempotencyKey,
     });
 
+typedef RagAgentCompletionStreamWithRunV3 =
+    Stream<String> Function({
+      required String systemPrompt,
+      required String userMessage,
+      required String userQuestion,
+      required List<AiImageInput> images,
+      List<Map<String, String>> history,
+      double temperature,
+      int maxTokens,
+      required bool webSearch,
+      required bool localKnowledge,
+      String? knowledgeMode,
+      void Function(HostedAgentEvent event)? onEvent,
+      FutureOr<void> Function(String runId)? onRunCreated,
+      String? idempotencyKey,
+    });
+
 typedef RagCompletionError = String? Function();
+
+typedef RagAgentLocalCitationResolver =
+    Future<List<String>> Function({
+      required String runId,
+      required String answer,
+      required List<HostedAgentLocalSource> sources,
+    });
 
 typedef RagSaveLog = Future<void> Function(RetrievalLog log);
 
@@ -204,10 +229,15 @@ class RagConversationService {
   final RagMultimodalCompletionStream? _multimodalCompleteStream;
   final RagAgentCompletionStream? _agentCompleteStream;
   final RagAgentCompletionStreamWithRun? _agentRunStream;
+  final RagAgentCompletionStreamWithRunV3? _agentRunStreamV3;
   final RagCompletionError? _completionError;
   final RagCompletionError? _agentCompletionError;
   final void Function(AiThinkingLevel level)? _configureThinking;
   final List<String> Function()? _agentWebUrls;
+  final String? Function()? _agentRunId;
+  final List<HostedAgentLocalSource> Function()? _agentLocalSources;
+  final RagAgentLocalCitationResolver? _resolveAgentLocalCitations;
+  final bool _agentClientToolsEnabled;
   final RagSaveLog _saveLog;
   final PromptService _prompts;
   final RagContextBuilder _contextBuilder;
@@ -223,10 +253,15 @@ class RagConversationService {
     RagMultimodalCompletionStream? multimodalCompleteStream,
     RagAgentCompletionStream? agentCompleteStream,
     RagAgentCompletionStreamWithRun? agentRunStream,
+    RagAgentCompletionStreamWithRunV3? agentRunStreamV3,
     RagCompletionError? completionError,
     RagCompletionError? agentCompletionError,
     void Function(AiThinkingLevel level)? configureThinking,
     List<String> Function()? agentWebUrls,
+    String? Function()? agentRunId,
+    List<HostedAgentLocalSource> Function()? agentLocalSources,
+    RagAgentLocalCitationResolver? resolveAgentLocalCitations,
+    bool agentClientToolsEnabled = false,
     required RagSaveLog saveLog,
     required PromptService promptService,
     RagContextBuilder contextBuilder = const RagContextBuilder(),
@@ -240,10 +275,15 @@ class RagConversationService {
        _multimodalCompleteStream = multimodalCompleteStream,
        _agentCompleteStream = agentCompleteStream,
        _agentRunStream = agentRunStream,
+       _agentRunStreamV3 = agentRunStreamV3,
        _completionError = completionError,
        _agentCompletionError = agentCompletionError,
        _configureThinking = configureThinking,
        _agentWebUrls = agentWebUrls,
+       _agentRunId = agentRunId,
+       _agentLocalSources = agentLocalSources,
+       _resolveAgentLocalCitations = resolveAgentLocalCitations,
+       _agentClientToolsEnabled = agentClientToolsEnabled,
        _saveLog = saveLog,
        _prompts = promptService,
        _contextBuilder = contextBuilder,
@@ -281,7 +321,20 @@ class RagConversationService {
         request.imageInputs.isNotEmpty;
     if (hasAttachments) {
       _configureThinking?.call(request.thinkingLevel);
-      return _askWithAttachmentsDirectly(
+      return _askWithAttachments(
+        request,
+        question: question,
+        logId: logId,
+        onDelta: onDelta,
+        onAgentEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+      );
+    }
+
+    if (_agentRunStreamV3 != null) {
+      _configureThinking?.call(request.thinkingLevel);
+      return _askWithDeviceKnowledge(
         request,
         question: question,
         logId: logId,
@@ -507,6 +560,7 @@ class RagConversationService {
         maxTokens: maxTokens,
         temperature: 0.3,
         webSearch: request.webSearch,
+        localKnowledge: false,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -621,10 +675,157 @@ class RagConversationService {
     }
   }
 
-  /// Sends user-supplied attachments straight to the selected chat model.
-  /// This path deliberately performs no query rewrite, local retrieval, web
-  /// search, context packing, or citation extraction.
-  Future<RagConversationResult> _askWithAttachmentsDirectly(
+  /// Protocol-v3 hosted path. Local evidence remains on the authenticated
+  /// current device and is supplied only through local_search/read_article;
+  /// no query rewrite, retrieval result, or packed context is uploaded here.
+  Future<RagConversationResult> _askWithDeviceKnowledge(
+    RagConversationRequest request, {
+    required String question,
+    required String logId,
+    void Function(String delta)? onDelta,
+    void Function(HostedAgentEvent event)? onAgentEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    String? idempotencyKey,
+  }) async {
+    const method = 'agent';
+    if (!_agentClientToolsEnabled) {
+      return RagConversationResult(
+        outcome: RagConversationOutcome.error,
+        error: 'Hosted Agent device tools are not available.',
+        rewrittenQuery: question,
+        method: method,
+        logId: logId,
+      );
+    }
+    final knowledgeMode = request.knowledgeOnly ? 'only' : 'hybrid';
+    try {
+      final lengthRule = await _prompts.load(
+        request.detailedAnswer
+            ? 'chat/length_detailed.txt'
+            : 'chat/length_concise.txt',
+      );
+      final systemPrompt = await _prompts.load('chat/agent_system.txt', {
+        'knowledgeMode': knowledgeMode,
+        'lengthRule': lengthRule,
+        'webRule': request.webSearch
+            ? '允许在必要时使用服务端 web_search；只使用实际返回的 [wN] 引用。'
+            : '本轮未授权联网搜索，不得声称查询了网络。',
+        'langHint': request.languageHint.isEmpty
+            ? ''
+            : '\n${request.languageHint}',
+      });
+      final userMessage = '<user_question>\n$question\n</user_question>';
+      final maxTokens = request.detailedAnswer ? 2500 : 1000;
+      final history = _contextWindow.selectForPrompt(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        history: request.history,
+        maxOutputTokens: maxTokens,
+        contextWindowTokens: request.contextWindowTokens,
+      );
+      final response = await _completeWithProgress(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        userQuestion: question,
+        history: history.map((turn) => turn.toMessage()).toList(),
+        temperature: 0.3,
+        maxTokens: maxTokens,
+        webSearch: request.webSearch,
+        localKnowledge: true,
+        knowledgeMode: knowledgeMode,
+        onDelta: onDelta,
+        onAgentEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+        images: const [],
+      );
+      final completionError = _agentCompletionError?.call()?.trim();
+      if (response == null ||
+          response.trim().isEmpty ||
+          completionError != null && completionError.isNotEmpty) {
+        await _writeLog(
+          logId: logId,
+          question: question,
+          rewrittenQuery: question,
+          method: method,
+        );
+        return RagConversationResult(
+          outcome: RagConversationOutcome.error,
+          answer: response,
+          error: completionError?.isNotEmpty == true
+              ? completionError
+              : 'empty response',
+          rewrittenQuery: question,
+          method: method,
+          logId: logId,
+        );
+      }
+      final webCandidates = _agentWebUrls?.call() ?? const <String>[];
+      final citedWebUrls = extractValidWebCitations(
+        response: response,
+        urls: webCandidates,
+      );
+      final serverRunId = _agentRunId?.call();
+      final localSources = _agentLocalSources?.call() ?? const [];
+      final localCitationResolver = _resolveAgentLocalCitations;
+      final citedIds = serverRunId == null || localCitationResolver == null
+          ? const <String>[]
+          : await localCitationResolver(
+              runId: serverRunId,
+              answer: response,
+              sources: localSources,
+            );
+      final effectiveMethod = citedIds.isNotEmpty && citedWebUrls.isNotEmpty
+          ? 'hybrid'
+          : citedIds.isNotEmpty
+          ? 'local'
+          : citedWebUrls.isNotEmpty
+          ? 'web'
+          : method;
+      await _writeLog(
+        logId: logId,
+        question: question,
+        rewrittenQuery: question,
+        method: effectiveMethod,
+        candidateIds: citedIds,
+        citedIds: citedIds,
+        webCandidateUrls: webCandidates,
+        webCitedUrls: citedWebUrls,
+      );
+      return RagConversationResult(
+        outcome: RagConversationOutcome.answer,
+        answer: response,
+        rewrittenQuery: question,
+        citedIds: List.unmodifiable(citedIds),
+        method: effectiveMethod,
+        logId: logId,
+        webUrls: List.unmodifiable(citedWebUrls),
+      );
+    } catch (error) {
+      await _writeLog(
+        logId: logId,
+        question: question,
+        rewrittenQuery: question,
+        method: method,
+      );
+      return RagConversationResult(
+        outcome: RagConversationOutcome.error,
+        error: error.toString(),
+        rewrittenQuery: question,
+        method: method,
+        logId: logId,
+      );
+    }
+  }
+
+  /// Runs the bounded attachment prompt without client-side retrieval or web
+  /// prefetch. Hosted Pi runs still receive the user's web-search permission,
+  /// so the Agent can invoke its server-side tool when appropriate.
+  /// Hosted answers use the durable Pi Agent, including native image blocks;
+  /// BYOK answers remain direct model completions. This path deliberately
+  /// performs no query rewrite, local retrieval, web search, context packing,
+  /// or citation extraction.
+  Future<RagConversationResult> _askWithAttachments(
     RagConversationRequest request, {
     required String question,
     required String logId,
@@ -635,17 +836,27 @@ class RagConversationService {
   }) async {
     const method = 'attachment';
     try {
+      final usesAgentCompletion =
+          _agentRunStreamV3 != null ||
+          _agentRunStream != null ||
+          request.imageInputs.isEmpty && _agentCompleteStream != null;
+      final agentCanSearch = request.webSearch && usesAgentCompletion;
       final lengthRulePath = request.detailedAnswer
           ? 'chat/length_detailed.txt'
           : 'chat/length_concise.txt';
       final lengthRule = await _prompts.load(lengthRulePath);
-      final systemPrompt = await _prompts
-          .load('chat/attachments_direct_system.txt', {
-            'lengthRule': lengthRule,
-            'langHint': request.languageHint.isEmpty
-                ? ''
-                : '\n${request.languageHint}',
-          });
+      final systemPrompt = await _prompts.load(
+        'chat/attachments_direct_system.txt',
+        {
+          'lengthRule': lengthRule,
+          'langHint': request.languageHint.isEmpty
+              ? ''
+              : '\n${request.languageHint}',
+          'toolRule': agentCanSearch
+              ? '- 不要执行本地知识库检索。当用户问题需要当前、变动、小众或明确要求的网络信息时，可以使用服务端 web_search；搜索结果必须用 [w1]、[w2] …引用，不得编造引用。'
+              : '- 不要执行本地知识库检索或联网搜索，也不要声称使用了未提供给你的资料。',
+        },
+      );
       final attachmentBlock = await _prompts.load('chat/attachments.txt', {
         'attachments': request.attachmentContext.trim().isEmpty
             ? 'Images are attached to this message.'
@@ -686,8 +897,6 @@ class RagConversationService {
         maxOutputTokens: maxTokens,
         contextWindowTokens: effectiveContextWindow,
       );
-      final usesAgentCompletion =
-          request.imageInputs.isEmpty && _hasAgentCompletion;
       final response = await _completeWithProgress(
         systemPrompt: systemPrompt,
         userMessage: userMessage,
@@ -695,13 +904,18 @@ class RagConversationService {
         history: history.map((turn) => turn.toMessage()).toList(),
         temperature: 0.3,
         maxTokens: maxTokens,
-        webSearch: false,
+        webSearch: request.webSearch,
+        localKnowledge: false,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
         idempotencyKey: idempotencyKey,
         images: request.imageInputs,
+        preferLegacyAgent: true,
       );
+      final agentWebUrls = usesAgentCompletion
+          ? (_agentWebUrls?.call() ?? const <String>[])
+          : const <String>[];
 
       final completionErrorReader = usesAgentCompletion
           ? (_agentCompletionError ?? _completionError)
@@ -719,13 +933,15 @@ class RagConversationService {
         );
       }
 
-      await _writeLog(
-        logId: logId,
-        question: question,
-        rewrittenQuery: question,
-        method: method,
-      );
       if (!hasAnswer || completionError != null && completionError.isNotEmpty) {
+        await _writeLog(
+          logId: logId,
+          question: question,
+          rewrittenQuery: question,
+          method: method,
+          webCandidateUrls: agentWebUrls,
+          webCitedUrls: const [],
+        );
         return RagConversationResult(
           outcome: RagConversationOutcome.error,
           answer: hasAnswer ? response : null,
@@ -737,12 +953,25 @@ class RagConversationService {
           logId: logId,
         );
       }
+      final citedWebUrls = extractValidWebCitations(
+        response: response,
+        urls: agentWebUrls,
+      );
+      await _writeLog(
+        logId: logId,
+        question: question,
+        rewrittenQuery: question,
+        method: method,
+        webCandidateUrls: agentWebUrls,
+        webCitedUrls: citedWebUrls,
+      );
       return RagConversationResult(
         outcome: RagConversationOutcome.answer,
         answer: response,
         rewrittenQuery: question,
         method: method,
         logId: logId,
+        webUrls: List.unmodifiable(citedWebUrls),
       );
     } catch (error) {
       await _writeLog(
@@ -769,12 +998,68 @@ class RagConversationService {
     required double temperature,
     required int maxTokens,
     required bool webSearch,
+    required bool localKnowledge,
+    String? knowledgeMode,
     void Function(String delta)? onDelta,
     void Function(HostedAgentEvent event)? onAgentEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
     String? idempotencyKey,
     required List<AiImageInput> images,
+    bool preferLegacyAgent = false,
   }) async {
+    final agentRunStreamV3 = _agentRunStreamV3;
+    if (agentRunStreamV3 != null &&
+        (!preferLegacyAgent || _agentRunStream == null)) {
+      final buffer = StringBuffer();
+      await for (final delta in agentRunStreamV3(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        userQuestion: userQuestion,
+        images: images,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+        webSearch: webSearch,
+        localKnowledge: localKnowledge,
+        knowledgeMode: knowledgeMode,
+        onEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+    final agentRunStream = _agentRunStream;
+    if (agentRunStream != null) {
+      if (localKnowledge) {
+        throw StateError('Hosted Agent device tools are not negotiated.');
+      }
+      final buffer = StringBuffer();
+      await for (final delta in agentRunStream(
+        systemPrompt: systemPrompt,
+        userMessage: userMessage,
+        userQuestion: userQuestion,
+        images: images,
+        history: history,
+        temperature: temperature,
+        maxTokens: maxTokens,
+        webSearch: webSearch,
+        onEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: idempotencyKey,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+
     if (images.isNotEmpty) {
       final multimodalStream = _multimodalCompleteStream;
       if (multimodalStream == null) {
@@ -788,29 +1073,6 @@ class RagConversationService {
         history: history,
         temperature: temperature,
         maxTokens: maxTokens,
-      )) {
-        if (delta.isEmpty) continue;
-        buffer.write(delta);
-        onDelta?.call(delta);
-      }
-      final response = buffer.toString();
-      return response.trim().isEmpty ? null : response;
-    }
-
-    final agentRunStream = _agentRunStream;
-    if (agentRunStream != null) {
-      final buffer = StringBuffer();
-      await for (final delta in agentRunStream(
-        systemPrompt: systemPrompt,
-        userMessage: userMessage,
-        userQuestion: userQuestion,
-        history: history,
-        temperature: temperature,
-        maxTokens: maxTokens,
-        webSearch: webSearch,
-        onEvent: onAgentEvent,
-        onRunCreated: onRunCreated,
-        idempotencyKey: idempotencyKey,
       )) {
         if (delta.isEmpty) continue;
         buffer.write(delta);
@@ -868,7 +1130,9 @@ class RagConversationService {
   }
 
   bool get _hasAgentCompletion =>
-      _agentRunStream != null || _agentCompleteStream != null;
+      _agentRunStreamV3 != null ||
+      _agentRunStream != null ||
+      _agentCompleteStream != null;
 
   Future<({Object? error, RetrievalResult? result})> _attemptRetrieval(
     String query,

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../../data/models/chat_message_record.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/source_platform.dart';
 import '../../data/services/ai_service.dart';
+import '../../data/services/agent_client_tool_store.dart';
 import '../../data/services/chat_attachment_pipeline.dart';
 import '../../data/services/chat_attachment_service.dart';
 import '../../data/services/hosted_agent_service.dart';
@@ -18,6 +20,7 @@ import '../../data/services/rag_citation.dart';
 import '../../data/services/rag_conversation_service.dart';
 import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/attachment_providers.dart';
+import '../../shared/providers/auth_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/providers/pipeline_provider.dart';
@@ -25,6 +28,7 @@ import '../../shared/providers/settings_providers.dart';
 import '../../shared/utils/ai_error_messages.dart';
 import '../../shared/utils/locale_strings.dart';
 import '../../shared/utils/snackbar_helpers.dart';
+import '../../shared/widgets/agent_client_tool_host.dart';
 import 'chat_message.dart';
 import 'chat_bubble.dart';
 import 'chat_empty_state.dart';
@@ -130,15 +134,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       return;
     }
     final service = ref.read(chatAttachmentServiceProvider);
-    final remainingSlots = maxChatAttachments - _attachmentDrafts.length;
+    final usesHostedAgent = ref.read(hostedAgentServiceProvider) != null;
+    final agentImageCapabilities = images && usesHostedAgent
+        ? ref.read(hostedAgentImageInputCapabilitiesProvider)
+        : null;
+    final globalRemainingSlots = maxChatAttachments - _attachmentDrafts.length;
+    final usedImageSlots = _attachmentDrafts
+        .where((draft) => draft.attachment.isImage)
+        .length;
+    final imageSlotLimit = agentImageCapabilities == null
+        ? maxChatAttachments
+        : math.min(agentImageCapabilities.maxImages, maxHostedAgentImages);
+    final remainingSlots = images
+        ? math.min(globalRemainingSlots, imageSlotLimit - usedImageSlots)
+        : globalRemainingSlots;
     final usedBytes = _attachmentDrafts.fold<int>(
       0,
       (total, draft) => total + draft.attachment.byteLength,
     );
+    final usedImageBytes = _attachmentDrafts
+        .where((draft) => draft.attachment.isImage)
+        .fold<int>(0, (total, draft) => total + draft.attachment.byteLength);
+    final globalRemainingBytes = maxChatAttachmentTotalBytes - usedBytes;
+    final imageByteLimit = agentImageCapabilities == null
+        ? maxChatAttachmentTotalBytes
+        : math.min(
+            agentImageCapabilities.maxTotalImageBytes,
+            maxHostedAgentImageTotalBytes,
+          );
+    final remainingImageBytes = math.min(
+      globalRemainingBytes,
+      imageByteLimit - usedImageBytes,
+    );
     if (remainingSlots <= 0) {
       showAppSnackBar(
         context,
-        message: ref.read(stringsProvider).chatAttachmentTooMany,
+        message: images && usesHostedAgent
+            ? ref.read(stringsProvider).chatAgentImageTooMany
+            : ref.read(stringsProvider).chatAttachmentTooMany,
+      );
+      return;
+    }
+    if (images && remainingImageBytes <= 0) {
+      showAppSnackBar(
+        context,
+        message: usesHostedAgent
+            ? ref.read(stringsProvider).chatAgentImageTooLarge
+            : ref.read(stringsProvider).chatAttachmentTooLarge,
       );
       return;
     }
@@ -146,11 +188,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final picked = images
           ? await service.pickImages(
               remainingSlots: remainingSlots,
-              remainingBytes: maxChatAttachmentTotalBytes - usedBytes,
+              remainingBytes: remainingImageBytes,
+              maxFileBytes: agentImageCapabilities == null
+                  ? maxChatAttachmentBytes
+                  : math.min(
+                      agentImageCapabilities.maxImageBytes,
+                      maxHostedAgentImageBytes,
+                    ),
             )
           : await service.pickFiles(
               remainingSlots: remainingSlots,
-              remainingBytes: maxChatAttachmentTotalBytes - usedBytes,
+              remainingBytes: globalRemainingBytes,
             );
       if (!mounted) {
         await service.discardDrafts(picked);
@@ -163,7 +211,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!mounted) return;
       showAppSnackBar(
         context,
-        message: _localizedAttachmentError(ref.read(stringsProvider), error),
+        message: _localizedAttachmentError(
+          ref.read(stringsProvider),
+          error,
+          hostedImages: images && usesHostedAgent,
+        ),
       );
     }
   }
@@ -212,6 +264,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final query = typedQuery.isEmpty
         ? s.chatAttachmentDefaultPrompt
         : typedQuery;
+
+    final hostedAgent = ref.read(hostedAgentServiceProvider);
+    final hostedImages =
+        hostedAgent != null && drafts.any((draft) => draft.attachment.isImage);
+    if (hostedImages) {
+      final capabilities = ref.read(hostedAgentImageInputCapabilitiesProvider);
+      try {
+        if (capabilities == null) {
+          throw const ChatAttachmentException('chat_model_no_image_input');
+        }
+        validateNativeImageAttachmentEnvelope(
+          drafts.map((draft) => draft.attachment),
+          maxImages: math.min(capabilities.maxImages, maxHostedAgentImages),
+          maxImageBytes: math.min(
+            capabilities.maxImageBytes,
+            maxHostedAgentImageBytes,
+          ),
+          maxTotalImageBytes: math.min(
+            capabilities.maxTotalImageBytes,
+            maxHostedAgentImageTotalBytes,
+          ),
+          allowedMimeTypes: capabilities.mimeTypes.intersection(
+            hostedAgentImageMimeTypes,
+          ),
+        );
+      } catch (error) {
+        showAppSnackBar(
+          context,
+          message: _localizedAttachmentError(s, error, hostedImages: true),
+        );
+        return;
+      }
+    }
 
     // Dismiss the keyboard as soon as a message is sent.
     FocusScope.of(context).unfocus();
@@ -284,7 +369,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final record = _findMessage(chatState.messages, message.id);
     if (record == null ||
         record.role != ChatMessageRole.assistant ||
-        record.errorCode == 'hosted_cancel_requested') {
+        record.errorCode == 'hosted_cancel_requested' ||
+        record.hasUnresolvedAiRunCreate) {
       return;
     }
     final recordIndex = chatState.messages.indexOf(record);
@@ -375,6 +461,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     final activeSettings = settings;
 
+    if (ref.read(hostedAiEnabledProvider) &&
+        ref.read(hostedAgentServiceProvider) == null) {
+      await finish(
+        pending.copyWith(
+          content: localizedAiErrorMessage(
+            s,
+            'Hosted Agent protocol is not available.',
+          ),
+          status: ChatMessageStatus.failed,
+          errorCode: 'hosted_agent_protocol_unavailable',
+        ),
+      );
+      return;
+    }
+
     final conversation = ref.read(ragConversationServiceProvider);
     if (conversation == null) {
       await finish(
@@ -395,6 +496,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         )
         .toList();
 
+    final hostedAgentForCreate = ref.read(hostedAgentServiceProvider);
+    final usesHostedAgent = hostedAgentForCreate != null;
+    final agentClientTools = usesHostedAgent
+        ? ref.read(hostedAgentClientToolsCapabilitiesProvider)
+        : null;
+    final agentImageCapabilities = usesHostedAgent
+        ? ref.read(hostedAgentImageInputCapabilitiesProvider)
+        : null;
     var preparedAttachments = const PreparedChatAttachments();
     if (userMessage.attachments.isNotEmpty) {
       try {
@@ -405,6 +514,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               useNativeImageInput: ref.read(
                 chatModelSupportsImageInputProvider,
               ),
+              maxNativeImages: agentImageCapabilities != null
+                  ? math.min(
+                      agentImageCapabilities.maxImages,
+                      maxHostedAgentImages,
+                    )
+                  : maxChatAttachments,
+              maxNativeImageBytes: agentImageCapabilities != null
+                  ? math.min(
+                      agentImageCapabilities.maxImageBytes,
+                      maxHostedAgentImageBytes,
+                    )
+                  : maxChatAttachmentBytes,
+              maxNativeImageTotalBytes: agentImageCapabilities != null
+                  ? math.min(
+                      agentImageCapabilities.maxTotalImageBytes,
+                      maxHostedAgentImageTotalBytes,
+                    )
+                  : maxChatAttachmentTotalBytes,
+              allowedNativeImageMimeTypes: agentImageCapabilities?.mimeTypes
+                  .intersection(hostedAgentImageMimeTypes),
               cachedTextContext: userMessage.attachmentContext,
               cachedIncludesImageUnderstanding:
                   userMessage.attachmentContextIncludesImages,
@@ -429,7 +558,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         }
         await finish(
           pending.copyWith(
-            content: _localizedAttachmentError(s, error),
+            content: _localizedAttachmentError(
+              s,
+              error,
+              hostedImages:
+                  usesHostedAgent &&
+                  userMessage.attachments.any(
+                    (attachment) => attachment.isImage,
+                  ),
+            ),
             status: ChatMessageStatus.failed,
             errorCode: 'attachment_preparation_failed',
           ),
@@ -443,7 +580,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (completedArticles.isEmpty &&
         activeSettings.chatKnowledgeSourceIndex == 0 &&
         !ref.read(chatWebSearchEnabledProvider) &&
-        userMessage.attachments.isEmpty) {
+        userMessage.attachments.isEmpty &&
+        agentClientTools == null) {
       await finish(
         pending.copyWith(
           content: s.knowledgeBaseEmpty,
@@ -461,6 +599,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     var lastPartialPersist = DateTime.fromMillisecondsSinceEpoch(0);
     var partialPersistChain = Future<void>.value();
     String? liveServerRunId;
+    String? activeCreateOwnerUserId;
+    String? activeCreateRequestKey;
 
     bool durableRunStillPending() {
       if (liveServerRunId == null) return false;
@@ -555,9 +695,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await _finishUnstartedCancellation(runControl);
       return;
     }
-    runControl.durableRunExpected =
-        ref.read(hostedAgentServiceProvider) != null &&
-        preparedAttachments.imageInputs.isEmpty;
+    String? hostedRunOwnerUserId;
+    if (usesHostedAgent) {
+      final requestKey = pending.aiRunRequestKey;
+      final ownerUserId = hostedAgentForCreate.currentUserId;
+      final hasAttachments = userMessage.attachments.isNotEmpty;
+      final usesDeviceClientTools = !hasAttachments && agentClientTools != null;
+      final ownerDeviceId = hostedAgentForCreate.currentDeviceId;
+      if (requestKey == null ||
+          ownerUserId == null ||
+          usesDeviceClientTools && ownerDeviceId == null) {
+        await finish(
+          pending.copyWith(
+            content: localizedAiErrorMessage(s, 'Sign in to use hosted AI.'),
+            status: ChatMessageStatus.failed,
+            errorCode: 'hosted_auth_unavailable',
+          ),
+        );
+        return;
+      }
+      final knowledgeMode = activeSettings.chatKnowledgeSourceIndex == 0
+          ? 'only'
+          : 'hybrid';
+      final negotiatedProtocolVersion =
+          ref
+              .read(hostedAiCapabilitiesProvider)
+              .valueOrNull
+              ?.agentProtocolVersion ??
+          0;
+      final marked = usesDeviceClientTools
+          ? await sessions.markClientToolRunCreateStarted(
+              messageId: pending.id,
+              expectedRequestKey: requestKey,
+              ownerUserId: ownerUserId,
+              ownerDeviceId: ownerDeviceId!,
+              protocolVersion: negotiatedProtocolVersion,
+              clientToolsVersion: agentClientTools.version,
+              knowledgeMode: knowledgeMode,
+            )
+          : await sessions.markServerRunCreateStarted(
+              messageId: pending.id,
+              expectedRequestKey: requestKey,
+              ownerUserId: ownerUserId,
+            );
+      if (marked == null) {
+        // Stop, delete, or a newer retry won the repository CAS. Sending a
+        // create now could only produce an orphan owned by the old attempt.
+        return;
+      }
+      activePending = marked;
+      hostedRunOwnerUserId = ownerUserId;
+      activeCreateOwnerUserId = ownerUserId;
+      activeCreateRequestKey = requestKey;
+    }
+    if (runControl.cancelRequested || runId != _answerRunId) {
+      await _finishUnstartedCancellation(runControl);
+      final createOwner = activeCreateOwnerUserId;
+      final createKey = activeCreateRequestKey;
+      if (createOwner != null && createKey != null) {
+        await sessions.finishServerRunCreate(
+          ownerUserId: createOwner,
+          requestKey: createKey,
+        );
+      }
+      return;
+    }
+    runControl.durableRunExpected = usesHostedAgent;
     runControl.agentRequestStarted = true;
 
     try {
@@ -583,6 +786,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           final attached = await sessions.attachServerRun(
             messageId: pending.id,
             expectedRequestKey: pending.aiRunRequestKey,
+            expectedOwnerUserId: hostedRunOwnerUserId,
+            expectedOwnerDeviceId: activePending.aiRunOwnerDeviceId,
+            expectedProtocolVersion: activePending.aiRunProtocolVersion,
+            expectedClientToolsVersion: activePending.aiRunClientToolsVersion,
+            expectedKnowledgeMode: activePending.aiRunKnowledgeMode,
             runId: serverRunId,
           );
           if (attached == null) {
@@ -595,9 +803,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 await sessions.queueDeletedThreadRunCancellation(
                   threadId: pending.threadId,
                   runId: serverRunId,
+                  ownerUserId: hostedRunOwnerUserId,
+                  requestKey: pending.aiRunRequestKey,
                 );
               } else {
-                await ref.read(hostedAgentRunCancellerProvider)(serverRunId);
+                await ref.read(hostedAgentRunCancellerProvider)(
+                  serverRunId,
+                  expectedOwnerUserId: hostedRunOwnerUserId,
+                );
               }
             } catch (error, stackTrace) {
               developer.log(
@@ -700,6 +913,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       );
     } finally {
+      final createOwner = activeCreateOwnerUserId;
+      final createKey = activeCreateRequestKey;
+      if (createOwner != null && createKey != null) {
+        await sessions.finishServerRunCreate(
+          ownerUserId: createOwner,
+          requestKey: createKey,
+        );
+      }
       final serverRunId = liveServerRunId;
       if (serverRunId != null) {
         _liveServerRunIds.remove(serverRunId);
@@ -759,7 +980,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     try {
       final sessions = ref.read(chatSessionsProvider.notifier);
       await sessions.retryPendingRunCancellations();
-      final pending = await sessions.pendingServerMessages();
+      recoveryFailed = await sessions.reconcileAmbiguousServerRuns(
+        ownerUserId: hostedAgent.currentUserId,
+        ownerDeviceId: hostedAgent.currentDeviceId,
+      );
+      final pending = await sessions.pendingServerMessages(
+        ownerUserId: hostedAgent.currentUserId,
+        ownerDeviceId: hostedAgent.currentDeviceId,
+      );
       for (final message in pending) {
         final runId = message.aiRunId;
         if (!mounted ||
@@ -878,14 +1106,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         response: answer,
         urls: hostedAgent.lastWebUrls,
       );
+      var citedArticleIds = const <String>[];
+      final session = ref.read(currentSessionProvider);
+      if (message.usesDeviceClientTools &&
+          session != null &&
+          session.user.id == message.aiRunOwnerUserId &&
+          session.device.id == message.aiRunOwnerDeviceId) {
+        // Await the repository itself rather than interpreting a loading
+        // articles provider as an empty vault. If hydration fails, the outer
+        // recovery catch deliberately leaves this durable run pending and the
+        // run-scoped refs intact for a later retry/restart.
+        final articleRepository = await ref.read(
+          articleRepositoryProvider.future,
+        );
+        citedArticleIds = await ref
+            .read(agentClientToolStoreProvider)
+            .resolveCitedArticleIds(
+              binding: AgentToolRunBinding(
+                ownerUserId: session.user.id,
+                ownerDeviceId: session.device.id,
+                runId: runId,
+              ),
+              answer: answer,
+              localSources: hostedAgent.lastLocalSources
+                  .map(
+                    (source) => (id: source.id, articleRef: source.articleRef),
+                  )
+                  .toList(growable: false),
+              existingArticleIds: articleRepository
+                  .getAll()
+                  .map((article) => article.id)
+                  .toSet(),
+            );
+      }
       await sessions.updateMessage(
         message.copyWith(
           content: answer,
           status: ChatMessageStatus.completed,
+          articleIds: citedArticleIds,
           webUrls: citedWebUrls,
-          method: citedWebUrls.isEmpty
-              ? message.method
-              : (message.method ?? 'web'),
+          method: citedArticleIds.isNotEmpty && citedWebUrls.isNotEmpty
+              ? 'hybrid'
+              : citedArticleIds.isNotEmpty
+              ? 'local'
+              : citedWebUrls.isNotEmpty
+              ? 'web'
+              : message.method,
           aiRunEventSeq: hostedAgent.lastEventSeq,
         ),
       );
@@ -1008,6 +1274,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // one run. Give any subsequent send a fresh observer while the cancelled
     // stream drains on its captured instance, so late terminal events cannot
     // contaminate the next answer's status or citations.
+    final hostedAgent = ref.read(hostedAgentServiceProvider);
+    hostedAgent?.cancelPendingCreate();
     ref.invalidate(hostedAgentServiceProvider);
     if (mounted) setState(() => _loading = false);
 
@@ -1020,6 +1288,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
     final serverRunId = control.serverRunId;
     if (serverRunId != null) {
+      await ref.read(agentClientToolLifecycleProvider).revokeRun(serverRunId);
       await sessions.requestServerRunCancellation(
         messageId: messageId,
         expectedRequestKey: control.requestKey,
@@ -1048,6 +1317,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         expectedRequestKey: control.requestKey,
         runId: serverRunId,
       );
+      return;
+    }
+    if (control.durableRunExpected && control.agentRequestStarted) {
+      // The create transport ended without proving whether the backend
+      // committed the stable key. Keep `hosted_cancel_requested`; startup or
+      // lifecycle reconciliation will GET by key and either cancel the found
+      // run or complete Stop after repeated 404s.
       return;
     }
     await sessions.completeUncreatedRunCancellation(
@@ -1347,7 +1623,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         expectedRequestKey: control.requestKey,
       );
     }
-    await sessions.deleteThread(threadId);
+    await sessions.deleteThread(
+      threadId,
+      ownerUserId: ref.read(hostedAgentServiceProvider)?.currentUserId,
+    );
+    // Only after the deletion tombstone is durable may local tool receipts be
+    // erased. A crash at any earlier await leaves an explicit cancel intent;
+    // a crash after deletion leaves the tombstone as the recovery authority.
+    for (final control in controls) {
+      final serverRunId = control.serverRunId;
+      if (serverRunId != null) {
+        await ref.read(agentClientToolLifecycleProvider).revokeRun(serverRunId);
+      }
+    }
   }
 
   @override
@@ -1553,9 +1841,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 left: 0,
                 right: 0,
                 child: Padding(
-                  // Match ChatInputBar's horizontal frame, including when the
-                  // content row reaches its 760px desktop width cap. The lower
-                  // tools button adds its own intentional 2px left offset.
+                  // Match ChatInputBar so each top button shares a vertical
+                  // centerline with the tool/send button below, including when
+                  // the content row reaches its 760px desktop width cap.
                   padding: const EdgeInsets.only(left: 16, right: 8),
                   child: Center(
                     child: ConstrainedBox(
@@ -1598,13 +1886,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 }
 
-String _localizedAttachmentError(LocaleStrings s, Object error) {
+String _localizedAttachmentError(
+  LocaleStrings s,
+  Object error, {
+  bool hostedImages = false,
+}) {
   if (error is! ChatAttachmentException) {
     return localizedAiErrorMessage(s, error);
   }
   final message = switch (error.code) {
-    'too_many' => s.chatAttachmentTooMany,
-    'too_large' || 'total_too_large' => s.chatAttachmentTooLarge,
+    'too_many' =>
+      hostedImages ? s.chatAgentImageTooMany : s.chatAttachmentTooMany,
+    'too_large' || 'total_too_large' =>
+      hostedImages ? s.chatAgentImageTooLarge : s.chatAttachmentTooLarge,
     'unsupported_type' => s.chatAttachmentUnsupported,
     'chat_model_no_image_input' => s.chatAttachmentVisionRequired,
     'pdf_no_text' => s.chatAttachmentPdfNoText,

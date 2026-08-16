@@ -11,32 +11,36 @@ void main() {
         'context': 'Evidence contains {{question}} and {{unknown}} literally.',
         'question': 'What is the real question?',
       });
+      final normalized = rendered.replaceAll('\r\n', '\n');
 
       expect(
-        rendered,
+        normalized,
         contains('Evidence contains {{question}} and {{unknown}} literally.'),
       );
-      expect(rendered, contains('<user_question>\nWhat is the real question?'));
+      expect(
+        normalized,
+        contains('<user_question>\nWhat is the real question?'),
+      );
     },
   );
 
   test(
     'loads and renders the bundled direct-attachment system prompt',
     () async {
-      final rendered = await PromptService().load(
-        'chat/attachments_direct_system.txt',
-        {
-          'lengthRule': 'Keep the answer concise.',
-          'langHint': 'Answer in English.',
-        },
-      );
+      final rendered = await PromptService()
+          .load('chat/attachments_direct_system.txt', {
+            'lengthRule': 'Keep the answer concise.',
+            'langHint': 'Answer in English.',
+            'toolRule': '- Do not use local or web search.',
+          });
 
       expect(rendered, contains('你是「记忆海」的对话助手。'));
-      expect(rendered, contains('不要执行本地知识库检索或联网搜索'));
+      expect(rendered, contains('- Do not use local or web search.'));
       expect(rendered, contains('Keep the answer concise.'));
       expect(rendered, contains('Answer in English.'));
       expect(rendered, isNot(contains('{{lengthRule}}')));
       expect(rendered, isNot(contains('{{langHint}}')));
+      expect(rendered, isNot(contains('{{toolRule}}')));
     },
   );
 

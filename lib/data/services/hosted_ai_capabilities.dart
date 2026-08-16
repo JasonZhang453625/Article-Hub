@@ -15,11 +15,19 @@ class HostedAiCapabilities {
   final List<String> chatModels;
   final List<String> summaryModels;
   final List<String> visionModels;
+  final bool agentAvailable;
+  final int agentProtocolVersion;
+  final HostedAgentImageInputCapabilities? agentImageInput;
+  final HostedAgentClientToolsCapabilities? agentClientTools;
 
   const HostedAiCapabilities({
     required this.chatModels,
     required this.summaryModels,
     required this.visionModels,
+    this.agentAvailable = false,
+    this.agentProtocolVersion = 1,
+    this.agentImageInput,
+    this.agentClientTools,
   });
 
   factory HostedAiCapabilities.fromJson(Map<String, dynamic> json) {
@@ -34,6 +42,14 @@ class HostedAiCapabilities {
       chatModels: models(json['chat']),
       summaryModels: models(json['summary']),
       visionModels: _visionModels(json['image']),
+      agentAvailable: _agentAvailable(json['agent']),
+      agentProtocolVersion: _agentProtocolVersion(json['agent']),
+      agentImageInput: HostedAgentImageInputCapabilities.fromAgentSection(
+        json['agent'],
+      ),
+      agentClientTools: HostedAgentClientToolsCapabilities.fromAgentSection(
+        json['agent'],
+      ),
     );
   }
 
@@ -54,6 +70,15 @@ class HostedAiCapabilities {
     return models;
   }
 
+  static int _agentProtocolVersion(dynamic agentSection) {
+    if (agentSection is! Map) return 1;
+    final value = agentSection['protocolVersion'];
+    return value is int && value > 0 ? value : 1;
+  }
+
+  static bool _agentAvailable(dynamic agentSection) =>
+      agentSection is Map && agentSection['available'] == true;
+
   /// Falls back to the built-in list when the server response is empty or
   /// malformed, so the settings screen never shows an empty dropdown.
   bool get hasServerChatModels => chatModels.isNotEmpty;
@@ -61,6 +86,320 @@ class HostedAiCapabilities {
   bool get hasServerSummaryModels => summaryModels.isNotEmpty;
 
   bool get hasServerVisionModels => visionModels.isNotEmpty;
+}
+
+class HostedAgentClientToolResultLimits {
+  final int maxResultBytes;
+  final int maxResultTokens;
+
+  const HostedAgentClientToolResultLimits({
+    required this.maxResultBytes,
+    required this.maxResultTokens,
+  });
+}
+
+class HostedAgentLocalSearchLimits extends HostedAgentClientToolResultLimits {
+  final int maxResults;
+  final int maxSnippetsPerResult;
+
+  const HostedAgentLocalSearchLimits({
+    required this.maxResults,
+    required this.maxSnippetsPerResult,
+    required super.maxResultBytes,
+    required super.maxResultTokens,
+  });
+}
+
+/// Fail-closed device-tool contract advertised by Agent protocol v3.
+class HostedAgentClientToolsCapabilities {
+  static const int supportedVersion = 1;
+  static const Set<String> requiredTools = {'local_search', 'read_article'};
+
+  final int version;
+  final List<String> models;
+  final Set<String> tools;
+  final int maxTotalCalls;
+  final int maxLocalSearchCalls;
+  final int maxReadArticleCalls;
+  final int maxResultBytes;
+  final int leaseSeconds;
+  final int waitSeconds;
+  final int wallSeconds;
+  final HostedAgentLocalSearchLimits localSearch;
+  final HostedAgentClientToolResultLimits readArticle;
+
+  const HostedAgentClientToolsCapabilities({
+    required this.version,
+    required this.models,
+    required this.tools,
+    required this.maxTotalCalls,
+    required this.maxLocalSearchCalls,
+    required this.maxReadArticleCalls,
+    required this.maxResultBytes,
+    required this.leaseSeconds,
+    required this.waitSeconds,
+    required this.wallSeconds,
+    required this.localSearch,
+    required this.readArticle,
+  });
+
+  static HostedAgentClientToolsCapabilities? fromAgentSection(
+    dynamic agentSection,
+  ) {
+    if (agentSection is! Map || agentSection['protocolVersion'] is! int) {
+      return null;
+    }
+    if ((agentSection['protocolVersion'] as int) < 3) return null;
+    final raw = agentSection['clientTools'];
+    if (raw is! Map || raw['available'] != true) return null;
+    if (!_hasExactKeys(raw, const {
+      'available',
+      'version',
+      'models',
+      'tools',
+      'limits',
+    })) {
+      return null;
+    }
+    final version = raw['version'];
+    final models = _strictStringList(raw['models']);
+    final parsedTools = _strictStringList(raw['tools']);
+    final limits = raw['limits'];
+    if (version != supportedVersion ||
+        models == null ||
+        models.isEmpty ||
+        parsedTools == null ||
+        parsedTools.isEmpty ||
+        limits is! Map) {
+      return null;
+    }
+    final tools = parsedTools.toSet();
+    if (tools.length != requiredTools.length ||
+        !tools.containsAll(requiredTools)) {
+      return null;
+    }
+
+    final local = limits['localSearch'];
+    final read = limits['readArticle'];
+    if (!_hasExactKeys(limits, const {
+          'maxTotalCalls',
+          'maxLocalSearchCalls',
+          'maxReadArticleCalls',
+          'maxResultBytes',
+          'leaseSeconds',
+          'waitSeconds',
+          'wallSeconds',
+          'localSearch',
+          'readArticle',
+        }) ||
+        local is! Map ||
+        read is! Map ||
+        !_hasExactKeys(local, const {
+          'maxResults',
+          'maxSnippetsPerResult',
+          'maxResultBytes',
+          'maxResultTokens',
+        }) ||
+        !_hasExactKeys(read, const {'maxResultBytes', 'maxResultTokens'})) {
+      return null;
+    }
+    final maxTotalCalls = _strictPositiveInt(limits['maxTotalCalls']);
+    final maxLocalSearchCalls = _strictPositiveInt(
+      limits['maxLocalSearchCalls'],
+    );
+    final maxReadArticleCalls = _strictPositiveInt(
+      limits['maxReadArticleCalls'],
+    );
+    final maxResultBytes = _strictPositiveInt(limits['maxResultBytes']);
+    final leaseSeconds = _strictPositiveInt(limits['leaseSeconds']);
+    final waitSeconds = _strictPositiveInt(limits['waitSeconds']);
+    final wallSeconds = _strictPositiveInt(limits['wallSeconds']);
+    final localMaxResults = _strictPositiveInt(local['maxResults']);
+    final localMaxSnippets = _strictPositiveInt(local['maxSnippetsPerResult']);
+    final localMaxBytes = _strictPositiveInt(local['maxResultBytes']);
+    final localMaxTokens = _strictPositiveInt(local['maxResultTokens']);
+    final readMaxBytes = _strictPositiveInt(read['maxResultBytes']);
+    final readMaxTokens = _strictPositiveInt(read['maxResultTokens']);
+    if (maxTotalCalls == null ||
+        maxLocalSearchCalls == null ||
+        maxReadArticleCalls == null ||
+        maxResultBytes == null ||
+        leaseSeconds == null ||
+        waitSeconds == null ||
+        wallSeconds == null ||
+        localMaxResults == null ||
+        localMaxSnippets == null ||
+        localMaxBytes == null ||
+        localMaxTokens == null ||
+        readMaxBytes == null ||
+        readMaxTokens == null) {
+      return null;
+    }
+    if (maxLocalSearchCalls > maxTotalCalls ||
+        maxReadArticleCalls > maxTotalCalls ||
+        localMaxBytes > maxResultBytes ||
+        readMaxBytes > maxResultBytes ||
+        leaseSeconds > waitSeconds ||
+        waitSeconds > wallSeconds ||
+        maxResultBytes < 256 ||
+        localMaxBytes < 256 ||
+        readMaxBytes < 256 ||
+        localMaxTokens < 32 ||
+        readMaxTokens < 32) {
+      return null;
+    }
+
+    return HostedAgentClientToolsCapabilities(
+      version: version as int,
+      models: List.unmodifiable(models),
+      tools: Set.unmodifiable(tools),
+      maxTotalCalls: maxTotalCalls,
+      maxLocalSearchCalls: maxLocalSearchCalls,
+      maxReadArticleCalls: maxReadArticleCalls,
+      maxResultBytes: maxResultBytes,
+      leaseSeconds: leaseSeconds,
+      waitSeconds: waitSeconds,
+      wallSeconds: wallSeconds,
+      localSearch: HostedAgentLocalSearchLimits(
+        maxResults: localMaxResults,
+        maxSnippetsPerResult: localMaxSnippets,
+        maxResultBytes: localMaxBytes,
+        maxResultTokens: localMaxTokens,
+      ),
+      readArticle: HostedAgentClientToolResultLimits(
+        maxResultBytes: readMaxBytes,
+        maxResultTokens: readMaxTokens,
+      ),
+    );
+  }
+
+  bool supportsModel(String model) {
+    final candidate = model.trim();
+    return candidate.isNotEmpty && models.contains(candidate);
+  }
+
+  static List<String>? _strictStringList(dynamic value) {
+    if (value is! List ||
+        value.isEmpty ||
+        value.any((item) => item is! String)) {
+      return null;
+    }
+    final normalized = value
+        .cast<String>()
+        .map((item) => item.trim())
+        .toList(growable: false);
+    if (normalized.any((item) => item.isEmpty) ||
+        normalized.toSet().length != normalized.length) {
+      return null;
+    }
+    return normalized;
+  }
+
+  static int? _strictPositiveInt(dynamic value) =>
+      value is int && value > 0 ? value : null;
+
+  static bool _hasExactKeys(Map value, Set<String> keys) =>
+      value.length == keys.length && value.keys.toSet().containsAll(keys);
+}
+
+HostedAgentClientToolsCapabilities? hostedAgentClientToolsForModel(
+  HostedAiCapabilities? capabilities,
+  String model,
+) {
+  final tools = capabilities?.agentClientTools;
+  if (capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < 3 ||
+      tools == null ||
+      !tools.supportsModel(model)) {
+    return null;
+  }
+  return tools;
+}
+
+class HostedAgentImageInputCapabilities {
+  final List<String> models;
+  final Set<String> mimeTypes;
+  final int maxImages;
+  final int maxImageBytes;
+  final int maxTotalImageBytes;
+  final int maxBodyBytes;
+
+  const HostedAgentImageInputCapabilities({
+    required this.models,
+    required this.mimeTypes,
+    required this.maxImages,
+    required this.maxImageBytes,
+    required this.maxTotalImageBytes,
+    required this.maxBodyBytes,
+  });
+
+  factory HostedAgentImageInputCapabilities.fromJson(
+    Map<dynamic, dynamic> json,
+  ) {
+    final models = _stringList(json['models']);
+    final mimeTypes = _stringList(json['mimeTypes'])
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return HostedAgentImageInputCapabilities(
+      models: models,
+      mimeTypes: Set.unmodifiable(mimeTypes),
+      maxImages: _positiveInt(json['maxImages']),
+      maxImageBytes: _positiveInt(json['maxImageBytes']),
+      maxTotalImageBytes: _positiveInt(json['maxTotalImageBytes']),
+      maxBodyBytes: _positiveInt(json['maxBodyBytes']),
+    );
+  }
+
+  static HostedAgentImageInputCapabilities? fromAgentSection(
+    dynamic agentSection,
+  ) {
+    if (agentSection is! Map) return null;
+    final imageInput = agentSection['imageInput'];
+    if (imageInput is! Map) return null;
+    final parsed = HostedAgentImageInputCapabilities.fromJson(imageInput);
+    if (parsed.models.isEmpty ||
+        parsed.mimeTypes.isEmpty ||
+        parsed.maxImages == 0 ||
+        parsed.maxImageBytes == 0 ||
+        parsed.maxTotalImageBytes == 0 ||
+        parsed.maxBodyBytes == 0) {
+      return null;
+    }
+    return parsed;
+  }
+
+  static List<String> _stringList(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static int _positiveInt(dynamic value) =>
+      value is int && value > 0 ? value : 0;
+}
+
+HostedAgentImageInputCapabilities? hostedAgentImageInputForModel(
+  HostedAiCapabilities? capabilities,
+  String model,
+) {
+  final normalizedModel = model.trim().toLowerCase();
+  final imageInput = capabilities?.agentImageInput;
+  if (capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < 2 ||
+      imageInput == null ||
+      normalizedModel.isEmpty ||
+      !imageInput.models.any(
+        (candidate) => candidate.trim().toLowerCase() == normalizedModel,
+      )) {
+    return null;
+  }
+  return imageInput;
 }
 
 /// Fetches hosted-AI capabilities from the backend.
@@ -129,8 +468,7 @@ class HostedAiCapabilitiesException implements Exception {
 /// again. The list is deliberately not persisted: it is advisory UI data and
 /// the backend is the source of truth.
 class HostedAiCapabilitiesCache {
-  static final HostedAiCapabilitiesCache instance =
-      HostedAiCapabilitiesCache();
+  static final HostedAiCapabilitiesCache instance = HostedAiCapabilitiesCache();
 
   HostedAiCapabilities? _value;
   DateTime? _fetchedAt;

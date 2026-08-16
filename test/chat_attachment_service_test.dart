@@ -58,6 +58,31 @@ void main() {
     },
   );
 
+  test('applies the caller-provided per-file byte limit', () async {
+    final service = ChatAttachmentService(store: _FakeAttachmentStore());
+
+    await expectLater(
+      service.importPickedFiles(
+        [
+          PlatformFile(
+            name: 'large.png',
+            size: 3,
+            bytes: Uint8List.fromList([1, 2, 3]),
+          ),
+        ],
+        kind: ChatAttachmentKind.image,
+        maxFileBytes: 2,
+      ),
+      throwsA(
+        isA<ChatAttachmentException>().having(
+          (error) => error.code,
+          'code',
+          'too_large',
+        ),
+      ),
+    );
+  });
+
   test('ignores restored attachment metadata with an unsafe id', () {
     final restored = chatAttachmentsFromStored([
       {
