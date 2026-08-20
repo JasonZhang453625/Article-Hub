@@ -18,6 +18,8 @@ import 'package:memora/data/services/ai_service.dart';
 import 'package:memora/data/services/content_extractor.dart';
 import 'package:memora/data/services/attachment_store.dart';
 import 'package:memora/data/services/image_understanding_service.dart';
+import 'package:memora/data/services/hosted_ai_service.dart';
+import 'package:memora/data/services/hosted_task_run_service.dart';
 import 'package:memora/data/services/http_client.dart';
 import 'package:memora/data/services/metadata_service.dart';
 import 'package:memora/data/services/processing_pipeline.dart';
@@ -272,6 +274,57 @@ void main() {
         expect(result?.processingStatus, ProcessingStatus.completed);
       },
     );
+
+    test('hosted summary persists every structured v4 final field', () async {
+      final seed = seedArticle(
+        id: 'hosted-summary',
+      ).copyWith(suggestedFolderId: 'stale-folder');
+      final notifier = await seedAndGetNotifier(seed);
+      final tasks = _PipelineTaskGateway();
+      final hosted = HostedAiService(
+        getSession: () => null,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        purpose: HostedAiPurpose.summary,
+        taskGateway: tasks,
+      );
+      final pipeline = ProcessingPipeline(
+        articles: notifier,
+        getSettings: () => AppSettings(languageIndex: 2),
+        getFolders: () => const <Folder>[],
+        aiGateway: hosted,
+      );
+
+      final first = await pipeline.processFile(seed, 'Stable article body.');
+      final replay = await pipeline.processFile(seed, 'Stable article body.');
+
+      expect(first?.title, 'Generated title');
+      expect(first?.memory?.overview, 'Structured overview');
+      expect(first?.memory?.keyPoints, hasLength(1));
+      expect(first?.memory?.keyPoints.single.topic, 'Runtime');
+      expect(first?.memory?.keyPoints.single.content, 'Pi runs the task.');
+      expect(first?.memory?.conclusion, 'Structured conclusion');
+      expect(first?.tags, ['Pi']);
+      expect(first?.suggestedFolderId, isNull);
+      expect(first?.memory?.generation?.promptVersion, 'pi-summary-v1');
+      expect(replay?.memory?.keyPoints, hasLength(1));
+      expect(tasks.calls.map((call) => call.profile), [
+        HostedTaskProfile.summaryChunk,
+        HostedTaskProfile.summaryFinal,
+        HostedTaskProfile.memoryTags,
+        HostedTaskProfile.memoryFolder,
+        HostedTaskProfile.summaryChunk,
+        HostedTaskProfile.summaryFinal,
+        HostedTaskProfile.memoryTags,
+        HostedTaskProfile.memoryFolder,
+      ]);
+      for (var index = 0; index < 4; index++) {
+        expect(
+          tasks.calls[index].idempotencyKey,
+          tasks.calls[index + 4].idempotencyKey,
+        );
+      }
+    });
   });
 
   group('Retry semantics', () {
@@ -406,6 +459,55 @@ void main() {
         expect(result.suggestedFolderId, isNull);
       },
     );
+
+    test('hosted folder task writes only a confirmable suggestion', () async {
+      final seed = seedArticle(id: 'hosted-folder');
+      final notifier = await seedAndGetNotifier(seed);
+      final tasks = _PipelineTaskGateway();
+      final hosted = HostedAiService(
+        getSession: () => null,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        purpose: HostedAiPurpose.summary,
+        taskGateway: tasks,
+      );
+      final pipeline = ProcessingPipeline(
+        articles: notifier,
+        getSettings: () => AppSettings(languageIndex: 2),
+        getFolders: () => [Folder(id: 'folder-ai', name: 'AI')],
+        aiGateway: hosted,
+      );
+
+      final first = await pipeline.processFile(
+        seed,
+        'Stable full text for hosted task classification.',
+        fullText: true,
+      );
+      final replay = await pipeline.processFile(
+        seed,
+        'Stable full text for hosted task classification.',
+        fullText: true,
+      );
+
+      expect(first?.folderId, isNull);
+      expect(first?.suggestedFolderId, 'folder-ai');
+      expect(replay?.folderId, isNull);
+      expect(replay?.suggestedFolderId, 'folder-ai');
+      expect(tasks.calls.map((call) => call.profile), [
+        HostedTaskProfile.memoryTags,
+        HostedTaskProfile.memoryFolder,
+        HostedTaskProfile.memoryTags,
+        HostedTaskProfile.memoryFolder,
+      ]);
+      expect(tasks.calls[0].idempotencyKey, tasks.calls[2].idempotencyKey);
+      expect(tasks.calls[1].idempotencyKey, tasks.calls[3].idempotencyKey);
+      expect(
+        tasks.calls.every(
+          (call) => !call.idempotencyKey.contains('Stable full text'),
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('Shared resilient page load', () {
@@ -727,6 +829,59 @@ class _FakeImageUnderstandingGateway implements ImageUnderstandingGateway {
         ),
       ],
       combinedMarkdown: '# 图片转写\n\n完整图片内容',
+    );
+  }
+}
+
+class _PipelineTaskCall {
+  final HostedTaskProfile profile;
+  final Map<String, dynamic> input;
+  final String idempotencyKey;
+
+  const _PipelineTaskCall(this.profile, this.input, this.idempotencyKey);
+}
+
+class _PipelineTaskGateway implements HostedTaskGateway {
+  final List<_PipelineTaskCall> calls = [];
+
+  @override
+  Future<HostedTaskRunResult> run({
+    required HostedTaskProfile profile,
+    required Map<String, dynamic> input,
+    required String idempotencyKey,
+  }) async {
+    calls.add(_PipelineTaskCall(profile, input, idempotencyKey));
+    final Map<String, dynamic> result = switch (profile) {
+      HostedTaskProfile.summaryChunk => {
+        'schemaVersion': 1,
+        'summaryMarkdown': 'Chunk summary',
+      },
+      HostedTaskProfile.summaryFinal => {
+        'schemaVersion': 1,
+        'title': 'Generated title',
+        'overview': 'Structured overview',
+        'keyPoints': [
+          {'topic': 'Runtime', 'content': 'Pi runs the task.'},
+        ],
+        'conclusion': 'Structured conclusion',
+      },
+      HostedTaskProfile.memoryTags => {
+        'schemaVersion': 1,
+        'tags': ['Pi'],
+      },
+      HostedTaskProfile.memoryFolder => {
+        'schemaVersion': 1,
+        'folderId': (input['folders'] as List).isEmpty ? null : 'folder-ai',
+        'reason': 'Best match',
+      },
+      _ => throw StateError('Unexpected task profile: $profile'),
+    };
+    return HostedTaskRunResult(
+      runId: 'run-${calls.length}',
+      profile: profile,
+      profileVersion: 1,
+      resultSchemaVersion: 1,
+      result: result,
     );
   }
 }

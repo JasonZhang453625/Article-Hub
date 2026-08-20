@@ -116,6 +116,87 @@ void main() {
         2,
       );
     });
+
+    test('parses only the protocol-v4 durable task contract', () {
+      final capabilities = HostedAiCapabilities.fromJson({
+        'agent': {
+          'available': true,
+          'protocolVersion': 4,
+          'tasks': {
+            'version': 1,
+            'createEndpoint': '/ai/tasks/runs',
+            'maxBodyBytes': 2097152,
+            'profiles': [
+              {
+                'id': 'summary.final',
+                'version': 1,
+                'resultSchemaVersion': 1,
+                'durable': true,
+                'requiresImages': false,
+                'models': ['mimo-v2.5-pro'],
+                'available': true,
+              },
+              {
+                'id': 'image.understand',
+                'version': 1,
+                'resultSchemaVersion': 1,
+                'durable': false,
+                'requiresImages': true,
+                'models': ['mimo-v2.5'],
+                'available': true,
+              },
+            ],
+          },
+        },
+      });
+
+      expect(capabilities.agentTasks?.version, 1);
+      expect(
+        capabilities.agentTasks?.profileForModel(
+          'summary.final',
+          'MIMO-V2.5-PRO',
+        ),
+        isNotNull,
+      );
+      expect(
+        capabilities.agentTasks?.profileForModel(
+          'image.understand',
+          'mimo-v2.5',
+        ),
+        isNull,
+        reason: 'durable text task negotiation must exclude image profiles',
+      );
+    });
+
+    test('fails closed for stale or malformed task capability contracts', () {
+      HostedAiCapabilities parse(int protocol, String endpoint) {
+        return HostedAiCapabilities.fromJson({
+          'agent': {
+            'available': true,
+            'protocolVersion': protocol,
+            'tasks': {
+              'version': 1,
+              'createEndpoint': endpoint,
+              'maxBodyBytes': 2097152,
+              'profiles': [
+                {
+                  'id': 'summary.final',
+                  'version': 1,
+                  'resultSchemaVersion': 1,
+                  'durable': true,
+                  'requiresImages': false,
+                  'models': ['mimo-v2.5-pro'],
+                  'available': true,
+                },
+              ],
+            },
+          },
+        });
+      }
+
+      expect(parse(3, '/ai/tasks/runs').agentTasks, isNull);
+      expect(parse(4, '/wrong').agentTasks, isNull);
+    });
   });
 
   group('hostedTextModelOptions', () {

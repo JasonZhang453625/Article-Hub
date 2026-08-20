@@ -11,6 +11,7 @@ import '../../data/services/embedding_service.dart';
 import '../../data/services/hosted_ai_capabilities.dart';
 import '../../data/services/hosted_agent_service.dart';
 import '../../data/services/hosted_ai_service.dart';
+import '../../data/services/hosted_task_run_service.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/prompt_service.dart';
 import '../../data/services/rag_conversation_service.dart';
@@ -258,17 +259,69 @@ class HostedAgentClientToolWakes {
 int _lowerLimit(int advertised, int localHardLimit) =>
     advertised < localHardLimit ? advertised : localHardLimit;
 
+final hostedSummaryTaskRunServiceProvider = Provider<HostedTaskRunService?>((
+  ref,
+) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
+  final model = settings.hostedAiModel.trim();
+  final tasks = ref.watch(hostedAiCapabilitiesProvider).valueOrNull?.agentTasks;
+  const requiredProfiles = {
+    'summary.chunk',
+    'summary.final',
+    'memory.tags',
+    'memory.folder',
+  };
+  if (model.isEmpty ||
+      tasks == null ||
+      requiredProfiles.any(
+        (profile) => tasks.profileForModel(profile, model) == null,
+      )) {
+    return null;
+  }
+  return HostedTaskRunService(
+    getSession: () => ref.read(currentSessionProvider),
+    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+    model: model,
+    onTokensUsed: (tokens) {
+      ref.read(settingsProvider.notifier).addTokenUsage(tokens);
+    },
+  );
+});
+
+final hostedChatTaskRunServiceProvider = Provider<HostedTaskRunService?>((ref) {
+  final settings = ref.watch(settingsProvider).valueOrNull;
+  if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
+  final model = settings.hostedChatModel.trim();
+  final tasks = ref.watch(hostedAiCapabilitiesProvider).valueOrNull?.agentTasks;
+  if (model.isEmpty ||
+      tasks?.profileForModel('retrieval.rewrite', model) == null) {
+    return null;
+  }
+  return HostedTaskRunService(
+    getSession: () => ref.read(currentSessionProvider),
+    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+    model: model,
+    onTokensUsed: (tokens) {
+      ref.read(settingsProvider.notifier).addTokenUsage(tokens);
+    },
+  );
+});
+
 final summaryAiGatewayProvider = Provider<AiGateway?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null) return null;
 
   if (ref.watch(hostedAiEnabledProvider)) {
     if (settings.hostedAiModel.trim().isEmpty) return null;
+    final taskRuns = ref.watch(hostedSummaryTaskRunServiceProvider);
+    if (taskRuns == null) return null;
     final gateway = HostedAiService(
       getSession: () => ref.read(currentSessionProvider),
       refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
       model: settings.hostedAiModel.trim(),
       purpose: HostedAiPurpose.summary,
+      taskGateway: taskRuns,
     );
     gateway.onTokensUsed = (tokens) {
       ref.read(settingsProvider.notifier).addTokenUsage(tokens);
@@ -301,6 +354,7 @@ final chatAiGatewayProvider = Provider<AiGateway?>((ref) {
       refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
       model: settings.hostedChatModel.trim(),
       purpose: HostedAiPurpose.chat,
+      taskGateway: ref.watch(hostedChatTaskRunServiceProvider),
     );
     gateway.onTokensUsed = (tokens) {
       ref.read(settingsProvider.notifier).addTokenUsage(tokens);
@@ -460,6 +514,19 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             );
           },
     completionError: () => ai.lastError,
+    taskQueryRewrite: ai is HostedAiService
+        ? ({
+            required String question,
+            required List<Map<String, String>> conversation,
+            required HostedTaskRewriteLanguage language,
+          }) {
+            return ai.rewriteQueryTask(
+              question: question,
+              conversation: conversation,
+              language: language,
+            );
+          }
+        : null,
     agentCompletionError: hostedAgent == null
         ? null
         : () => hostedAgent.lastError,

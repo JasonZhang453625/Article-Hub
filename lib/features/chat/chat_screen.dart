@@ -16,6 +16,7 @@ import '../../data/services/agent_client_tool_store.dart';
 import '../../data/services/chat_attachment_pipeline.dart';
 import '../../data/services/chat_attachment_service.dart';
 import '../../data/services/hosted_agent_service.dart';
+import '../../data/services/hosted_task_run_service.dart';
 import '../../data/services/rag_citation.dart';
 import '../../data/services/rag_conversation_service.dart';
 import '../../shared/providers/chat_providers.dart';
@@ -772,6 +773,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           knowledgeOnly: activeSettings.chatKnowledgeSourceIndex == 0,
           detailedAnswer: activeSettings.chatAnswerLengthIndex == 1,
           languageHint: aiChatLanguagePrompt(activeSettings.languageIndex),
+          rewriteLanguage: hostedTaskRewriteLanguageForIndex(
+            activeSettings.languageIndex,
+          ),
           webSearch: ref.read(chatWebSearchEnabledProvider),
           thinkingLevel: ref.read(chatThinkingLevelProvider),
           attachmentContext: preparedAttachments.textContext,

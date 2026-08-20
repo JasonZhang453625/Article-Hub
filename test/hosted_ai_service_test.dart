@@ -7,67 +7,64 @@ import 'package:http/testing.dart';
 import 'package:memora/data/models/ai_image_input.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/hosted_ai_service.dart';
+import 'package:memora/data/services/hosted_task_run_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('routes hosted chat and summary to separate backend purposes', () async {
-    final paths = <String>[];
-    final client = MockClient((request) async {
-      paths.add(request.url.path);
-      final summary = request.url.path.contains('/summary/');
-      return http.Response(
-        jsonEncode({
-          'choices': [
-            {
-              'message': {
-                'content': summary
-                    ? jsonEncode({
-                        'schemaVersion': 1,
-                        'title': 'T',
-                        'tags': ['A', 'B'],
-                        'overview': 'O',
-                        'keyPoints': [
-                          {'topic': 'K', 'content': 'C'},
-                        ],
-                        'conclusion': 'Done',
-                      })
-                    : 'chat answer',
+  test(
+    'hosted summary uses v4 tasks while chat keeps its completion path',
+    () async {
+      final paths = <String>[];
+      final client = MockClient((request) async {
+        paths.add(request.url.path);
+        return http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {'content': 'chat answer'},
+                'finish_reason': 'stop',
               },
-              'finish_reason': 'stop',
-            },
-          ],
-        }),
-        200,
+            ],
+          }),
+          200,
+        );
+      });
+      final session = _session(_jwt('old'));
+      final chat = HostedAiService(
+        getSession: () => session,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        purpose: HostedAiPurpose.chat,
       );
-    });
-    final session = _session(_jwt('old'));
-    final chat = HostedAiService(
-      getSession: () => session,
-      refreshSession: () async => null,
-      model: 'mimo-v2.5',
-      purpose: HostedAiPurpose.chat,
-    );
-    final summary = HostedAiService(
-      getSession: () => session,
-      refreshSession: () async => null,
-      model: 'mimo-v2.5-pro',
-      purpose: HostedAiPurpose.summary,
-    );
-
-    await http.runWithClient(() async {
-      expect(
-        await chat.chat(systemPrompt: 'S', userMessage: 'Q'),
-        'chat answer',
+      final tasks = _FakeTaskGateway();
+      final summary = HostedAiService(
+        getSession: () => session,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        purpose: HostedAiPurpose.summary,
+        taskGateway: tasks,
       );
-      expect((await summary.summarizeWithTitle('T', 'Body')).memory, isNotNull);
-    }, () => client);
 
-    expect(paths, [
-      '/ai/chat/v1/chat/completions',
-      '/ai/summary/v1/chat/completions',
-    ]);
-  });
+      await http.runWithClient(() async {
+        expect(
+          await chat.chat(systemPrompt: 'S', userMessage: 'Q'),
+          'chat answer',
+        );
+        expect(
+          (await summary.summarizeWithTitle('T', 'Body')).memory,
+          isNotNull,
+        );
+      }, () => client);
+
+      expect(paths, ['/ai/chat/v1/chat/completions']);
+      expect(tasks.calls.map((call) => call.profile), [
+        HostedTaskProfile.summaryChunk,
+        HostedTaskProfile.summaryFinal,
+        HostedTaskProfile.memoryTags,
+      ]);
+    },
+  );
 
   test(
     'refreshes once after a backend 401 and retries with fresh token',
@@ -258,6 +255,120 @@ void main() {
       expect((messages.last as Map)['content'], isA<List<dynamic>>());
     },
   );
+
+  test('v4 summary tasks preserve structured Memora memory fields', () async {
+    final tasks = _FakeTaskGateway();
+    final service = HostedAiService(
+      getSession: () => _session(_jwt('task')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5-pro',
+      purpose: HostedAiPurpose.summary,
+      taskGateway: tasks,
+    );
+    final operationKey = 'memora-task-v4-${List.filled(64, 'a').join()}';
+
+    final result = await service.summarizeWithTitleTask(
+      'Original',
+      'Article body',
+      language: HostedTaskSummaryLanguage.en,
+      operationKey: operationKey,
+    );
+
+    expect(tasks.calls.map((call) => call.profile), [
+      HostedTaskProfile.summaryChunk,
+      HostedTaskProfile.summaryFinal,
+      HostedTaskProfile.memoryTags,
+    ]);
+    expect(tasks.calls.map((call) => call.idempotencyKey), [
+      '$operationKey-summary-chunk-0',
+      '$operationKey-summary-final',
+      '$operationKey-memory-tags',
+    ]);
+    expect(tasks.calls.first.input['language'], 'en');
+    expect(result.title, 'Generated title');
+    expect(result.tags, ['Pi', 'Memora']);
+    expect(result.memory?.overview, 'Structured overview');
+    expect(result.memory?.keyPoints, hasLength(2));
+    expect(result.memory?.keyPoints.first.topic, 'Runtime');
+    expect(result.memory?.keyPoints.first.content, 'Pi runs the task.');
+    expect(result.memory?.keyPoints.first.order, 1);
+    expect(result.memory?.keyPoints.first.id, startsWith('kp_'));
+    expect(result.memory?.keyPoints.first.sourceRefs, isEmpty);
+    expect(result.memory?.conclusion, 'Structured conclusion');
+  });
+
+  test('follow-system summary no longer misroutes to Chinese', () async {
+    final tasks = _FakeTaskGateway();
+    final service = HostedAiService(
+      getSession: () => _session(_jwt('task')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5-pro',
+      purpose: HostedAiPurpose.summary,
+      taskGateway: tasks,
+    );
+
+    await service.summarizeWithTitle(
+      'English title',
+      'English source',
+      languageHint:
+          'Respond in the same language as the article title. If the title is in Chinese, respond in Chinese. If in English, respond in English.',
+    );
+
+    expect(tasks.calls.first.input['language'], 'follow-source');
+  });
+}
+
+class _TaskCall {
+  final HostedTaskProfile profile;
+  final Map<String, dynamic> input;
+  final String idempotencyKey;
+
+  const _TaskCall(this.profile, this.input, this.idempotencyKey);
+}
+
+class _FakeTaskGateway implements HostedTaskGateway {
+  final List<_TaskCall> calls = [];
+
+  @override
+  Future<HostedTaskRunResult> run({
+    required HostedTaskProfile profile,
+    required Map<String, dynamic> input,
+    required String idempotencyKey,
+  }) async {
+    calls.add(_TaskCall(profile, input, idempotencyKey));
+    final result = switch (profile) {
+      HostedTaskProfile.summaryChunk => {
+        'schemaVersion': 1,
+        'summaryMarkdown': 'Chunk summary',
+      },
+      HostedTaskProfile.summaryFinal => {
+        'schemaVersion': 1,
+        'title': 'Generated title',
+        'overview': 'Structured overview',
+        'keyPoints': [
+          {'topic': 'Runtime', 'content': 'Pi runs the task.'},
+          {'topic': 'Schema', 'content': 'The result stays typed.'},
+        ],
+        'conclusion': 'Structured conclusion',
+      },
+      HostedTaskProfile.memoryTags => {
+        'schemaVersion': 1,
+        'tags': ['Pi', 'Memora'],
+      },
+      HostedTaskProfile.retrievalRewrite => {
+        'schemaVersion': 1,
+        'query': 'standalone query',
+      },
+      HostedTaskProfile.memoryFolder => {'schemaVersion': 1, 'folderId': null},
+    };
+    return HostedTaskRunResult(
+      runId: 'run-${calls.length}',
+      profile: profile,
+      profileVersion: 1,
+      resultSchemaVersion: 1,
+      result: result,
+    );
+  }
 }
 
 AuthSession _session(String accessToken) => AuthSession(

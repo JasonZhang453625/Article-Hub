@@ -19,6 +19,7 @@ class HostedAiCapabilities {
   final int agentProtocolVersion;
   final HostedAgentImageInputCapabilities? agentImageInput;
   final HostedAgentClientToolsCapabilities? agentClientTools;
+  final HostedTaskCapabilities? agentTasks;
 
   const HostedAiCapabilities({
     required this.chatModels,
@@ -28,6 +29,7 @@ class HostedAiCapabilities {
     this.agentProtocolVersion = 1,
     this.agentImageInput,
     this.agentClientTools,
+    this.agentTasks,
   });
 
   factory HostedAiCapabilities.fromJson(Map<String, dynamic> json) {
@@ -50,6 +52,7 @@ class HostedAiCapabilities {
       agentClientTools: HostedAgentClientToolsCapabilities.fromAgentSection(
         json['agent'],
       ),
+      agentTasks: HostedTaskCapabilities.fromAgentSection(json['agent']),
     );
   }
 
@@ -86,6 +89,130 @@ class HostedAiCapabilities {
   bool get hasServerSummaryModels => summaryModels.isNotEmpty;
 
   bool get hasServerVisionModels => visionModels.isNotEmpty;
+}
+
+/// Fail-closed protocol-v4 contract for server-owned durable Pi task profiles.
+class HostedTaskCapabilities {
+  static const int supportedVersion = 1;
+  static const String supportedCreateEndpoint = '/ai/tasks/runs';
+
+  final int version;
+  final String createEndpoint;
+  final int maxBodyBytes;
+  final List<HostedTaskProfileCapabilities> profiles;
+
+  const HostedTaskCapabilities({
+    required this.version,
+    required this.createEndpoint,
+    required this.maxBodyBytes,
+    required this.profiles,
+  });
+
+  factory HostedTaskCapabilities.fromJson(Map<dynamic, dynamic> json) {
+    final rawProfiles = json['profiles'];
+    return HostedTaskCapabilities(
+      version: json['version'] is int ? json['version'] as int : 0,
+      createEndpoint: json['createEndpoint'] is String
+          ? (json['createEndpoint'] as String).trim()
+          : '',
+      maxBodyBytes: json['maxBodyBytes'] is int
+          ? json['maxBodyBytes'] as int
+          : 0,
+      profiles: rawProfiles is List
+          ? rawProfiles
+                .whereType<Map>()
+                .map(HostedTaskProfileCapabilities.fromJson)
+                .where((profile) => profile.isValid)
+                .toList(growable: false)
+          : const [],
+    );
+  }
+
+  static HostedTaskCapabilities? fromAgentSection(dynamic agentSection) {
+    if (agentSection is! Map || agentSection['protocolVersion'] is! int) {
+      return null;
+    }
+    if ((agentSection['protocolVersion'] as int) < 4) return null;
+    final raw = agentSection['tasks'];
+    if (raw is! Map) return null;
+    final parsed = HostedTaskCapabilities.fromJson(raw);
+    if (parsed.version != supportedVersion ||
+        parsed.createEndpoint != supportedCreateEndpoint ||
+        parsed.maxBodyBytes <= 0 ||
+        parsed.profiles.isEmpty) {
+      return null;
+    }
+    return parsed;
+  }
+
+  HostedTaskProfileCapabilities? profileForModel(
+    String profileId,
+    String model,
+  ) {
+    final normalizedModel = model.trim().toLowerCase();
+    if (normalizedModel.isEmpty) return null;
+    for (final profile in profiles) {
+      if (profile.id == profileId &&
+          profile.version == 1 &&
+          profile.resultSchemaVersion == 1 &&
+          profile.durable &&
+          !profile.requiresImages &&
+          profile.available &&
+          profile.models.any(
+            (candidate) => candidate.trim().toLowerCase() == normalizedModel,
+          )) {
+        return profile;
+      }
+    }
+    return null;
+  }
+}
+
+class HostedTaskProfileCapabilities {
+  final String id;
+  final int version;
+  final int resultSchemaVersion;
+  final bool durable;
+  final bool requiresImages;
+  final List<String> models;
+  final bool available;
+
+  const HostedTaskProfileCapabilities({
+    required this.id,
+    required this.version,
+    required this.resultSchemaVersion,
+    required this.durable,
+    required this.requiresImages,
+    required this.models,
+    required this.available,
+  });
+
+  factory HostedTaskProfileCapabilities.fromJson(Map<dynamic, dynamic> json) {
+    final rawModels = json['models'];
+    return HostedTaskProfileCapabilities(
+      id: json['id'] is String ? (json['id'] as String).trim() : '',
+      version: json['version'] is int ? json['version'] as int : 0,
+      resultSchemaVersion: json['resultSchemaVersion'] is int
+          ? json['resultSchemaVersion'] as int
+          : 0,
+      durable: json['durable'] == true,
+      requiresImages: json['requiresImages'] == true,
+      models: rawModels is List
+          ? rawModels
+                .whereType<String>()
+                .map((model) => model.trim())
+                .where((model) => model.isNotEmpty)
+                .toList(growable: false)
+          : const [],
+      available: json['available'] == true,
+    );
+  }
+
+  bool get isValid =>
+      id.isNotEmpty &&
+      version > 0 &&
+      resultSchemaVersion > 0 &&
+      models.isNotEmpty;
 }
 
 class HostedAgentClientToolResultLimits {

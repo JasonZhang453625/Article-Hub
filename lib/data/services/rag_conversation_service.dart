@@ -11,6 +11,7 @@ import '../models/passage.dart';
 import '../models/ai_thinking_level.dart';
 import 'chat_context_window.dart';
 import 'hosted_agent_service.dart';
+import 'hosted_task_run_service.dart';
 import 'prompt_service.dart';
 import 'rag_citation.dart';
 import 'rag_context_builder.dart';
@@ -94,6 +95,13 @@ typedef RagAgentCompletionStreamWithRunV3 =
 
 typedef RagCompletionError = String? Function();
 
+typedef RagTaskQueryRewrite =
+    Future<String?> Function({
+      required String question,
+      required List<Map<String, String>> conversation,
+      required HostedTaskRewriteLanguage language,
+    });
+
 typedef RagAgentLocalCitationResolver =
     Future<List<String>> Function({
       required String runId,
@@ -113,6 +121,7 @@ class RagConversationRequest {
   final bool knowledgeOnly;
   final bool detailedAnswer;
   final String languageHint;
+  final HostedTaskRewriteLanguage rewriteLanguage;
 
   /// When true (and a web search backend is configured), local retrieval and
   /// live web search run together and both may contribute evidence.
@@ -130,6 +139,7 @@ class RagConversationRequest {
     required this.knowledgeOnly,
     required this.detailedAnswer,
     required this.languageHint,
+    this.rewriteLanguage = HostedTaskRewriteLanguage.followQuestion,
     this.webSearch = false,
     this.contextTokenBudget = 2200,
     this.contextWindowTokens = ChatContextWindow.defaultContextWindowTokens,
@@ -170,26 +180,30 @@ class RagConversationResult {
 
 class HistoryAwareQueryRewriter {
   final RagCompletion _complete;
+  final RagTaskQueryRewrite? _taskRewrite;
   final PromptService _prompts;
   final ChatContextWindow _contextWindow;
 
   const HistoryAwareQueryRewriter({
     required RagCompletion complete,
+    RagTaskQueryRewrite? taskRewrite,
     required PromptService promptService,
     ChatContextWindow contextWindow = const ChatContextWindow(),
   }) : _complete = complete,
+       _taskRewrite = taskRewrite,
        _prompts = promptService,
        _contextWindow = contextWindow;
 
   Future<String> rewrite({
     required String question,
     required List<RagConversationTurn> history,
+    HostedTaskRewriteLanguage language =
+        HostedTaskRewriteLanguage.followQuestion,
   }) async {
     final original = question.trim();
     if (original.isEmpty || history.isEmpty) return original;
 
     try {
-      final systemPrompt = await _prompts.load('chat/query_rewrite.txt');
       final recent = _contextWindow.selectRecentCompleteTurns(
         history,
         tokenBudget: 1200,
@@ -204,6 +218,17 @@ class HistoryAwareQueryRewriter {
             },
           )
           .toList(growable: false);
+      final taskRewrite = _taskRewrite;
+      if (taskRewrite != null) {
+        final response = await taskRewrite(
+          question: original,
+          conversation: transcript,
+          language: language,
+        );
+        final rewritten = _cleanRewrite(response);
+        return rewritten ?? original;
+      }
+      final systemPrompt = await _prompts.load('chat/query_rewrite.txt');
       final response = await _complete(
         systemPrompt: systemPrompt,
         userMessage: jsonEncode({
@@ -267,6 +292,7 @@ class RagConversationService {
     RagContextBuilder contextBuilder = const RagContextBuilder(),
     ChatContextWindow contextWindow = const ChatContextWindow(),
     HistoryAwareQueryRewriter? queryRewriter,
+    RagTaskQueryRewrite? taskQueryRewrite,
     RagWebSearch? webSearch,
     int webTopK = 5,
   }) : _retrieve = retrieve,
@@ -294,6 +320,7 @@ class RagConversationService {
            queryRewriter ??
            HistoryAwareQueryRewriter(
              complete: complete,
+             taskRewrite: taskQueryRewrite,
              promptService: promptService,
              contextWindow: contextWindow,
            );
@@ -351,6 +378,7 @@ class RagConversationService {
       rewrittenQuery = await _queryRewriter.rewrite(
         question: question,
         history: request.history,
+        language: request.rewriteLanguage,
       );
     } finally {
       _configureThinking?.call(request.thinkingLevel);

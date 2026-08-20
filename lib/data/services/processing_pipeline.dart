@@ -12,6 +12,7 @@ import 'attachment_store.dart';
 import 'content_extractor.dart';
 import 'embedding_service.dart';
 import 'hosted_ai_service.dart';
+import 'hosted_task_run_service.dart';
 import 'index_service.dart';
 import 'image_understanding_service.dart';
 import 'local_file_importer.dart';
@@ -533,6 +534,9 @@ class ProcessingPipeline {
     }
 
     final langHint = aiLanguagePrompt(settings.languageIndex);
+    final taskLanguage = hostedTaskSummaryLanguageForIndex(
+      settings.languageIndex,
+    );
 
     try {
       final cachedContent = _contentCache.remove(article.id);
@@ -544,11 +548,24 @@ class ProcessingPipeline {
         );
       }
 
-      final result = await ai.summarizeWithTitle(
-        article.title,
-        cachedContent,
-        languageHint: langHint,
-      );
+      final result = ai is HostedAiService
+          ? await ai.summarizeWithTitleTask(
+              article.title,
+              cachedContent,
+              language: taskLanguage,
+              operationKey: await _hostedOperationKey(
+                article: article,
+                stage: 'summary',
+                model: ai.model,
+                language: taskLanguage.wireName,
+                content: '${article.title}\u0000$cachedContent',
+              ),
+            )
+          : await ai.summarizeWithTitle(
+              article.title,
+              cachedContent,
+              languageHint: langHint,
+            );
 
       if (result.memory == null || result.memory!.toRetrievalText().isEmpty) {
         return _fail(
@@ -576,7 +593,7 @@ class ProcessingPipeline {
               ? 'memora-hosted'
               : _providerLabel(settings.aiBaseUrl),
           model: isHosted ? ai.model : settings.aiModel,
-          promptVersion: 'full_summary_v1',
+          promptVersion: isHosted ? 'pi-summary-v1' : 'full_summary_v1',
           generatedAt: DateTime.now(),
         ),
       );
@@ -607,7 +624,7 @@ class ProcessingPipeline {
       final summary = article.retrievalText;
       if (summary.isEmpty) return article;
 
-      final tags = await _generateTags(article.title, _truncateForAi(summary));
+      final tags = await _generateTags(article, _truncateForAi(summary));
       if (tags.isNotEmpty) {
         final existing = Set<String>.from(article.tags);
         final merged = [...article.tags];
@@ -623,15 +640,39 @@ class ProcessingPipeline {
     }
   }
 
-  Future<List<String>> _generateTags(String title, String summary) async {
+  Future<List<String>> _generateTags(Article article, String summary) async {
     final ai = _aiGateway!;
+    final settings = _settings;
+    if (ai is HostedAiService && settings != null) {
+      final language = hostedTaskSummaryLanguageForIndex(
+        settings.languageIndex,
+      );
+      return ai.generateTagsTask(
+        title: article.title,
+        summary: summary,
+        content: summary,
+        existingTags: article.tags,
+        language: language,
+        operationKey: await _hostedOperationKey(
+          article: article,
+          stage: 'tags',
+          model: ai.model,
+          language: language.wireName,
+          content: jsonEncode({
+            'title': article.title,
+            'summary': summary,
+            'existingTags': article.tags,
+          }),
+        ),
+      );
+    }
 
     final tagSystem = await _prompts.load('tags/system.txt');
     final tagPrompt = await _prompts.load('tags/user_prompt.txt');
 
     final response = await ai.chat(
       systemPrompt: tagSystem,
-      userMessage: '$tagPrompt\n\nTitle: $title\n\nSummary: $summary',
+      userMessage: '$tagPrompt\n\nTitle: ${article.title}\n\nSummary: $summary',
       temperature: 0.3,
       maxTokens: 200,
     );
@@ -652,8 +693,9 @@ class ProcessingPipeline {
     return [];
   }
 
-  /// Stage 5: Ask AI to suggest the best matching folder. Writes to
-  /// [Article.folderId] directly (auto-classification).
+  /// Stage 5: Ask AI to suggest the best matching folder. Protocol-v4 hosted
+  /// tasks write [Article.suggestedFolderId] for user confirmation; the BYOK
+  /// legacy path retains its existing direct-classification behavior.
   Future<Article> _stageFolderSuggestion(Article article) async {
     await _notifyStage(article, ProcessingStage.folderSuggestion);
     final settings = _settings;
@@ -667,6 +709,51 @@ class ProcessingPipeline {
     }
 
     try {
+      if (ai is HostedAiService) {
+        final language = hostedTaskSummaryLanguageForIndex(
+          settings.languageIndex,
+        );
+        final folderInput = _folders
+            .map((folder) => {'id': folder.id, 'name': folder.name})
+            .toList(growable: false);
+        final selectedId = await ai.suggestFolderTask(
+          title: article.title,
+          summary: _truncateForAi(article.retrievalText),
+          tags: article.tags,
+          folders: _folders
+              .map(
+                (folder) =>
+                    HostedTaskFolderCandidate(id: folder.id, name: folder.name),
+              )
+              .toList(growable: false),
+          language: language,
+          operationKey: await _hostedOperationKey(
+            article: article,
+            stage: 'folder',
+            model: ai.model,
+            language: language.wireName,
+            content: jsonEncode({
+              'title': article.title,
+              'summary': _truncateForAi(article.retrievalText),
+              'tags': article.tags,
+              'folders': folderInput,
+            }),
+          ),
+        );
+        if (selectedId == null) {
+          return article.copyWith(suggestedFolderId: Article.clearValue);
+        }
+        final selected = _folders.where((folder) => folder.id == selectedId);
+        if (selected.isEmpty) {
+          developer.log(
+            'folder suggestion: hosted task returned an unknown folder id',
+            name: 'memora.pipeline',
+          );
+          return article;
+        }
+        return article.copyWith(suggestedFolderId: selected.first.id);
+      }
+
       final folderNames = _folders.map((f) => f.name).toList();
       developer.log(
         'folder suggestion: ${folderNames.length} folders available',
@@ -746,12 +833,9 @@ class ProcessingPipeline {
   ) async {
     final ai = _aiGateway!;
 
-    final namesList = folderNames.map((n) => '"$n"').join(', ');
     final systemPrompt = folderNames.isEmpty
         ? await _prompts.load('folder/system_no_folders.txt')
-        : await _prompts.load('folder/system_with_folders.txt', {
-            'folderNames': namesList,
-          });
+        : await _prompts.load('folder/system_with_folders.txt');
 
     // Few-shot: prime the model with one example so it imitates the format
     // and stops returning "null"/"none" on weak models like gpt-4o-mini.
@@ -769,7 +853,11 @@ class ProcessingPipeline {
       },
     ];
 
-    final userMessage = 'Title: $title\n\nSummary: $summary\n\nFolder name:';
+    final userMessage = jsonEncode({
+      'title': title,
+      'summary': summary,
+      'available_folders': folderNames,
+    });
     final response = await ai.chat(
       systemPrompt: systemPrompt,
       userMessage: userMessage,
@@ -801,6 +889,25 @@ class ProcessingPipeline {
   String _truncateForAi(String text) {
     if (text.length <= _aiContextMaxChars) return text;
     return text.substring(0, _aiContextMaxChars);
+  }
+
+  Future<String> _hostedOperationKey({
+    required Article article,
+    required String stage,
+    required String model,
+    required String language,
+    required String content,
+  }) {
+    final anchor =
+        article.lastProcessedAt?.toUtc().toIso8601String() ?? 'initial';
+    return buildHostedTaskOperationKey(
+      articleId: article.id,
+      stage: stage,
+      generation: 'retry:${article.retryCount}|anchor:$anchor',
+      model: model,
+      language: language,
+      content: content,
+    );
   }
 
   Future<void> _updateIndex(Article article) async {

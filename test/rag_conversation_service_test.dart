@@ -11,6 +11,7 @@ import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
+import 'package:memora/data/services/hosted_task_run_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
 import 'package:memora/data/services/retrieval_log_service.dart';
 import 'package:memora/data/services/retrieval_service.dart';
@@ -601,6 +602,54 @@ void main() {
     expect(capturedMaxTokens, 160);
     expect(rewritten, 'Agent handoff 的第二个步骤');
   });
+
+  test(
+    'hosted query rewrite uses the typed task and explicit language',
+    () async {
+      var legacyCalls = 0;
+      List<Map<String, String>>? capturedConversation;
+      HostedTaskRewriteLanguage? capturedLanguage;
+      final rewriter = HistoryAwareQueryRewriter(
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async {
+              legacyCalls++;
+              return 'legacy rewrite';
+            },
+        taskRewrite:
+            ({
+              required String question,
+              required List<Map<String, String>> conversation,
+              required HostedTaskRewriteLanguage language,
+            }) async {
+              expect(question, 'What about the second point?');
+              capturedConversation = conversation;
+              capturedLanguage = language;
+              return 'Agent handoff second step';
+            },
+        promptService: _FakePromptService(),
+      );
+
+      final rewritten = await rewriter.rewrite(
+        question: 'What about the second point?',
+        history: const [
+          RagConversationTurn(role: 'user', content: 'Explain Agent handoff.'),
+          RagConversationTurn(role: 'assistant', content: 'Prepare context.'),
+        ],
+        language: HostedTaskRewriteLanguage.en,
+      );
+
+      expect(rewritten, 'Agent handoff second step');
+      expect(legacyCalls, 0);
+      expect(capturedConversation, hasLength(2));
+      expect(capturedLanguage, HostedTaskRewriteLanguage.en);
+    },
+  );
 
   test(
     'knowledge-only mode returns no-result without calling answer model',
