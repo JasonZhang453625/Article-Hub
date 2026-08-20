@@ -137,9 +137,10 @@ class ProcessingPipeline {
       await _notifyStage(current, ProcessingStage.summary);
     }
 
-    // AI memory already includes tags. Full-text and legacy records still use
-    // the standalone classifier because no structured summary call ran.
-    if (current.memory?.kind == MemoryKind.aiMemory) {
+    // Hosted summary.final returns memory only, so its dedicated tags stage is
+    // the sole memory.tags call. BYOK summaries still include tags directly.
+    if (current.memory?.kind == MemoryKind.aiMemory &&
+        _aiGateway is! HostedAiService) {
       await _notifyStage(current, ProcessingStage.tags);
     } else {
       current = await _stageTags(current);
@@ -212,9 +213,10 @@ class ProcessingPipeline {
     );
     await _articles.update(current);
 
-    // Tags come with the AI summary; only full-text/legacy memories need the
-    // standalone classifier.
-    if (current.memory?.kind != MemoryKind.aiMemory) {
+    // Hosted summary.final returns memory only. BYOK summaries still include
+    // tags directly in their structured response.
+    if (current.memory?.kind != MemoryKind.aiMemory ||
+        _aiGateway is HostedAiService) {
       current = await _stageTags(current);
     }
     current = await _stageFolderSuggestion(current);
@@ -460,9 +462,10 @@ class ProcessingPipeline {
       }
     }
 
-    // Tags come with the AI summary; only full-text/legacy memories need the
-    // standalone classifier.
-    if (current.memory?.kind != MemoryKind.aiMemory) {
+    // Hosted summary.final returns memory only. BYOK summaries still include
+    // tags directly in their structured response.
+    if (current.memory?.kind != MemoryKind.aiMemory ||
+        _aiGateway is HostedAiService) {
       current = await _stageTags(current);
     }
 
@@ -599,10 +602,10 @@ class ProcessingPipeline {
       );
       return article.copyWith(
         title: newTitle ?? article.title,
-        // Tags come from the same structured-memory response. Replacing the
-        // previous set keeps repeated regenerations from accumulating stale
-        // AI labels indefinitely.
-        tags: result.tags,
+        // Hosted summary.final contains memory only; preserve the current set
+        // for the dedicated tags stage to merge. BYOK keeps its legacy
+        // structured summary-and-tags response.
+        tags: isHosted ? article.tags : result.tags,
         summary: Article.clearValue,
         memory: generatedMemory,
         isFullText: false,

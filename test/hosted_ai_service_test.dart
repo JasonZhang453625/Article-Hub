@@ -61,7 +61,6 @@ void main() {
       expect(tasks.calls.map((call) => call.profile), [
         HostedTaskProfile.summaryChunk,
         HostedTaskProfile.summaryFinal,
-        HostedTaskProfile.memoryTags,
       ]);
     },
   );
@@ -277,16 +276,14 @@ void main() {
     expect(tasks.calls.map((call) => call.profile), [
       HostedTaskProfile.summaryChunk,
       HostedTaskProfile.summaryFinal,
-      HostedTaskProfile.memoryTags,
     ]);
     expect(tasks.calls.map((call) => call.idempotencyKey), [
       '$operationKey-summary-chunk-0',
       '$operationKey-summary-final',
-      '$operationKey-memory-tags',
     ]);
     expect(tasks.calls.first.input['language'], 'en');
     expect(result.title, 'Generated title');
-    expect(result.tags, ['Pi', 'Memora']);
+    expect(result.tags, isEmpty);
     expect(result.memory?.overview, 'Structured overview');
     expect(result.memory?.keyPoints, hasLength(2));
     expect(result.memory?.keyPoints.first.topic, 'Runtime');

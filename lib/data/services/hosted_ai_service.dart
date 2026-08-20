@@ -227,15 +227,7 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
         keyPoints: keyPoints,
         conclusion: rawConclusion.trim(),
       );
-      final tags = await generateTagsTask(
-        title: generatedTitle,
-        summary: memory.toRetrievalText(),
-        content: normalizedContent,
-        existingTags: const [],
-        language: language,
-        operationKey: operationKey,
-      );
-      return AiSummaryResult(title: generatedTitle, tags: tags, memory: memory);
+      return AiSummaryResult(title: generatedTitle, memory: memory);
     } on HostedTaskRunException catch (error) {
       _captureTaskError(error);
       return const AiSummaryResult();

@@ -278,7 +278,7 @@ void main() {
     test('hosted summary persists every structured v4 final field', () async {
       final seed = seedArticle(
         id: 'hosted-summary',
-      ).copyWith(suggestedFolderId: 'stale-folder');
+      ).copyWith(tags: ['Keep me'], suggestedFolderId: 'stale-folder');
       final notifier = await seedAndGetNotifier(seed);
       final tasks = _PipelineTaskGateway();
       final hosted = HostedAiService(
@@ -296,7 +296,6 @@ void main() {
       );
 
       final first = await pipeline.processFile(seed, 'Stable article body.');
-      final replay = await pipeline.processFile(seed, 'Stable article body.');
 
       expect(first?.title, 'Generated title');
       expect(first?.memory?.overview, 'Structured overview');
@@ -304,9 +303,24 @@ void main() {
       expect(first?.memory?.keyPoints.single.topic, 'Runtime');
       expect(first?.memory?.keyPoints.single.content, 'Pi runs the task.');
       expect(first?.memory?.conclusion, 'Structured conclusion');
-      expect(first?.tags, ['Pi']);
+      expect(first?.tags, ['Keep me', 'Pi']);
       expect(first?.suggestedFolderId, isNull);
       expect(first?.memory?.generation?.promptVersion, 'pi-summary-v1');
+      expect(tasks.calls.map((call) => call.profile), [
+        HostedTaskProfile.summaryChunk,
+        HostedTaskProfile.summaryFinal,
+        HostedTaskProfile.memoryTags,
+        HostedTaskProfile.memoryFolder,
+      ]);
+      expect(
+        tasks.calls.where(
+          (call) => call.profile == HostedTaskProfile.memoryTags,
+        ),
+        hasLength(1),
+      );
+
+      final replay = await pipeline.processFile(seed, 'Stable article body.');
+
       expect(replay?.memory?.keyPoints, hasLength(1));
       expect(tasks.calls.map((call) => call.profile), [
         HostedTaskProfile.summaryChunk,
@@ -318,6 +332,12 @@ void main() {
         HostedTaskProfile.memoryTags,
         HostedTaskProfile.memoryFolder,
       ]);
+      expect(
+        tasks.calls.where(
+          (call) => call.profile == HostedTaskProfile.memoryTags,
+        ),
+        hasLength(2),
+      );
       for (var index = 0; index < 4; index++) {
         expect(
           tasks.calls[index].idempotencyKey,
