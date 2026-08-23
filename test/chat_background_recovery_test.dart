@@ -185,7 +185,7 @@ void main() {
             webSearch: webSearch,
             onEvent: onEvent,
             onRunCreated: onRunCreated,
-            idempotencyKey: idempotencyKey,
+            idempotencyKey: idempotencyKey ?? 'test-durable-run',
           ),
       agentCompletionError: () => hostedAgent.lastError,
       saveLog: (_) async {},
@@ -468,6 +468,195 @@ void main() {
     expect(recovered?.webUrls, ['https://cited.example']);
     expect(recovered?.method, 'web');
     expect(recovered?.aiRunEventSeq, 9);
+  });
+
+  testWidgets(
+    'background public recovery does not inherit active private provenance',
+    (tester) async {
+      final now = DateTime.utc(2026, 8, 23, 12);
+      final activePrivate = ChatThread(
+        id: 'active-private-thread',
+        title: 'Active private',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final backgroundPublic = ChatThread(
+        id: 'background-public-thread',
+        title: 'Background public',
+        createdAt: now.subtract(const Duration(minutes: 1)),
+        updatedAt: now.subtract(const Duration(minutes: 1)),
+      );
+      final activePrivateUser = ChatMessageRecord(
+        id: 'active-private-user',
+        threadId: activePrivate.id,
+        role: ChatMessageRole.user,
+        content: 'Private active question',
+        createdAt: now,
+        privateEvidenceUsed: true,
+      );
+      final activePrivateAssistant = ChatMessageRecord(
+        id: 'active-private-assistant',
+        threadId: activePrivate.id,
+        role: ChatMessageRole.assistant,
+        content: 'Private active answer',
+        createdAt: now.add(const Duration(seconds: 1)),
+        privateEvidenceUsed: true,
+      );
+      final backgroundUser = ChatMessageRecord(
+        id: 'background-public-user',
+        threadId: backgroundPublic.id,
+        role: ChatMessageRole.user,
+        content: 'Public background question',
+        createdAt: now.add(const Duration(seconds: 2)),
+      );
+      final backgroundPending = ChatMessageRecord(
+        id: 'background-public-assistant',
+        threadId: backgroundPublic.id,
+        role: ChatMessageRole.assistant,
+        content: '',
+        createdAt: now.add(const Duration(seconds: 3)),
+        status: ChatMessageStatus.sending,
+        aiRunId: 'run-background-public',
+      );
+      final hostedAgent = _RecoveryHostedAgentService(
+        answer: 'Recovered public answer',
+        eventSeq: 4,
+      );
+
+      final repository = await pumpChat(
+        tester,
+        articles: [],
+        threads: [activePrivate, backgroundPublic],
+        messages: [
+          activePrivateUser,
+          activePrivateAssistant,
+          backgroundUser,
+          backgroundPending,
+        ],
+        hostedAgent: hostedAgent,
+      );
+      await pumpUntil(
+        tester,
+        () =>
+            repository.getMessage(backgroundPending.id)?.status ==
+            ChatMessageStatus.completed,
+      );
+
+      expect(
+        repository.getMessage(backgroundUser.id)?.privateEvidenceUsed,
+        isFalse,
+      );
+      expect(
+        repository.getMessage(backgroundPending.id)?.privateEvidenceUsed,
+        isFalse,
+      );
+      expect(
+        repository.getMessage(activePrivateAssistant.id)?.privateEvidenceUsed,
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets('background sticky recovery taints its own completed pair only', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 8, 23, 13);
+    final activePublic = ChatThread(
+      id: 'active-public-thread',
+      title: 'Active public',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final backgroundPrivate = ChatThread(
+      id: 'background-private-thread',
+      title: 'Background private',
+      createdAt: now.subtract(const Duration(minutes: 1)),
+      updatedAt: now.subtract(const Duration(minutes: 1)),
+    );
+    final activePublicUser = ChatMessageRecord(
+      id: 'active-public-user',
+      threadId: activePublic.id,
+      role: ChatMessageRole.user,
+      content: 'Public active question',
+      createdAt: now,
+    );
+    final activePublicAssistant = ChatMessageRecord(
+      id: 'active-public-assistant',
+      threadId: activePublic.id,
+      role: ChatMessageRole.assistant,
+      content: 'Public active answer',
+      createdAt: now.add(const Duration(seconds: 1)),
+    );
+    final priorPrivateUser = ChatMessageRecord(
+      id: 'background-prior-private-user',
+      threadId: backgroundPrivate.id,
+      role: ChatMessageRole.user,
+      content: 'Earlier private question',
+      createdAt: now.add(const Duration(seconds: 2)),
+      privateEvidenceUsed: true,
+    );
+    final priorPrivateAssistant = ChatMessageRecord(
+      id: 'background-prior-private-assistant',
+      threadId: backgroundPrivate.id,
+      role: ChatMessageRole.assistant,
+      content: 'Earlier private answer',
+      createdAt: now.add(const Duration(seconds: 3)),
+      privateEvidenceUsed: true,
+    );
+    final backgroundCurrentUser = ChatMessageRecord(
+      id: 'background-current-user',
+      threadId: backgroundPrivate.id,
+      role: ChatMessageRole.user,
+      content: 'Later background question',
+      createdAt: now.add(const Duration(seconds: 4)),
+    );
+    final backgroundPending = ChatMessageRecord(
+      id: 'background-private-assistant',
+      threadId: backgroundPrivate.id,
+      role: ChatMessageRole.assistant,
+      content: '',
+      createdAt: now.add(const Duration(seconds: 5)),
+      status: ChatMessageStatus.sending,
+      aiRunId: 'run-background-private',
+    );
+    final hostedAgent = _RecoveryHostedAgentService(
+      answer: 'Recovered sticky answer',
+      eventSeq: 5,
+    );
+
+    final repository = await pumpChat(
+      tester,
+      articles: [],
+      threads: [activePublic, backgroundPrivate],
+      messages: [
+        activePublicUser,
+        activePublicAssistant,
+        priorPrivateUser,
+        priorPrivateAssistant,
+        backgroundCurrentUser,
+        backgroundPending,
+      ],
+      hostedAgent: hostedAgent,
+    );
+    await pumpUntil(
+      tester,
+      () =>
+          repository.getMessage(backgroundPending.id)?.status ==
+          ChatMessageStatus.completed,
+    );
+
+    expect(
+      repository.getMessage(backgroundCurrentUser.id)?.privateEvidenceUsed,
+      isTrue,
+    );
+    expect(
+      repository.getMessage(backgroundPending.id)?.privateEvidenceUsed,
+      isTrue,
+    );
+    expect(
+      repository.getMessage(activePublicAssistant.id)?.privateEvidenceUsed,
+      isFalse,
+    );
   });
 
   testWidgets('terminal recovery keeps an already persisted partial prefix', (

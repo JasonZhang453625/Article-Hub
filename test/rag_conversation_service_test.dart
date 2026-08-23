@@ -97,6 +97,7 @@ void main() {
       expect(result.outcome, RagConversationOutcome.answer);
       expect(result.rewrittenQuery, retrievalQuery);
       expect(result.citedIds, ['agent-sdk']);
+      expect(result.privateEvidenceUsed, isTrue);
       expect(logs.single.rewrittenQuery, retrievalQuery);
       expect(thinkingChanges, [AiThinkingLevel.none, AiThinkingLevel.max]);
     },
@@ -149,6 +150,7 @@ void main() {
       expect(result.outcome, RagConversationOutcome.answer);
       expect(result.answer, 'Handoff works [1].');
       expect(result.citedIds, [article.id]);
+      expect(result.privateEvidenceUsed, isTrue);
     },
   );
 

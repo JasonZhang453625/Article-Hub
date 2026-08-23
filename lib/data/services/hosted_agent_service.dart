@@ -742,13 +742,12 @@ class HostedAgentService {
 
   ({List<Map<String, dynamic>> messages, bool privateEvidence})
   _validatedHistory(List<Map<String, dynamic>> history) {
-    if (history.length > maxHistoryMessages || history.length.isOdd) {
+    if (history.length.isOdd) {
       throw const HostedAgentInputException(
         code: 'invalid_history',
         message: 'Hosted chat history must contain complete recent turns.',
       );
     }
-    var totalCharacters = 0;
     final normalized = <Map<String, dynamic>>[];
     for (var index = 0; index < history.length; index++) {
       final message = history[index];
@@ -761,19 +760,11 @@ class HostedAgentService {
           !message.containsKey('private_evidence') ||
           message['role'] != expectedRole ||
           message['private_evidence'] is! bool ||
-          content.isEmpty ||
-          content.length > maxHistoryMessageChars) {
+          content.isEmpty) {
         throw const HostedAgentInputException(
           code: 'invalid_history',
           message:
               'Hosted chat history must alternate complete user/assistant turns.',
-        );
-      }
-      totalCharacters += content.length;
-      if (totalCharacters > maxHistoryChars) {
-        throw const HostedAgentInputException(
-          code: 'invalid_history',
-          message: 'Hosted chat history is too large.',
         );
       }
       normalized.add({
@@ -815,8 +806,33 @@ class HostedAgentService {
         'private_evidence': stickyPrivateEvidence,
       });
     }
+    // The app context window is token-based, while protocol-v4 also advertises
+    // strict message/character limits. Keep the newest contiguous complete
+    // pairs that satisfy every negotiated wire bound. Private provenance above
+    // was computed over the full local history, so dropping an older private
+    // pair can never re-enable Web.
+    final pairLimit = maxHistoryMessages ~/ 2;
+    final selected = <Map<String, dynamic>>[];
+    var selectedPairs = 0;
+    var selectedCharacters = 0;
+    for (var index = protected.length - 2; index >= 0; index -= 2) {
+      if (selectedPairs >= pairLimit) break;
+      final user = protected[index];
+      final assistant = protected[index + 1];
+      final userContent = user['content'] as String;
+      final assistantContent = assistant['content'] as String;
+      final pairCharacters = userContent.length + assistantContent.length;
+      if (userContent.length > maxHistoryMessageChars ||
+          assistantContent.length > maxHistoryMessageChars ||
+          selectedCharacters + pairCharacters > maxHistoryChars) {
+        break;
+      }
+      selected.insertAll(0, [user, assistant]);
+      selectedPairs++;
+      selectedCharacters += pairCharacters;
+    }
     return (
-      messages: List.unmodifiable(protected),
+      messages: List.unmodifiable(selected),
       privateEvidence: stickyPrivateEvidence,
     );
   }

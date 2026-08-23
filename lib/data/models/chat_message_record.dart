@@ -261,7 +261,7 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       aiRunProtocolVersion: (fields[24] as num?)?.toInt(),
       aiRunClientToolsVersion: (fields[25] as num?)?.toInt(),
       aiRunKnowledgeMode: fields[26] as String?,
-      privateEvidenceUsed: fields[27] as bool? ?? false,
+      privateEvidenceUsed: _privateEvidenceFromStoredFields(fields),
     );
   }
 
@@ -331,6 +331,25 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(27)
       ..write(obj.privateEvidenceUsed);
   }
+}
+
+bool _privateEvidenceFromStoredFields(Map<int, dynamic> fields) {
+  if (fields.containsKey(27)) {
+    return fields[27] as bool? ?? false;
+  }
+
+  // Builds that supported protocol-v3 device tools predate field 27. Their
+  // terminal record cannot prove whether local_search/read_article actually
+  // returned private evidence (a valid local citation was not guaranteed), so
+  // migrate that unknown state fail-closed. Current records always write field
+  // 27, allowing an authoritative false from the server to remain public.
+  final protocolVersion = (fields[24] as num?)?.toInt();
+  final clientToolsVersion = (fields[25] as num?)?.toInt();
+  final knowledgeMode = fields[26] as String?;
+  return protocolVersion != null &&
+      protocolVersion >= 3 &&
+      clientToolsVersion == 1 &&
+      (knowledgeMode == 'only' || knowledgeMode == 'hybrid');
 }
 
 List<String> _stringList(dynamic value) {

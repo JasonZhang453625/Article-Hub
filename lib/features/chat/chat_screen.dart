@@ -19,6 +19,7 @@ import '../../data/services/hosted_agent_service.dart';
 import '../../data/services/hosted_task_run_service.dart';
 import '../../data/services/rag_citation.dart';
 import '../../data/services/rag_conversation_service.dart';
+import '../../data/services/retrieval_service.dart';
 import '../../shared/providers/chat_providers.dart';
 import '../../shared/providers/attachment_providers.dart';
 import '../../shared/providers/auth_provider.dart';
@@ -86,11 +87,58 @@ List<RagConversationTurn> buildCompletedChatHistory(
 }
 
 bool _chatMessageUsedPrivateEvidence(ChatMessageRecord message) {
+  final method = message.method?.trim().toLowerCase();
+  final localMethod = method?.endsWith('+web') == true
+      ? method!.substring(0, method.length - '+web'.length)
+      : method;
+  final hasLegacyLocalMethod =
+      localMethod == RetrievalMethod.vector.name ||
+      localMethod == RetrievalMethod.keyword.name ||
+      localMethod == RetrievalMethod.hybrid.name ||
+      localMethod == 'local' ||
+      localMethod == 'attachment';
   return message.privateEvidenceUsed ||
+      message.articleIds.isNotEmpty ||
+      hasLegacyLocalMethod ||
       message.attachments.isNotEmpty ||
       message.attachmentIdsForCleanup.isNotEmpty ||
       message.attachmentContext?.trim().isNotEmpty == true ||
       message.content.contains(legacyPrivateAttachmentMarker);
+}
+
+/// Keeps private-source DLP attached to the current question even when retry
+/// construction removes that question/answer pair from conversational history.
+bool chatRequestHasPrivateEvidence({
+  required ChatMessageRecord currentUser,
+  required List<RagConversationTurn> history,
+}) {
+  return _chatMessageUsedPrivateEvidence(currentUser) ||
+      history.any((turn) => turn.privateEvidence);
+}
+
+/// Preserves a durable DLP anchor even when a crash left its assistant
+/// incomplete, so the source message cannot be represented in wire history.
+bool chatThreadHasPrivateEvidence(Iterable<ChatMessageRecord> messages) {
+  return messages.any(_chatMessageUsedPrivateEvidence);
+}
+
+/// Repairs older pair records where only the assistant carried provenance.
+///
+/// Retry replaces the assistant in place and removes the pair from prompt
+/// history, so the source user must become the durable provenance anchor before
+/// the old assistant flag is cleared.
+ChatMessageRecord repairRetrySourceUserProvenance({
+  required ChatMessageRecord sourceUser,
+  required ChatMessageRecord previousAssistant,
+  required List<RagConversationTurn> history,
+}) {
+  final privateEvidence =
+      _chatMessageUsedPrivateEvidence(sourceUser) ||
+      _chatMessageUsedPrivateEvidence(previousAssistant) ||
+      history.any((turn) => turn.privateEvidence);
+  return privateEvidence && !sourceUser.privateEvidenceUsed
+      ? sourceUser.copyWith(privateEvidenceUsed: true)
+      : sourceUser;
 }
 
 class _AnswerRunControl {
@@ -358,6 +406,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final chatState = ref.read(chatSessionsProvider).valueOrNull;
     if (chatState == null) return;
     final history = _completedHistory(chatState.messages);
+    final threadPrivateEvidenceContext = chatThreadHasPrivateEvidence(
+      chatState.messages,
+    );
 
     setState(() {
       _loading = true;
@@ -395,6 +446,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         pending: pending,
         userMessage: persistedUser.message,
         history: history,
+        threadPrivateEvidenceContext: threadPrivateEvidenceContext,
         runControl: runControl,
       );
     } catch (error, stackTrace) {
@@ -448,6 +500,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       retryHistoryMessages.removeLast();
     }
     final history = _completedHistory(retryHistoryMessages);
+    final threadPrivateEvidenceContext = chatThreadHasPrivateEvidence(
+      chatState.messages,
+    );
+    final retrySourceUser = repairRetrySourceUserProvenance(
+      sourceUser: sourceUserMessage,
+      previousAssistant: record,
+      history: history,
+    );
 
     setState(() {
       _loading = true;
@@ -460,6 +520,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ..requestKey = retried.aiRunRequestKey;
     _answerRunControls[runId] = runControl;
     try {
+      if (retrySourceUser.privateEvidenceUsed !=
+          sourceUserMessage.privateEvidenceUsed) {
+        // Persist the repaired source before clearing the old assistant flag.
+        // A crash between these writes can only fail closed with extra taint.
+        await ref
+            .read(chatSessionsProvider.notifier)
+            .updateMessage(retrySourceUser);
+      }
       await ref.read(chatSessionsProvider.notifier).updateMessage(retried);
       if (runControl.cancelRequested || runId != _answerRunId) {
         await _finishUnstartedCancellation(runControl);
@@ -467,8 +535,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       await _runAnswer(
         pending: retried,
-        userMessage: sourceUserMessage,
+        userMessage: retrySourceUser,
         history: history,
+        threadPrivateEvidenceContext: threadPrivateEvidenceContext,
         runControl: runControl,
       );
     } catch (error, stackTrace) {
@@ -493,6 +562,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required ChatMessageRecord pending,
     required ChatMessageRecord userMessage,
     required List<RagConversationTurn> history,
+    required bool threadPrivateEvidenceContext,
     required _AnswerRunControl runControl,
   }) async {
     final runId = runControl.localRunId;
@@ -636,12 +706,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         !ref.read(chatWebSearchEnabledProvider) &&
         userMessage.attachments.isEmpty &&
         agentClientTools == null) {
+      final privateEvidenceUsed = await _persistCompletedTurnPrivateEvidence(
+        assistantMessage: pending,
+        userMessage: userMessage,
+        serverPrivateEvidence: false,
+      );
       await finish(
         pending.copyWith(
           content: s.knowledgeBaseEmpty,
           isNoResult: true,
           query: pending.query,
           status: ChatMessageStatus.completed,
+          privateEvidenceUsed: privateEvidenceUsed,
         ),
       );
       return;
@@ -829,11 +905,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           rewriteLanguage: hostedTaskRewriteLanguageForIndex(
             activeSettings.languageIndex,
           ),
+          chatLanguage: hostedChatLanguageForIndex(
+            activeSettings.languageIndex,
+          ),
           webSearch: ref.read(chatWebSearchEnabledProvider),
           thinkingLevel: ref.read(chatThinkingLevelProvider),
           attachmentContext: preparedAttachments.textContext,
           textAttachments: preparedAttachments.textInputs,
           imageInputs: preparedAttachments.imageInputs,
+          privateEvidenceContext:
+              threadPrivateEvidenceContext ||
+              chatRequestHasPrivateEvidence(
+                currentUser: userMessage,
+                history: history,
+              ),
         ),
         onDelta: publishDelta,
         onAgentEvent: publishAgentEvent,
@@ -1281,14 +1366,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required bool serverPrivateEvidence,
   }) async {
     final sessions = ref.read(chatSessionsProvider.notifier);
-    final messages =
-        ref.read(chatSessionsProvider).valueOrNull?.messages ??
-        const <ChatMessageRecord>[];
+    final messages = await sessions.messagesForThread(
+      assistantMessage.threadId,
+    );
     var assistantIndex = messages.indexWhere(
       (message) => message.id == assistantMessage.id,
     );
     ChatMessageRecord? sourceUser;
-    if (userMessage != null) {
+    if (userMessage != null &&
+        userMessage.threadId == assistantMessage.threadId) {
       for (final message in messages) {
         if (message.id == userMessage.id) {
           sourceUser = message;

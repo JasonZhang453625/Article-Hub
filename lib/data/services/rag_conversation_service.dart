@@ -151,6 +151,11 @@ class RagConversationRequest {
   final List<AiImageInput> imageInputs;
   final HostedChatLanguage chatLanguage;
 
+  /// Private provenance that must keep Web disabled even when the originating
+  /// turn is intentionally absent from the selected prompt history, such as
+  /// retrying that turn or trimming every completed pair for token budget.
+  final bool privateEvidenceContext;
+
   const RagConversationRequest({
     required this.question,
     this.history = const [],
@@ -167,6 +172,7 @@ class RagConversationRequest {
     this.textAttachments = const [],
     this.imageInputs = const [],
     this.chatLanguage = HostedChatLanguage.followUser,
+    this.privateEvidenceContext = false,
   });
 }
 
@@ -402,6 +408,11 @@ class RagConversationService {
       );
     }
 
+    final privateEvidenceContext =
+        request.privateEvidenceContext ||
+        request.history.any((turn) => turn.privateEvidence);
+    final effectiveWebSearch = request.webSearch && !privateEvidenceContext;
+
     _configureThinking?.call(AiThinkingLevel.none);
     late final String rewrittenQuery;
     try {
@@ -420,8 +431,9 @@ class RagConversationService {
     final retrievalStopwatch = Stopwatch()..start();
     final retrievalFuture = _attemptRetrieval(rewrittenQuery, request.articles);
     final usesAgentCompletion = _hasAgentCompletion;
-    final agentCanSearch = request.webSearch && usesAgentCompletion;
-    final webFuture = request.webSearch && !agentCanSearch && _webSearch != null
+    final agentCanSearch = effectiveWebSearch && usesAgentCompletion;
+    final webFuture =
+        effectiveWebSearch && !agentCanSearch && _webSearch != null
         ? _attemptWebSearch(rewrittenQuery)
         : Future.value((fatalError: null, results: const <WebSearchResult>[]));
     final retrievalAttempt = await retrievalFuture;
@@ -618,9 +630,10 @@ class RagConversationService {
         hostedHistory: history
             .map((turn) => turn.toHostedMessage())
             .toList(growable: false),
+        forcedPrivateEvidence: privateEvidenceContext,
         maxTokens: maxTokens,
         temperature: 0.3,
-        webSearch: request.webSearch,
+        webSearch: effectiveWebSearch,
         localKnowledge: false,
         hostedKnowledgeMode: request.knowledgeOnly
             ? HostedChatKnowledgeMode.only
@@ -721,7 +734,10 @@ class RagConversationService {
         method: effectiveMethod,
         logId: logId,
         webUrls: List.unmodifiable(citedWebUrls),
-        privateEvidenceUsed: _agentPrivateEvidenceUsed?.call() ?? false,
+        privateEvidenceUsed:
+            privateEvidenceContext ||
+            useLocalContext ||
+            (_agentPrivateEvidenceUsed?.call() ?? false),
       );
     } catch (error) {
       await _writeLog(
@@ -801,6 +817,9 @@ class RagConversationService {
         hostedHistory: history
             .map((turn) => turn.toHostedMessage())
             .toList(growable: false),
+        forcedPrivateEvidence:
+            request.privateEvidenceContext ||
+            request.history.any((turn) => turn.privateEvidence),
         temperature: 0.3,
         maxTokens: maxTokens,
         webSearch: request.webSearch,
@@ -988,6 +1007,9 @@ class RagConversationService {
         hostedHistory: history
             .map((turn) => turn.toHostedMessage())
             .toList(growable: false),
+        forcedPrivateEvidence:
+            request.privateEvidenceContext ||
+            request.history.any((turn) => turn.privateEvidence),
         temperature: 0.3,
         maxTokens: maxTokens,
         webSearch: request.webSearch,
@@ -1091,6 +1113,7 @@ class RagConversationService {
     required String userQuestion,
     required List<Map<String, String>> history,
     required List<Map<String, dynamic>> hostedHistory,
+    required bool forcedPrivateEvidence,
     required double temperature,
     required int maxTokens,
     required bool webSearch,
@@ -1114,6 +1137,7 @@ class RagConversationService {
         throw StateError('Hosted chat requires a durable idempotency key.');
       }
       final hasPrivateEvidence =
+          forcedPrivateEvidence ||
           textAttachments.isNotEmpty ||
           images.isNotEmpty ||
           hostedHistory.any((message) => message['private_evidence'] == true);

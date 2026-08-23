@@ -351,6 +351,17 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
     );
   }
 
+  /// Returns the repository-backed message snapshot for exactly one thread.
+  ///
+  /// Durable run recovery spans every thread, while [ChatSessionState.messages]
+  /// contains only the currently visible thread. Recovery finalizers must use
+  /// this method so provenance never leaks between active and background chats.
+  Future<List<ChatMessageRecord>> messagesForThread(String threadId) async {
+    await _ensureLoaded();
+    if (_repo.getThread(threadId) == null) return const [];
+    return List.unmodifiable(_repo.getMessages(threadId));
+  }
+
   /// All locally-known v3 attempts, including terminal records. The global
   /// client-tool host compares this ledger with its run-scoped Hive stores so
   /// deleted/stopped runs can be revoked after a process restart.

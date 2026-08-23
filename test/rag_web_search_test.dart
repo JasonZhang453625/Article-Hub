@@ -456,6 +456,67 @@ void main() {
     expect(result.webUrls, isEmpty);
   });
 
+  test('private BYOK history prevents a derived Tavily query', () async {
+    var webSearches = 0;
+    var completionCalls = 0;
+    final service = RagConversationService(
+      retrieve: (query, articles) async => const RetrievalResult(
+        articles: [],
+        method: RetrievalMethod.none,
+        duration: Duration.zero,
+      ),
+      webSearch: (query, {topK = 5}) async {
+        webSearches++;
+        return webHits();
+      },
+      complete:
+          ({
+            required String systemPrompt,
+            required String userMessage,
+            List<Map<String, String>> history = const [],
+            double temperature = 0.3,
+            int maxTokens = 800,
+          }) async {
+            completionCalls++;
+            return completionCalls == 1
+                ? 'private follow-up rewritten'
+                : 'Private-context answer.';
+          },
+      saveLog: (_) async {},
+      promptService: _WebPromptService(),
+    );
+
+    final result = await service.ask(
+      const RagConversationRequest(
+        question: 'What about that private point?',
+        history: [
+          RagConversationTurn(
+            role: 'user',
+            content: 'Question based on my saved article',
+            privateEvidence: true,
+          ),
+          RagConversationTurn(
+            role: 'assistant',
+            content: 'Answer based on that saved article',
+            privateEvidence: true,
+          ),
+        ],
+        articles: [],
+        knowledgeOnly: false,
+        detailedAnswer: false,
+        languageHint: '',
+        webSearch: true,
+      ),
+    );
+
+    expect(completionCalls, 2);
+    expect(webSearches, 0);
+    expect(result.outcome, RagConversationOutcome.answer);
+    expect(result.answer, 'Private-context answer.');
+    expect(result.webUrls, isEmpty);
+    expect(result.privateEvidenceUsed, isTrue);
+  });
+
   test(
     'production Agent run owns web search instead of eager client search',
     () async {

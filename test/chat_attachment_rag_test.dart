@@ -220,6 +220,97 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'hosted chat keeps Web disabled when sticky private history is trimmed',
+    () async {
+      final receivedHistories = <List<Map<String, dynamic>>>[];
+      final receivedWebSearchValues = <bool>[];
+      final service = RagConversationService(
+        retrieve: (_, _) async => fail('hosted chat must not enter retrieval'),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('hosted chat must not use direct completion'),
+        hostedChatRunStream:
+            ({
+              required String question,
+              required List<Map<String, dynamic>> history,
+              required HostedChatKnowledgeMode knowledgeMode,
+              required HostedChatLength length,
+              required HostedChatLanguage language,
+              required bool webSearch,
+              required bool localKnowledge,
+              required List<AiTextAttachmentInput> attachments,
+              required List<AiImageInput> images,
+              void Function(HostedAgentEvent event)? onEvent,
+              FutureOr<void> Function(String runId)? onRunCreated,
+              required String idempotencyKey,
+            }) async* {
+              receivedHistories.add(history);
+              receivedWebSearchValues.add(webSearch);
+              yield 'Safe answer.';
+            },
+        agentPrivateEvidenceUsed: () => false,
+        saveLog: (_) async {},
+        promptService: _AttachmentPromptService(),
+        webSearch: (_, {topK = 5}) async =>
+            fail('sticky private history must not prefetch Web'),
+      );
+      final oversizedPrivateTurn = List.filled(4000, 'private').join(' ');
+
+      final result = await service.askWithProgress(
+        RagConversationRequest(
+          question: 'Can I search now?',
+          history: [
+            RagConversationTurn(
+              role: 'user',
+              content: oversizedPrivateTurn,
+              privateEvidence: true,
+            ),
+            const RagConversationTurn(
+              role: 'assistant',
+              content: 'Earlier private answer.',
+              privateEvidence: true,
+            ),
+          ],
+          articles: const [],
+          knowledgeOnly: false,
+          detailedAnswer: false,
+          languageHint: '',
+          webSearch: true,
+          contextWindowTokens: 2048,
+        ),
+        idempotencyKey: 'trimmed-private-history',
+      );
+
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(receivedHistories.single, isEmpty);
+      expect(receivedWebSearchValues.single, isFalse);
+
+      final retryResult = await service.askWithProgress(
+        const RagConversationRequest(
+          question: 'Retry the private answer.',
+          history: [],
+          articles: [],
+          knowledgeOnly: false,
+          detailedAnswer: false,
+          languageHint: '',
+          webSearch: true,
+          privateEvidenceContext: true,
+        ),
+        idempotencyKey: 'private-retry-context',
+      );
+
+      expect(retryResult.outcome, RagConversationOutcome.answer);
+      expect(receivedHistories.last, isEmpty);
+      expect(receivedWebSearchValues, [false, false]);
+    },
+  );
 }
 
 class _AttachmentPromptService extends PromptService {

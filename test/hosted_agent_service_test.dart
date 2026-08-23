@@ -14,6 +14,12 @@ import 'package:memora/data/services/hosted_agent_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('maps Memora language settings to the hosted chat wire', () {
+    expect(hostedChatLanguageForIndex(0), HostedChatLanguage.followUser);
+    expect(hostedChatLanguageForIndex(1), HostedChatLanguage.zhCn);
+    expect(hostedChatLanguageForIndex(2), HostedChatLanguage.en);
+  });
+
   test(
     'client-tool SSE emits only a run-id wake and retains no payload',
     () async {
@@ -269,6 +275,149 @@ void main() {
       },
     ]);
     expect(service.lastPrivateEvidenceUsed, isTrue);
+  });
+
+  test('chat@2 keeps the newest 20 bounded messages and sticky DLP', () async {
+    late Map<String, dynamic> payload;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-bounded-history","status":"queued"}'),
+          ),
+          202,
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-bounded-history",'
+            '"answer":"bounded answer","sources":[],"privateEvidenceUsed":true}\n\n',
+          ),
+        ),
+        200,
+      );
+    });
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('bounded-history')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+    );
+    final history = <Map<String, dynamic>>[];
+    for (var pair = 0; pair < 12; pair++) {
+      history.add({
+        'role': 'user',
+        'content': 'q$pair',
+        'private_evidence': pair == 0,
+      });
+      history.add({
+        'role': 'assistant',
+        'content': 'a$pair',
+        'private_evidence': pair == 0,
+      });
+    }
+
+    final chunks = await http.runWithClient(
+      () => service
+          .chatStreamV4(
+            question: 'latest question',
+            history: history,
+            knowledgeMode: HostedChatKnowledgeMode.hybrid,
+            length: HostedChatLength.concise,
+            language: HostedChatLanguage.followUser,
+            webSearch: true,
+            localKnowledge: false,
+            idempotencyKey: 'bounded-history-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+
+    final sentHistory = (payload['history'] as List<dynamic>)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList(growable: false);
+    expect(chunks, ['bounded answer']);
+    expect(sentHistory, hasLength(20));
+    expect(sentHistory.first['content'], 'q2');
+    expect(sentHistory.last['content'], 'a11');
+    expect(
+      sentHistory.map((message) => message['private_evidence']),
+      everyElement(isTrue),
+    );
+    expect(payload['web_search'], isFalse);
+  });
+
+  test('chat@2 drops an oversized recent history pair before POST', () async {
+    late Map<String, dynamic> payload;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-trim-history","status":"queued"}'),
+          ),
+          202,
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-trim-history",'
+            '"answer":"trimmed answer","sources":[],"privateEvidenceUsed":false}\n\n',
+          ),
+        ),
+        200,
+      );
+    });
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('trim-history')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+      maxHistoryMessageChars: 10,
+      maxHistoryChars: 100,
+    );
+
+    final chunks = await http.runWithClient(
+      () => service
+          .chatStreamV4(
+            question: 'latest question',
+            history: const [
+              {'role': 'user', 'content': 'safe q', 'private_evidence': false},
+              {
+                'role': 'assistant',
+                'content': 'safe a',
+                'private_evidence': false,
+              },
+              {
+                'role': 'user',
+                'content': 'this recent message is too long',
+                'private_evidence': false,
+              },
+              {
+                'role': 'assistant',
+                'content': 'recent a',
+                'private_evidence': false,
+              },
+            ],
+            knowledgeMode: HostedChatKnowledgeMode.hybrid,
+            length: HostedChatLength.concise,
+            language: HostedChatLanguage.followUser,
+            webSearch: true,
+            localKnowledge: false,
+            idempotencyKey: 'trim-history-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+
+    expect(chunks, ['trimmed answer']);
+    expect(payload['history'], isEmpty);
+    expect(payload['web_search'], isTrue);
   });
 
   test('sends native image blocks through the durable Agent run', () async {

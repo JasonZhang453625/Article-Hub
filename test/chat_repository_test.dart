@@ -809,6 +809,81 @@ void main() {
   });
 
   test(
+    'migrates legacy client-tool provenance without overriding explicit false',
+    () async {
+      final now = DateTime.utc(2026, 8, 23);
+      await repository.putThread(
+        ChatThread(
+          id: 'legacy-private-thread',
+          title: 'Legacy private provenance',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await Hive.close();
+      Hive.init(tempDir.path);
+      Hive.registerAdapter(
+        _PrePrivateEvidenceChatMessageRecordAdapter(),
+        override: true,
+      );
+      final legacyBox = await Hive.openBox<ChatMessageRecord>(
+        HiveChatRepository.messagesBoxName,
+      );
+      await legacyBox.put(
+        'legacy-client-tools',
+        ChatMessageRecord(
+          id: 'legacy-client-tools',
+          threadId: 'legacy-private-thread',
+          role: ChatMessageRole.assistant,
+          content: 'Answer without a resolvable local citation.',
+          createdAt: now,
+          method: 'web',
+          aiRunProtocolVersion: 3,
+          aiRunClientToolsVersion: 1,
+          aiRunKnowledgeMode: 'hybrid',
+        ),
+      );
+      await Hive.close();
+      Hive.init(tempDir.path);
+      Hive.registerAdapter(ChatMessageRecordAdapter(), override: true);
+
+      final reopened = HiveChatRepository();
+      await reopened.init();
+      expect(
+        reopened.getMessage('legacy-client-tools')?.privateEvidenceUsed,
+        isTrue,
+      );
+
+      await reopened.putMessage(
+        ChatMessageRecord(
+          id: 'current-public-client-tools',
+          threadId: 'legacy-private-thread',
+          role: ChatMessageRole.assistant,
+          content: 'Current server explicitly reported public evidence.',
+          createdAt: now.add(const Duration(seconds: 1)),
+          method: 'agent',
+          aiRunProtocolVersion: 4,
+          aiRunClientToolsVersion: 1,
+          aiRunKnowledgeMode: 'hybrid',
+          privateEvidenceUsed: false,
+        ),
+      );
+      await Hive.close();
+      Hive.init(tempDir.path);
+      Hive.registerAdapter(ChatMessageRecordAdapter(), override: true);
+
+      final finalReopen = HiveChatRepository();
+      await finalReopen.init();
+      expect(
+        finalReopen
+            .getMessage('current-public-client-tools')
+            ?.privateEvidenceUsed,
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'create owner and run attachment share one repository CAS attempt',
     () async {
       final now = DateTime.utc(2026, 8, 12, 1);
@@ -1130,5 +1205,77 @@ class _PreOwnerChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..write(obj.aiRunRequestKey)
       ..writeByte(21)
       ..write(obj.attachmentIdsForCleanup);
+  }
+}
+
+/// Writer matching schema fields 0..26 from protocol-v3 client-tool builds
+/// before `privateEvidenceUsed` became durable field 27.
+class _PrePrivateEvidenceChatMessageRecordAdapter
+    extends TypeAdapter<ChatMessageRecord> {
+  @override
+  int get typeId => ChatMessageRecord.typeId;
+
+  @override
+  ChatMessageRecord read(BinaryReader reader) =>
+      throw UnsupportedError('Legacy adapter is write-only in this test.');
+
+  @override
+  void write(BinaryWriter writer, ChatMessageRecord obj) {
+    writer
+      ..writeByte(27)
+      ..writeByte(0)
+      ..write(obj.id)
+      ..writeByte(1)
+      ..write(obj.threadId)
+      ..writeByte(2)
+      ..write(2)
+      ..writeByte(3)
+      ..write(obj.content)
+      ..writeByte(4)
+      ..write(obj.createdAt)
+      ..writeByte(5)
+      ..write(obj.articleIds)
+      ..writeByte(6)
+      ..write(obj.weakArticleIds)
+      ..writeByte(7)
+      ..write(obj.method)
+      ..writeByte(8)
+      ..write(obj.logId)
+      ..writeByte(9)
+      ..write(obj.isNoResult)
+      ..writeByte(10)
+      ..write(obj.query)
+      ..writeByte(11)
+      ..write(obj.feedback)
+      ..writeByte(12)
+      ..write(1)
+      ..writeByte(13)
+      ..write(obj.errorCode)
+      ..writeByte(14)
+      ..write(obj.webUrls)
+      ..writeByte(15)
+      ..write(obj.aiRunId)
+      ..writeByte(16)
+      ..write(obj.aiRunEventSeq)
+      ..writeByte(17)
+      ..write(obj.attachments.map((item) => item.toJson()).toList())
+      ..writeByte(18)
+      ..write(obj.attachmentContext)
+      ..writeByte(19)
+      ..write(obj.attachmentContextIncludesImages)
+      ..writeByte(20)
+      ..write(obj.aiRunRequestKey)
+      ..writeByte(21)
+      ..write(obj.attachmentIdsForCleanup)
+      ..writeByte(22)
+      ..write(obj.aiRunOwnerUserId)
+      ..writeByte(23)
+      ..write(obj.aiRunOwnerDeviceId)
+      ..writeByte(24)
+      ..write(obj.aiRunProtocolVersion)
+      ..writeByte(25)
+      ..write(obj.aiRunClientToolsVersion)
+      ..writeByte(26)
+      ..write(obj.aiRunKnowledgeMode);
   }
 }

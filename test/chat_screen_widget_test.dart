@@ -35,7 +35,7 @@ import 'package:memora/shared/providers/sync_providers.dart';
 /// repository with an in-memory fake and provide empty local settings. This
 /// keeps the test deterministic without touching real Hive boxes.
 void main() {
-  Future<void> pumpChat(
+  Future<_InMemoryChatRepository> pumpChat(
     WidgetTester tester, {
     required List<Article> articles,
     List<ChatThread> threads = const [],
@@ -43,6 +43,7 @@ void main() {
     AppSettings? settings,
     RagConversationService? conversation,
     bool failTerminalAssistantWrites = false,
+    bool webSearchEnabled = false,
     Brightness brightness = Brightness.light,
   }) async {
     final chatRepository = _InMemoryChatRepository(
@@ -56,6 +57,7 @@ void main() {
           // Never completes: keeps settings loading without touching Hive.
           hiveInitProvider.overrideWith((ref) => Completer<void>().future),
           languageIndexProvider.overrideWith((ref) => 2),
+          chatWebSearchEnabledProvider.overrideWith((ref) => webSearchEnabled),
           settingsProvider.overrideWith(
             (ref) => _TestSettingsNotifier(ref, settings),
           ),
@@ -76,6 +78,7 @@ void main() {
     // Resolve the repository future and rebuild.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
+    return chatRepository;
   }
 
   testWidgets('empty knowledge base shows process-articles prompt', (
@@ -414,6 +417,158 @@ void main() {
         findsOneWidget,
       );
       expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'empty local result persists sticky private provenance on both messages',
+    (tester) async {
+      final createdAt = DateTime.utc(2026, 8, 23);
+      final thread = ChatThread(
+        id: 'private-thread',
+        title: 'Private history',
+        createdAt: createdAt,
+        updatedAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => 'unused',
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+      final repository = await pumpChat(
+        tester,
+        articles: [],
+        threads: [thread],
+        messages: [
+          ChatMessageRecord(
+            id: 'private-user',
+            threadId: thread.id,
+            role: ChatMessageRole.user,
+            content: 'Private question',
+            createdAt: createdAt,
+            privateEvidenceUsed: true,
+          ),
+          ChatMessageRecord(
+            id: 'private-assistant',
+            threadId: thread.id,
+            role: ChatMessageRole.assistant,
+            content: 'Private answer',
+            createdAt: createdAt.add(const Duration(seconds: 1)),
+            privateEvidenceUsed: true,
+          ),
+        ],
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+          chatKnowledgeSourceIndex: 0,
+        ),
+        conversation: conversation,
+      );
+
+      await tester.enterText(find.byType(TextField), 'What did I save next?');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
+
+      final records = repository.getMessages(thread.id);
+      final user = records.singleWhere(
+        (message) => message.content == 'What did I save next?',
+      );
+      final assistant = records.singleWhere((message) => message.isNoResult);
+      expect(user.privateEvidenceUsed, isTrue);
+      expect(assistant.privateEvidenceUsed, isTrue);
+    },
+  );
+
+  testWidgets(
+    'an unpaired private crash anchor keeps Web off for the next message',
+    (tester) async {
+      final createdAt = DateTime.utc(2026, 8, 23);
+      final thread = ChatThread(
+        id: 'crash-anchor-thread',
+        title: 'Crash anchor',
+        createdAt: createdAt,
+        updatedAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      var webSearches = 0;
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+        ),
+        webSearch: (query, {topK = 5}) async {
+          webSearches++;
+          return const [];
+        },
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => 'Safe answer.',
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+      final repository = await pumpChat(
+        tester,
+        articles: [],
+        threads: [thread],
+        messages: [
+          ChatMessageRecord(
+            id: 'crashed-private-user',
+            threadId: thread.id,
+            role: ChatMessageRole.user,
+            content: 'Private source question',
+            createdAt: createdAt,
+            privateEvidenceUsed: true,
+          ),
+          ChatMessageRecord(
+            id: 'crashed-assistant',
+            threadId: thread.id,
+            role: ChatMessageRole.assistant,
+            content: '',
+            createdAt: createdAt.add(const Duration(seconds: 1)),
+            status: ChatMessageStatus.interrupted,
+          ),
+        ],
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+          chatKnowledgeSourceIndex: 1,
+        ),
+        conversation: conversation,
+        webSearchEnabled: true,
+      );
+
+      await tester.enterText(find.byType(TextField), 'Continue safely');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
+
+      expect(webSearches, 0);
+      expect(find.text('Safe answer.'), findsOneWidget);
+      final records = repository.getMessages(thread.id);
+      final nextUser = records.singleWhere(
+        (message) => message.content == 'Continue safely',
+      );
+      final nextAssistant = records.singleWhere(
+        (message) => message.content == 'Safe answer.',
+      );
+      expect(nextUser.privateEvidenceUsed, isTrue);
+      expect(nextAssistant.privateEvidenceUsed, isTrue);
     },
   );
 
