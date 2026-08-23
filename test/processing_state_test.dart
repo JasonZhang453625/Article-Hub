@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 
@@ -151,6 +151,7 @@ void main() {
       expect(a.retryCount, 0);
       expect(a.lastProcessedAt, isNull);
       expect(a.suggestedFolderId, isNull);
+      expect(a.hostedTaskGeneration, isNull);
     });
 
     test('fromJson with partial processing fields handles gracefully', () {
@@ -184,6 +185,7 @@ void main() {
         retryCount: 2,
         lastProcessedAt: DateTime(2026, 6, 15, 14, 30),
         suggestedFolderId: 'folder-xyz',
+        hostedTaskGeneration: 'generation-7',
       );
       final restored = Article.fromJson(original.toJson());
       expect(restored.processingStatus, ProcessingStatus.failed);
@@ -192,6 +194,15 @@ void main() {
       expect(restored.retryCount, 2);
       expect(restored.lastProcessedAt, DateTime(2026, 6, 15, 14, 30));
       expect(restored.suggestedFolderId, 'folder-xyz');
+      expect(
+        (original.toJson()['processing'] as Map),
+        isNot(contains('hostedTaskGeneration')),
+      );
+      expect(
+        restored.hostedTaskGeneration,
+        isNull,
+        reason: 'device-local recovery metadata must not cross backups',
+      );
     });
 
     test('completed article with no suggestion round-trips cleanly', () {

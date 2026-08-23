@@ -283,6 +283,7 @@ void main() {
       expect(restored?.processingStage, ProcessingStage.indexing);
       expect(restored?.attachments, isEmpty);
       expect(restored?.imageUnderstanding, isNull);
+      expect(restored?.hostedTaskGeneration, isNull);
     } finally {
       await Hive.close();
       if (await temp.exists()) await temp.delete(recursive: true);

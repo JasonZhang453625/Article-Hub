@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -129,7 +130,9 @@ class HostedTaskCapabilities {
   }
 
   static HostedTaskCapabilities? fromAgentSection(dynamic agentSection) {
-    if (agentSection is! Map || agentSection['protocolVersion'] is! int) {
+    if (agentSection is! Map ||
+        agentSection['available'] != true ||
+        agentSection['protocolVersion'] is! int) {
       return null;
     }
     if ((agentSection['protocolVersion'] as int) < 4) return null;
@@ -569,6 +572,38 @@ class HostedAiCapabilitiesService {
     }
     return HostedAiCapabilities.fromJson(decoded);
   }
+
+  Future<HostedAiCapabilities> fetchWithRetry({
+    int maxAttempts = 3,
+    Duration initialDelay = const Duration(milliseconds: 200),
+  }) async {
+    if (maxAttempts < 1) {
+      throw ArgumentError.value(maxAttempts, 'maxAttempts', 'must be positive');
+    }
+    Object? lastError;
+    StackTrace? lastStackTrace;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await fetch();
+      } catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+        if (!_isRetryable(error) || attempt + 1 >= maxAttempts) rethrow;
+        final multiplier = 1 << attempt;
+        await Future<void>.delayed(initialDelay * multiplier);
+      }
+    }
+    Error.throwWithStackTrace(lastError!, lastStackTrace!);
+  }
+
+  static bool _isRetryable(Object error) {
+    if (error is TimeoutException || error is http.ClientException) return true;
+    if (error is HostedAiCapabilitiesException) {
+      final status = error.statusCode;
+      return status == null || status == 408 || status == 429 || status >= 500;
+    }
+    return false;
+  }
 }
 
 /// Effective hosted text-model list for a purpose: server-driven when the
@@ -599,6 +634,7 @@ class HostedAiCapabilitiesCache {
 
   HostedAiCapabilities? _value;
   DateTime? _fetchedAt;
+  String? _scope;
   static const Duration _ttl = Duration(minutes: 5);
 
   HostedAiCapabilities? get value => _value;
@@ -609,13 +645,24 @@ class HostedAiCapabilitiesCache {
     return DateTime.now().difference(fetchedAt) < _ttl;
   }
 
-  void store(HostedAiCapabilities capabilities) {
+  bool isFreshFor(String scope) => _scope == scope && isFresh;
+
+  Duration get remainingTtl {
+    final fetchedAt = _fetchedAt;
+    if (fetchedAt == null) return Duration.zero;
+    final remaining = _ttl - DateTime.now().difference(fetchedAt);
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  void store(HostedAiCapabilities capabilities, {String scope = 'default'}) {
     _value = capabilities;
     _fetchedAt = DateTime.now();
+    _scope = scope;
   }
 
   void clear() {
     _value = null;
     _fetchedAt = null;
+    _scope = null;
   }
 }

@@ -313,14 +313,69 @@ void main() {
 
     expect(tasks.calls.first.input['language'], 'follow-source');
   });
+
+  test(
+    'summary final worst-case preflight runs before any paid chunk',
+    () async {
+      final tasks = _PreflightTaskGateway(maxBodyBytes: 100000);
+      final service = HostedAiService(
+        getSession: () => _session(_jwt('task')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        purpose: HostedAiPurpose.summary,
+        taskGateway: tasks,
+      );
+
+      final result = await service.summarizeWithTitleTask(
+        'Title',
+        List.filled(12001, 'a').join(),
+        language: HostedTaskSummaryLanguage.en,
+        operationKey: 'summary-preflight',
+      );
+
+      expect(result.memory, isNull);
+      expect(tasks.calls, isEmpty);
+      expect(service.lastStatusCode, 413);
+    },
+  );
+
+  test('summary final worst-case boundary permits one bounded chunk', () async {
+    final tasks = _PreflightTaskGateway(maxBodyBytes: 130000);
+    final service = HostedAiService(
+      getSession: () => _session(_jwt('task')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5-pro',
+      purpose: HostedAiPurpose.summary,
+      taskGateway: tasks,
+    );
+
+    final result = await service.summarizeWithTitleTask(
+      'Title',
+      List.filled(12000, 'a').join(),
+      language: HostedTaskSummaryLanguage.en,
+      operationKey: 'summary-preflight-one',
+    );
+
+    expect(result.memory, isNotNull);
+    expect(tasks.calls.map((call) => call.profile), [
+      HostedTaskProfile.summaryChunk,
+      HostedTaskProfile.summaryFinal,
+    ]);
+  });
 }
 
 class _TaskCall {
   final HostedTaskProfile profile;
   final Map<String, dynamic> input;
   final String idempotencyKey;
+  final HostedTaskOperationContext? operation;
 
-  const _TaskCall(this.profile, this.input, this.idempotencyKey);
+  const _TaskCall(
+    this.profile,
+    this.input,
+    this.idempotencyKey,
+    this.operation,
+  );
 }
 
 class _FakeTaskGateway implements HostedTaskGateway {
@@ -331,8 +386,9 @@ class _FakeTaskGateway implements HostedTaskGateway {
     required HostedTaskProfile profile,
     required Map<String, dynamic> input,
     required String idempotencyKey,
+    HostedTaskOperationContext? operation,
   }) async {
-    calls.add(_TaskCall(profile, input, idempotencyKey));
+    calls.add(_TaskCall(profile, input, idempotencyKey, operation));
     final result = switch (profile) {
       HostedTaskProfile.summaryChunk => {
         'schemaVersion': 1,
@@ -366,6 +422,20 @@ class _FakeTaskGateway implements HostedTaskGateway {
       result: result,
     );
   }
+}
+
+class _PreflightTaskGateway extends _FakeTaskGateway
+    implements HostedTaskRequestPreflight {
+  @override
+  final int maxBodyBytes;
+
+  _PreflightTaskGateway({required this.maxBodyBytes});
+
+  @override
+  void validateRequest({
+    required HostedTaskProfile profile,
+    required Map<String, dynamic> input,
+  }) {}
 }
 
 AuthSession _session(String accessToken) => AuthSession(

@@ -197,6 +197,34 @@ void main() {
       expect(parse(3, '/ai/tasks/runs').agentTasks, isNull);
       expect(parse(4, '/wrong').agentTasks, isNull);
     });
+
+    test('fails closed when protocol-v4 agent is unavailable', () {
+      final capabilities = HostedAiCapabilities.fromJson({
+        'agent': {
+          'available': false,
+          'protocolVersion': 4,
+          'tasks': {
+            'version': 1,
+            'createEndpoint': '/ai/tasks/runs',
+            'maxBodyBytes': 2097152,
+            'profiles': [
+              {
+                'id': 'summary.final',
+                'version': 1,
+                'resultSchemaVersion': 1,
+                'durable': true,
+                'requiresImages': false,
+                'models': ['mimo-v2.5-pro'],
+                'available': true,
+              },
+            ],
+          },
+        },
+      });
+
+      expect(capabilities.agentAvailable, isFalse);
+      expect(capabilities.agentTasks, isNull);
+    });
   });
 
   group('hostedTextModelOptions', () {
@@ -257,6 +285,30 @@ void main() {
       expect(capabilities.chatModels, isEmpty);
       expect(capabilities.hasServerChatModels, isFalse);
     });
+
+    test('bounded retry recovers from transient capability failures', () async {
+      var calls = 0;
+      final service = HostedAiCapabilitiesService(
+        getSession: _session,
+        client: MockClient((_) async {
+          calls++;
+          if (calls < 3) return http.Response('{}', 503);
+          return http.Response(
+            jsonEncode({
+              'chat': {
+                'models': ['mimo-v2.5'],
+              },
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await service.fetchWithRetry(initialDelay: Duration.zero);
+
+      expect(calls, 3);
+      expect(result.chatModels, ['mimo-v2.5']);
+    });
   });
 
   group('HostedAiCapabilitiesCache', () {
@@ -274,6 +326,21 @@ void main() {
       );
       expect(cache.isFresh, isTrue);
       expect(cache.value!.chatModels, ['deepseek-v4-flash']);
+    });
+
+    test('does not reuse a fresh cache entry across account scopes', () {
+      final cache = HostedAiCapabilitiesCache();
+      cache.store(
+        const HostedAiCapabilities(
+          chatModels: ['mimo-v2.5'],
+          summaryModels: [],
+          visionModels: [],
+        ),
+        scope: 'user-a-device-a',
+      );
+
+      expect(cache.isFreshFor('user-a-device-a'), isTrue);
+      expect(cache.isFreshFor('user-b-device-b'), isFalse);
     });
   });
 }

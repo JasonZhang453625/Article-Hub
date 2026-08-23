@@ -1,8 +1,12 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/memory_document.dart';
 import '../../data/models/passage.dart';
 import '../../data/models/settings.dart';
+import '../../data/services/hosted_ai_service.dart';
+import '../../shared/providers/ai_providers.dart';
 import '../../shared/providers/pipeline_provider.dart';
 
 class SummaryRegenerationResult {
@@ -44,11 +48,14 @@ typedef SaveGeneratedSummary =
     );
 
 typedef ScheduleSummaryRegeneration = Future<void> Function(Article article);
+typedef FinalizeHostedTaskGeneration =
+    Future<void> Function(String articleId, String generation);
 
 class SummaryRegenerationController extends StateNotifier<Set<String>> {
   final SummaryRegenerationRunner? _runner;
   final SaveGeneratedSummary? _save;
   final ScheduleSummaryRegeneration? _schedule;
+  final FinalizeHostedTaskGeneration? _finalizeHostedGeneration;
   final Map<String, Future<SummaryRegenerationResult>> _jobs = {};
 
   /// Tags produced by the latest regeneration attempt per article. Kept until
@@ -60,6 +67,7 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
     SummaryRegenerationRunner? runner,
     SaveGeneratedSummary? save,
     ScheduleSummaryRegeneration? schedule,
+    FinalizeHostedTaskGeneration? finalizeHostedGeneration,
   }) : assert(
          schedule != null || (runner != null && save != null),
          'Provide durable scheduling or a runner and save callback.',
@@ -67,6 +75,7 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
        _runner = runner,
        _save = save,
        _schedule = schedule,
+       _finalizeHostedGeneration = finalizeHostedGeneration,
        super(const <String>{});
 
   Future<SummaryRegenerationResult> regenerate(
@@ -116,6 +125,7 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
 
   Future<SummaryRegenerationResult> _scheduleAndPersist(Article article) async {
     try {
+      final previousGeneration = article.hostedTaskGeneration;
       await _schedule!(
         article.copyWith(
           summary: Article.clearValue,
@@ -125,8 +135,21 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
           processingStatus: ProcessingStatus.pending,
           processingStage: Article.clearValue,
           processingError: Article.clearValue,
+          hostedTaskGeneration: Article.clearValue,
         ),
       );
+      if (previousGeneration != null) {
+        try {
+          await _finalizeHostedGeneration?.call(article.id, previousGeneration);
+        } catch (error) {
+          // The queued Article has already durably cleared its generation.
+          // A cleanup failure can leave only unreachable side-box metadata.
+          developer.log(
+            'hosted task regeneration cleanup failed: $error',
+            name: 'memora.summary_regeneration',
+          );
+        }
+      }
       return const SummaryRegenerationResult(scheduled: true);
     } catch (error) {
       return SummaryRegenerationResult(error: error.toString());
@@ -138,14 +161,24 @@ final summaryRegenerationProvider =
     StateNotifierProvider<SummaryRegenerationController, Set<String>>((ref) {
       return SummaryRegenerationController(
         schedule: ref.read(processingQueueProvider).enqueue,
+        finalizeHostedGeneration: (articleId, generation) async {
+          final gateway = ref.read(summaryAiGatewayProvider);
+          if (gateway is HostedAiService) {
+            await gateway.finalizeTaskGeneration(
+              articleId: articleId,
+              generation: generation,
+            );
+          }
+        },
       );
     });
 
 /// Latest AI-generated tags per article from the most recent regeneration.
 /// Lives on the controller so the summary screen can display them while the
 /// regenerated memory is still queued for processing.
-final summaryRegenerationTagsProvider =
-    Provider<Map<String, List<String>>>((ref) {
+final summaryRegenerationTagsProvider = Provider<Map<String, List<String>>>((
+  ref,
+) {
   final controller = ref.watch(summaryRegenerationProvider.notifier);
   return controller.generatedTags;
 });

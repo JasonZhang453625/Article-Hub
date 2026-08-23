@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:uuid/uuid.dart';
 
 import '../../config/backend_config.dart';
@@ -58,6 +60,30 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
 
   @override
   void Function(int totalTokens)? onTokensUsed;
+
+  Future<bool> hasReplayableTaskGeneration({
+    required String articleId,
+    required String generation,
+  }) async {
+    final gateway = _taskGateway;
+    if (gateway is! HostedTaskRunService) return false;
+    return gateway.hasReplayableBindings(
+      articleId: articleId,
+      generation: generation,
+    );
+  }
+
+  Future<void> finalizeTaskGeneration({
+    required String articleId,
+    required String generation,
+  }) async {
+    final gateway = _taskGateway;
+    if (gateway is! HostedTaskRunService) return;
+    await gateway.finalizeGeneration(
+      articleId: articleId,
+      generation: generation,
+    );
+  }
 
   Future<AuthSession?> _freshSession() async {
     var session = _getSession();
@@ -130,6 +156,7 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
     String content, {
     required HostedTaskSummaryLanguage language,
     String? operationKey,
+    HostedTaskOperationContext? operation,
   }) async {
     lastError = null;
     lastStatusCode = null;
@@ -150,23 +177,36 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
         lastError = 'Article is too long for hosted Pi summarization.';
         return const AiSummaryResult();
       }
-      final chunkSummaries = <String>[];
+      final chunkInputs = <Map<String, dynamic>>[];
       for (var index = 0; index < chunkCount; index++) {
         final start = index * _taskChunkSize;
         final end = (start + _taskChunkSize).clamp(0, normalizedContent.length);
+        final input = <String, dynamic>{
+          if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
+          'content': normalizedContent.substring(start, end),
+          'chunkIndex': index,
+          'chunkCount': chunkCount,
+          'language': language.wireName,
+        };
+        _preflight(gateway, HostedTaskProfile.summaryChunk, input);
+        chunkInputs.add(input);
+      }
+      _preflightSummaryFinalPlan(
+        gateway,
+        title: title,
+        chunkCount: chunkCount,
+        language: language,
+      );
+      final chunkSummaries = <String>[];
+      for (var index = 0; index < chunkCount; index++) {
         final task = await gateway.run(
           profile: HostedTaskProfile.summaryChunk,
           idempotencyKey: _taskKey(
             'summary-chunk-$index',
             operationKey: operationKey,
           ),
-          input: {
-            if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
-            'content': normalizedContent.substring(start, end),
-            'chunkIndex': index,
-            'chunkCount': chunkCount,
-            'language': language.wireName,
-          },
+          input: chunkInputs[index],
+          operation: operation?.child('summary.chunk.$index'),
         );
         final summary = _requiredResultString(task, 'summaryMarkdown');
         chunkSummaries.add(summary);
@@ -180,6 +220,7 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
           'chunks': chunkSummaries,
           'language': language.wireName,
         },
+        operation: operation?.child('summary.final'),
       );
       final generatedTitle = _requiredResultString(finalTask, 'title');
       final overview = _requiredResultString(finalTask, 'overview');
@@ -251,26 +292,26 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
       return null;
     }
     try {
+      final input = <String, dynamic>{
+        'question': _limit(question.trim(), 8000),
+        if (conversation.isNotEmpty)
+          'conversation': conversation
+              .take(20)
+              .map(
+                (message) => {
+                  'role': message['role'] == 'assistant' ? 'assistant' : 'user',
+                  'content': _limit((message['content'] ?? '').trim(), 8000),
+                },
+              )
+              .where((message) => message['content']!.isNotEmpty)
+              .toList(growable: false),
+        'language': language.wireName,
+      };
+      _preflight(gateway, HostedTaskProfile.retrievalRewrite, input);
       final task = await gateway.run(
         profile: HostedTaskProfile.retrievalRewrite,
         idempotencyKey: _taskKey('retrieval-rewrite'),
-        input: {
-          'question': _limit(question.trim(), 8000),
-          if (conversation.isNotEmpty)
-            'conversation': conversation
-                .take(20)
-                .map(
-                  (message) => {
-                    'role': message['role'] == 'assistant'
-                        ? 'assistant'
-                        : 'user',
-                    'content': _limit((message['content'] ?? '').trim(), 8000),
-                  },
-                )
-                .where((message) => message['content']!.isNotEmpty)
-                .toList(growable: false),
-          'language': language.wireName,
-        },
+        input: input,
       );
       return _requiredResultString(task, 'query');
     } on HostedTaskRunException catch (error) {
@@ -289,6 +330,7 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
     required List<String> existingTags,
     required HostedTaskSummaryLanguage language,
     String? operationKey,
+    HostedTaskOperationContext? operation,
   }) async {
     final gateway = _taskGateway;
     if (gateway == null) {
@@ -298,23 +340,24 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
         retryable: true,
       );
     }
+    final input = <String, dynamic>{
+      if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
+      if (summary.trim().isNotEmpty) 'summary': _limit(summary.trim(), 500000),
+      if (content.trim().isNotEmpty) 'content': _limit(content.trim(), 500000),
+      if (existingTags.isNotEmpty)
+        'existingTags': existingTags
+            .map((tag) => _limit(tag.trim(), 80))
+            .where((tag) => tag.isNotEmpty)
+            .take(200)
+            .toList(growable: false),
+      'language': language.wireName,
+    };
+    _preflight(gateway, HostedTaskProfile.memoryTags, input);
     final task = await gateway.run(
       profile: HostedTaskProfile.memoryTags,
       idempotencyKey: _taskKey('memory-tags', operationKey: operationKey),
-      input: {
-        if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
-        if (summary.trim().isNotEmpty)
-          'summary': _limit(summary.trim(), 500000),
-        if (content.trim().isNotEmpty)
-          'content': _limit(content.trim(), 500000),
-        if (existingTags.isNotEmpty)
-          'existingTags': existingTags
-              .map((tag) => _limit(tag.trim(), 80))
-              .where((tag) => tag.isNotEmpty)
-              .take(200)
-              .toList(growable: false),
-        'language': language.wireName,
-      },
+      input: input,
+      operation: operation?.child('memory.tags'),
     );
     final raw = task.result['tags'];
     if (raw is! List) {
@@ -335,6 +378,7 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
     required List<HostedTaskFolderCandidate> folders,
     required HostedTaskSummaryLanguage language,
     String? operationKey,
+    HostedTaskOperationContext? operation,
   }) async {
     final gateway = _taskGateway;
     if (gateway == null) {
@@ -344,34 +388,36 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
         retryable: true,
       );
     }
+    final input = <String, dynamic>{
+      if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
+      if (summary.trim().isNotEmpty) 'summary': _limit(summary.trim(), 500000),
+      if (tags.isNotEmpty)
+        'tags': tags
+            .map((tag) => _limit(tag.trim(), 80))
+            .where((tag) => tag.isNotEmpty)
+            .take(200)
+            .toList(growable: false),
+      'folders': folders
+          .where(
+            (folder) =>
+                folder.id.trim().isNotEmpty && folder.name.trim().isNotEmpty,
+          )
+          .take(5000)
+          .map(
+            (folder) => {
+              'id': _limit(folder.id.trim(), 200),
+              'name': _limit(folder.name.trim(), 500),
+            },
+          )
+          .toList(growable: false),
+      'language': language.wireName,
+    };
+    _preflight(gateway, HostedTaskProfile.memoryFolder, input);
     final task = await gateway.run(
       profile: HostedTaskProfile.memoryFolder,
       idempotencyKey: _taskKey('memory-folder', operationKey: operationKey),
-      input: {
-        if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
-        if (summary.trim().isNotEmpty)
-          'summary': _limit(summary.trim(), 500000),
-        if (tags.isNotEmpty)
-          'tags': tags
-              .map((tag) => _limit(tag.trim(), 80))
-              .where((tag) => tag.isNotEmpty)
-              .take(200)
-              .toList(growable: false),
-        'folders': folders
-            .where(
-              (folder) =>
-                  folder.id.trim().isNotEmpty && folder.name.trim().isNotEmpty,
-            )
-            .take(5000)
-            .map(
-              (folder) => {
-                'id': _limit(folder.id.trim(), 200),
-                'name': _limit(folder.name.trim(), 500),
-              },
-            )
-            .toList(growable: false),
-        'language': language.wireName,
-      },
+      input: input,
+      operation: operation?.child('memory.folder'),
     );
     final folderId = task.result['folderId'];
     if (folderId == null) return null;
@@ -392,6 +438,54 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
       return HostedTaskSummaryLanguage.en;
     }
     return HostedTaskSummaryLanguage.followSource;
+  }
+
+  static void _preflight(
+    HostedTaskGateway gateway,
+    HostedTaskProfile profile,
+    Map<String, dynamic> input,
+  ) {
+    if (gateway is! HostedTaskRequestPreflight) return;
+    final preflight = gateway as HostedTaskRequestPreflight;
+    preflight.validateRequest(profile: profile, input: input);
+  }
+
+  void _preflightSummaryFinalPlan(
+    HostedTaskGateway gateway, {
+    required String title,
+    required int chunkCount,
+    required HostedTaskSummaryLanguage language,
+  }) {
+    if (gateway is! HostedTaskRequestPreflight) return;
+    final preflight = gateway as HostedTaskRequestPreflight;
+    final emptyChunks = List<String>.filled(chunkCount, '', growable: false);
+    final emptyBody = jsonEncode({
+      'task': HostedTaskProfile.summaryFinal.wireName,
+      'task_version': hostedTaskProfileVersion,
+      'model': model.trim(),
+      'input': {
+        if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
+        'chunks': emptyChunks,
+        'language': language.wireName,
+      },
+    });
+    // summary.chunk's protocol-v1 result allows 20,000 UTF-16 code units.
+    // JSON escapes a control code unit as six ASCII bytes (`\\u00xx`), which
+    // is a stricter bound than raw UTF-8. Adding that expansion to the exact
+    // empty envelope guarantees summary.final can fit before any paid chunk.
+    const worstChunkUtf8Bytes = 20000 * 6;
+    final worstCaseBytes =
+        utf8.encode(emptyBody).length + (chunkCount * worstChunkUtf8Bytes);
+    if (worstCaseBytes > preflight.maxBodyBytes) {
+      throw HostedTaskRunException(
+        code: 'hosted_task_request_too_large',
+        message:
+            'Hosted Pi summary would require up to $worstCaseBytes bytes; '
+            'the server limit is ${preflight.maxBodyBytes} bytes.',
+        statusCode: 413,
+        retryable: false,
+      );
+    }
   }
 
   static String _requiredResultString(HostedTaskRunResult task, String field) {

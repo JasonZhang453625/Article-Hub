@@ -103,16 +103,25 @@ void main() {
     'regeneration is durably scheduled instead of being tied to the detail page',
     () async {
       final scheduled = <Article>[];
+      final finalized = <String>[];
       final controller = SummaryRegenerationController(
         schedule: (value) async => scheduled.add(value),
+        finalizeHostedGeneration: (articleId, generation) async {
+          finalized.add('$articleId::$generation');
+        },
       );
 
-      final result = await controller.regenerate(article, settings);
+      final result = await controller.regenerate(
+        article.copyWith(hostedTaskGeneration: 'old-generation'),
+        settings,
+      );
 
       expect(result.scheduled, isTrue);
       expect(scheduled.single.memory, isNull);
       expect(scheduled.single.summary, isNull);
       expect(scheduled.single.processingStatus, ProcessingStatus.pending);
+      expect(scheduled.single.hostedTaskGeneration, isNull);
+      expect(finalized, ['article-1::old-generation']);
       expect(controller.state, isEmpty);
     },
   );

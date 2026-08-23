@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'package:uuid/uuid.dart';
 import '../models/memory_document.dart';
 import '../models/passage.dart';
 import '../models/settings.dart';
@@ -144,18 +145,29 @@ class ProcessingPipeline {
       await _notifyStage(current, ProcessingStage.tags);
     } else {
       current = await _stageTags(current);
+      if (current.processingStatus == ProcessingStatus.failed) {
+        await _articles.update(current);
+        return current;
+      }
     }
 
     // Stage 5: Folder suggestion (auto-classifies to folderId, non-fatal)
     current = await _stageFolderSuggestion(current);
+    if (current.processingStatus == ProcessingStatus.failed) {
+      await _articles.update(current);
+      return current;
+    }
 
     // Mark completed.
+    final completedGeneration = current.hostedTaskGeneration;
     current = current.copyWith(
       processingStatus: ProcessingStatus.completed,
       processingStage: Article.clearValue,
       lastProcessedAt: DateTime.now(),
+      hostedTaskGeneration: Article.clearValue,
     );
     await _articles.update(current);
+    await _finalizeHostedGeneration(current.id, completedGeneration);
 
     // Incrementally update the vector index.
     await _updateIndex(current);
@@ -218,15 +230,26 @@ class ProcessingPipeline {
     if (current.memory?.kind != MemoryKind.aiMemory ||
         _aiGateway is HostedAiService) {
       current = await _stageTags(current);
+      if (current.processingStatus == ProcessingStatus.failed) {
+        await _articles.update(current);
+        return current;
+      }
     }
     current = await _stageFolderSuggestion(current);
+    if (current.processingStatus == ProcessingStatus.failed) {
+      await _articles.update(current);
+      return current;
+    }
 
+    final completedGeneration = current.hostedTaskGeneration;
     current = current.copyWith(
       processingStatus: ProcessingStatus.completed,
       processingStage: Article.clearValue,
       lastProcessedAt: DateTime.now(),
+      hostedTaskGeneration: Article.clearValue,
     );
     await _articles.update(current);
+    await _finalizeHostedGeneration(current.id, completedGeneration);
 
     await _updateIndex(current);
     _fetchedPageCache.remove(current.id);
@@ -254,10 +277,25 @@ class ProcessingPipeline {
   /// Local PDF articles re-extract content then re-enter [processFile].
   /// URL articles re-run the full pipeline from scratch.
   Future<Article?> retry(Article article) async {
+    var generation = article.hostedTaskGeneration;
+    final ai = _aiGateway;
+    if (ai is HostedAiService && generation != null) {
+      try {
+        final replayable = await ai.hasReplayableTaskGeneration(
+          articleId: article.id,
+          generation: generation,
+        );
+        if (!replayable) generation = const Uuid().v4();
+      } catch (_) {
+        // Fail closed: if local recovery metadata cannot be inspected, retain
+        // the generation so a retry cannot create a duplicate paid task.
+      }
+    }
     final base = article.copyWith(
       processingStatus: ProcessingStatus.pending,
       processingError: Article.clearValue,
       retryCount: article.retryCount + 1,
+      hostedTaskGeneration: generation,
     );
     return resume(base);
   }
@@ -467,17 +505,28 @@ class ProcessingPipeline {
     if (current.memory?.kind != MemoryKind.aiMemory ||
         _aiGateway is HostedAiService) {
       current = await _stageTags(current);
+      if (current.processingStatus == ProcessingStatus.failed) {
+        await _articles.update(current);
+        return current;
+      }
     }
 
     // Stage 5: Folder suggestion
     current = await _stageFolderSuggestion(current);
+    if (current.processingStatus == ProcessingStatus.failed) {
+      await _articles.update(current);
+      return current;
+    }
 
+    final completedGeneration = current.hostedTaskGeneration;
     current = current.copyWith(
       processingStatus: ProcessingStatus.completed,
       processingStage: Article.clearValue,
       lastProcessedAt: DateTime.now(),
+      hostedTaskGeneration: Article.clearValue,
     );
     await _articles.update(current);
+    await _finalizeHostedGeneration(current.id, completedGeneration);
 
     await _updateIndex(current);
 
@@ -551,24 +600,28 @@ class ProcessingPipeline {
         );
       }
 
-      final result = ai is HostedAiService
-          ? await ai.summarizeWithTitleTask(
-              article.title,
-              cachedContent,
-              language: taskLanguage,
-              operationKey: await _hostedOperationKey(
-                article: article,
-                stage: 'summary',
-                model: ai.model,
-                language: taskLanguage.wireName,
-                content: '${article.title}\u0000$cachedContent',
-              ),
-            )
-          : await ai.summarizeWithTitle(
-              article.title,
-              cachedContent,
-              languageHint: langHint,
-            );
+      late final AiSummaryResult result;
+      if (ai is HostedAiService) {
+        final operation = await _hostedOperation(
+          article: article,
+          stage: 'summary',
+          model: ai.model,
+          language: taskLanguage.wireName,
+        );
+        result = await ai.summarizeWithTitleTask(
+          article.title,
+          cachedContent,
+          language: taskLanguage,
+          operationKey: operation.key,
+          operation: operation.context,
+        );
+      } else {
+        result = await ai.summarizeWithTitle(
+          article.title,
+          cachedContent,
+          languageHint: langHint,
+        );
+      }
 
       if (result.memory == null || result.memory!.toRetrievalText().isEmpty) {
         return _fail(
@@ -638,6 +691,9 @@ class ProcessingPipeline {
       }
       return article;
     } catch (e) {
+      if (e is HostedTaskRunException) {
+        return _fail(article, 'tags', e);
+      }
       developer.log('tag generation failed: $e', name: 'memora.pipeline');
       return article;
     }
@@ -650,23 +706,20 @@ class ProcessingPipeline {
       final language = hostedTaskSummaryLanguageForIndex(
         settings.languageIndex,
       );
+      final operation = await _hostedOperation(
+        article: article,
+        stage: 'tags',
+        model: ai.model,
+        language: language.wireName,
+      );
       return ai.generateTagsTask(
         title: article.title,
         summary: summary,
         content: summary,
         existingTags: article.tags,
         language: language,
-        operationKey: await _hostedOperationKey(
-          article: article,
-          stage: 'tags',
-          model: ai.model,
-          language: language.wireName,
-          content: jsonEncode({
-            'title': article.title,
-            'summary': summary,
-            'existingTags': article.tags,
-          }),
-        ),
+        operationKey: operation.key,
+        operation: operation.context,
       );
     }
 
@@ -716,9 +769,12 @@ class ProcessingPipeline {
         final language = hostedTaskSummaryLanguageForIndex(
           settings.languageIndex,
         );
-        final folderInput = _folders
-            .map((folder) => {'id': folder.id, 'name': folder.name})
-            .toList(growable: false);
+        final operation = await _hostedOperation(
+          article: article,
+          stage: 'folder',
+          model: ai.model,
+          language: language.wireName,
+        );
         final selectedId = await ai.suggestFolderTask(
           title: article.title,
           summary: _truncateForAi(article.retrievalText),
@@ -730,18 +786,8 @@ class ProcessingPipeline {
               )
               .toList(growable: false),
           language: language,
-          operationKey: await _hostedOperationKey(
-            article: article,
-            stage: 'folder',
-            model: ai.model,
-            language: language.wireName,
-            content: jsonEncode({
-              'title': article.title,
-              'summary': _truncateForAi(article.retrievalText),
-              'tags': article.tags,
-              'folders': folderInput,
-            }),
-          ),
+          operationKey: operation.key,
+          operation: operation.context,
         );
         if (selectedId == null) {
           return article.copyWith(suggestedFolderId: Article.clearValue);
@@ -824,6 +870,9 @@ class ProcessingPipeline {
       }
       return article;
     } catch (e) {
+      if (e is HostedTaskRunException && e.retryable) {
+        return _fail(article, 'folder', e);
+      }
       developer.log('folder suggestion failed: $e', name: 'memora.pipeline');
       return article;
     }
@@ -894,23 +943,56 @@ class ProcessingPipeline {
     return text.substring(0, _aiContextMaxChars);
   }
 
-  Future<String> _hostedOperationKey({
+  Future<({String key, HostedTaskOperationContext context})> _hostedOperation({
     required Article article,
     required String stage,
     required String model,
     required String language,
-    required String content,
-  }) {
-    final anchor =
-        article.lastProcessedAt?.toUtc().toIso8601String() ?? 'initial';
-    return buildHostedTaskOperationKey(
+  }) async {
+    var generation = article.hostedTaskGeneration?.trim();
+    if (generation == null || generation.isEmpty) {
+      generation = const Uuid().v4();
+      article.hostedTaskGeneration = generation;
+      // This write is the logical task boundary. It must commit before a POST
+      // so process-death recovery derives the same operation key.
+      await _articles.update(article);
+    }
+    final key = await buildHostedTaskOperationKey(
       articleId: article.id,
       stage: stage,
-      generation: 'retry:${article.retryCount}|anchor:$anchor',
+      generation: generation,
       model: model,
       language: language,
-      content: content,
     );
+    return (
+      key: key,
+      context: HostedTaskOperationContext(
+        articleId: article.id,
+        generation: generation,
+        stage: stage,
+      ),
+    );
+  }
+
+  Future<void> _finalizeHostedGeneration(
+    String articleId,
+    String? generation,
+  ) async {
+    final ai = _aiGateway;
+    if (ai is! HostedAiService || generation == null) return;
+    try {
+      // Article generation was already cleared and persisted. A cleanup
+      // failure can leave only harmless orphan metadata, never a duplicate run.
+      await ai.finalizeTaskGeneration(
+        articleId: articleId,
+        generation: generation,
+      );
+    } catch (error) {
+      developer.log(
+        'hosted task generation cleanup failed: $error',
+        name: 'memora.pipeline',
+      );
+    }
   }
 
   Future<void> _updateIndex(Article article) async {

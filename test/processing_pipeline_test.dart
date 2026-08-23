@@ -305,6 +305,7 @@ void main() {
       expect(first?.memory?.conclusion, 'Structured conclusion');
       expect(first?.tags, ['Keep me', 'Pi']);
       expect(first?.suggestedFolderId, isNull);
+      expect(first?.hostedTaskGeneration, isNull);
       expect(first?.memory?.generation?.promptVersion, 'pi-summary-v1');
       expect(tasks.calls.map((call) => call.profile), [
         HostedTaskProfile.summaryChunk,
@@ -318,6 +319,16 @@ void main() {
         ),
         hasLength(1),
       );
+      expect(
+        tasks.calls.take(4).map((call) => call.operation?.generation).toSet(),
+        hasLength(1),
+      );
+      expect(tasks.calls.take(4).map((call) => call.operation?.stage), [
+        'summary.chunk.0',
+        'summary.final',
+        'memory.tags',
+        'memory.folder',
+      ]);
 
       final replay = await pipeline.processFile(seed, 'Stable article body.');
 
@@ -341,9 +352,13 @@ void main() {
       for (var index = 0; index < 4; index++) {
         expect(
           tasks.calls[index].idempotencyKey,
-          tasks.calls[index + 4].idempotencyKey,
+          isNot(tasks.calls[index + 4].idempotencyKey),
         );
       }
+      expect(
+        tasks.calls.first.operation?.generation,
+        isNot(tasks.calls[4].operation?.generation),
+      );
     });
   });
 
@@ -449,7 +464,7 @@ void main() {
     });
   });
 
-  group('Stage 4 & 5: tags and folder suggestion are non-fatal', () {
+  group('Stage 4 & 5: tags and folder suggestion recovery', () {
     test(
       'failed summary short-circuits the pipeline — no tags or folder suggestion',
       () async {
@@ -519,14 +534,128 @@ void main() {
         HostedTaskProfile.memoryTags,
         HostedTaskProfile.memoryFolder,
       ]);
-      expect(tasks.calls[0].idempotencyKey, tasks.calls[2].idempotencyKey);
-      expect(tasks.calls[1].idempotencyKey, tasks.calls[3].idempotencyKey);
+      expect(
+        tasks.calls[0].idempotencyKey,
+        isNot(tasks.calls[2].idempotencyKey),
+      );
+      expect(
+        tasks.calls[1].idempotencyKey,
+        isNot(tasks.calls[3].idempotencyKey),
+      );
       expect(
         tasks.calls.every(
           (call) => !call.idempotencyKey.contains('Stable full text'),
         ),
         isTrue,
       );
+    });
+
+    test(
+      'hosted task failures retain the generation for durable retry',
+      () async {
+        final seed = seedArticle(id: 'hosted-tags-failure');
+        final notifier = await seedAndGetNotifier(seed);
+        final tasks = _PipelineTaskGateway(
+          failureProfile: HostedTaskProfile.memoryTags,
+        );
+        final hosted = HostedAiService(
+          getSession: () => null,
+          refreshSession: () async => null,
+          model: 'mimo-v2.5-pro',
+          purpose: HostedAiPurpose.summary,
+          taskGateway: tasks,
+        );
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => AppSettings(languageIndex: 2),
+          getFolders: () => [Folder(id: 'folder-ai', name: 'AI')],
+          aiGateway: hosted,
+        );
+
+        final result = await pipeline.processFile(
+          seed,
+          'Stable full text for hosted task classification.',
+          fullText: true,
+        );
+
+        expect(result?.processingStatus, ProcessingStatus.failed);
+        expect(result?.processingError, startsWith('tags:'));
+        expect(result?.hostedTaskGeneration, isNotNull);
+        expect(tasks.calls.map((call) => call.profile), [
+          HostedTaskProfile.memoryTags,
+        ]);
+      },
+    );
+
+    test(
+      'retryable hosted folder observation retains the generation',
+      () async {
+        final seed = seedArticle(id: 'hosted-folder-retryable');
+        final notifier = await seedAndGetNotifier(seed);
+        final tasks = _PipelineTaskGateway(
+          failureProfile: HostedTaskProfile.memoryFolder,
+        );
+        final hosted = HostedAiService(
+          getSession: () => null,
+          refreshSession: () async => null,
+          model: 'mimo-v2.5-pro',
+          purpose: HostedAiPurpose.summary,
+          taskGateway: tasks,
+        );
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => AppSettings(languageIndex: 2),
+          getFolders: () => [Folder(id: 'folder-ai', name: 'AI')],
+          aiGateway: hosted,
+        );
+
+        final result = await pipeline.processFile(
+          seed,
+          'Stable full text for hosted task classification.',
+          fullText: true,
+        );
+
+        expect(result?.processingStatus, ProcessingStatus.failed);
+        expect(result?.processingError, startsWith('folder:'));
+        expect(result?.hostedTaskGeneration, isNotNull);
+        expect(tasks.calls.map((call) => call.profile), [
+          HostedTaskProfile.memoryTags,
+          HostedTaskProfile.memoryFolder,
+        ]);
+      },
+    );
+
+    test('terminal hosted folder failure stays optional', () async {
+      final seed = seedArticle(id: 'hosted-folder-terminal');
+      final notifier = await seedAndGetNotifier(seed);
+      final tasks = _PipelineTaskGateway(
+        failureProfile: HostedTaskProfile.memoryFolder,
+        failureRetryable: false,
+      );
+      final hosted = HostedAiService(
+        getSession: () => null,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        purpose: HostedAiPurpose.summary,
+        taskGateway: tasks,
+      );
+      final pipeline = ProcessingPipeline(
+        articles: notifier,
+        getSettings: () => AppSettings(languageIndex: 2),
+        getFolders: () => [Folder(id: 'folder-ai', name: 'AI')],
+        aiGateway: hosted,
+      );
+
+      final result = await pipeline.processFile(
+        seed,
+        'Stable full text for hosted task classification.',
+        fullText: true,
+      );
+
+      expect(result?.processingStatus, ProcessingStatus.completed);
+      expect(result?.processingError, isNull);
+      expect(result?.hostedTaskGeneration, isNull);
+      expect(result?.suggestedFolderId, isNull);
     });
   });
 
@@ -857,20 +986,38 @@ class _PipelineTaskCall {
   final HostedTaskProfile profile;
   final Map<String, dynamic> input;
   final String idempotencyKey;
+  final HostedTaskOperationContext? operation;
 
-  const _PipelineTaskCall(this.profile, this.input, this.idempotencyKey);
+  const _PipelineTaskCall(
+    this.profile,
+    this.input,
+    this.idempotencyKey,
+    this.operation,
+  );
 }
 
 class _PipelineTaskGateway implements HostedTaskGateway {
   final List<_PipelineTaskCall> calls = [];
+  final HostedTaskProfile? failureProfile;
+  final bool failureRetryable;
+
+  _PipelineTaskGateway({this.failureProfile, this.failureRetryable = true});
 
   @override
   Future<HostedTaskRunResult> run({
     required HostedTaskProfile profile,
     required Map<String, dynamic> input,
     required String idempotencyKey,
+    HostedTaskOperationContext? operation,
   }) async {
-    calls.add(_PipelineTaskCall(profile, input, idempotencyKey));
+    calls.add(_PipelineTaskCall(profile, input, idempotencyKey, operation));
+    if (profile == failureProfile) {
+      throw HostedTaskRunException(
+        code: 'task_observation_timeout',
+        message: 'Resume this hosted task later.',
+        retryable: failureRetryable,
+      );
+    }
     final Map<String, dynamic> result = switch (profile) {
       HostedTaskProfile.summaryChunk => {
         'schemaVersion': 1,

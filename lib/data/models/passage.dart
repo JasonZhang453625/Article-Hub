@@ -61,6 +61,14 @@ class Article extends HiveObject {
   DateTime? lastProcessedAt;
   String? suggestedFolderId;
 
+  /// Opaque identifier for one logical hosted Pi pipeline generation.
+  ///
+  /// It stays attached while any durable task result may still need to be
+  /// recovered after process death. The pipeline clears it only after the
+  /// complete article pipeline commits successfully; explicit regeneration
+  /// also clears it before scheduling fresh work.
+  String? hostedTaskGeneration;
+
   /// True when the knowledge text is the extracted full page body
   /// (full-text save), false when it is an AI-generated summary.
   bool isFullText;
@@ -132,6 +140,7 @@ class Article extends HiveObject {
     this.retryCount = 0,
     this.lastProcessedAt,
     this.suggestedFolderId,
+    this.hostedTaskGeneration,
     this.isFullText = false,
     this.localFilePath,
     this.localMimeType,
@@ -173,6 +182,7 @@ class Article extends HiveObject {
     int? retryCount,
     Object? lastProcessedAt = _unset,
     Object? suggestedFolderId = _unset,
+    Object? hostedTaskGeneration = _unset,
     bool? isFullText,
     Object? localFilePath = _unset,
     Object? localMimeType = _unset,
@@ -234,6 +244,11 @@ class Article extends HiveObject {
           : (identical(suggestedFolderId, clearValue)
                 ? null
                 : suggestedFolderId as String?),
+      hostedTaskGeneration: identical(hostedTaskGeneration, _unset)
+          ? this.hostedTaskGeneration
+          : (identical(hostedTaskGeneration, clearValue)
+                ? null
+                : hostedTaskGeneration as String?),
       isFullText: isFullText ?? this.isFullText,
       localFilePath: identical(localFilePath, _unset)
           ? this.localFilePath
@@ -390,6 +405,9 @@ class Article extends HiveObject {
           : (json['suggestedFolderId'] is String
                 ? json['suggestedFolderId'] as String
                 : null),
+      // Device-local recovery metadata is intentionally not imported from
+      // backup/sync JSON. The matching side-box never crosses devices.
+      hostedTaskGeneration: null,
       isFullText: memory?.kind == MemoryKind.fullText || legacyIsFullText,
       localFilePath: sourceJson?['localPath'] is String
           ? sourceJson!['localPath'] as String
@@ -462,13 +480,16 @@ class ArticleAdapter extends TypeAdapter<Article> {
           : null,
       attachments: _attachmentsFromStored(fields[23]),
       imageUnderstanding: _imageUnderstandingFromStored(fields[24]),
+      // Field 25 is nullable for every record written before durable hosted
+      // Pi task generations were introduced.
+      hostedTaskGeneration: fields[25] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Article obj) {
     writer
-      ..writeByte(25)
+      ..writeByte(26)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -522,7 +543,9 @@ class ArticleAdapter extends TypeAdapter<Article> {
       ..writeByte(23)
       ..write(obj.attachments.map((attachment) => attachment.toJson()).toList())
       ..writeByte(24)
-      ..write(obj.imageUnderstanding?.toJson());
+      ..write(obj.imageUnderstanding?.toJson())
+      ..writeByte(25)
+      ..write(obj.hostedTaskGeneration);
   }
 }
 

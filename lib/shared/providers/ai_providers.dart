@@ -12,6 +12,7 @@ import '../../data/services/hosted_ai_capabilities.dart';
 import '../../data/services/hosted_agent_service.dart';
 import '../../data/services/hosted_ai_service.dart';
 import '../../data/services/hosted_task_run_service.dart';
+import '../../data/services/hosted_task_run_store.dart';
 import '../../data/services/index_service.dart';
 import '../../data/services/prompt_service.dart';
 import '../../data/services/rag_conversation_service.dart';
@@ -97,14 +98,31 @@ final hostedAiCapabilitiesProvider = FutureProvider<HostedAiCapabilities?>((
   final session = ref.watch(currentSessionProvider);
   if (session == null) return null;
   final cache = HostedAiCapabilitiesCache.instance;
-  if (cache.isFresh) return cache.value ?? _builtInCapabilities();
+  final scope = '${session.user.id}\u0000${session.device.id}';
+
+  void scheduleRefresh(Duration delay) {
+    final timer = Timer(
+      delay <= Duration.zero ? const Duration(seconds: 1) : delay,
+      ref.invalidateSelf,
+    );
+    ref.onDispose(timer.cancel);
+  }
+
+  if (cache.isFreshFor(scope)) {
+    scheduleRefresh(cache.remainingTtl);
+    return cache.value ?? _builtInCapabilities();
+  }
   try {
     final capabilities = await HostedAiCapabilitiesService(
       getSession: () => ref.read(currentSessionProvider),
-    ).fetch();
-    cache.store(capabilities);
+    ).fetchWithRetry();
+    cache.store(capabilities, scope: scope);
+    scheduleRefresh(cache.remainingTtl);
     return capabilities;
   } catch (_) {
+    // Keep task negotiation fail-closed, but do not pin a transient outage for
+    // the lifetime of this FutureProvider instance.
+    scheduleRefresh(const Duration(seconds: 30));
     return _builtInCapabilities();
   }
 });
@@ -259,13 +277,21 @@ class HostedAgentClientToolWakes {
 int _lowerLimit(int advertised, int localHardLimit) =>
     advertised < localHardLimit ? advertised : localHardLimit;
 
+final hostedTaskRunStoreProvider = Provider<HostedTaskRunStore>((ref) {
+  final initialization = ref.watch(hiveInitProvider.future);
+  final store = HiveHostedTaskRunStore(initialization: initialization);
+  ref.onDispose(() => unawaited(store.close()));
+  return store;
+});
+
 final hostedSummaryTaskRunServiceProvider = Provider<HostedTaskRunService?>((
   ref,
 ) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
   final model = settings.hostedAiModel.trim();
-  final tasks = ref.watch(hostedAiCapabilitiesProvider).valueOrNull?.agentTasks;
+  final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
+  final tasks = capabilities?.agentTasks;
   const requiredProfiles = {
     'summary.chunk',
     'summary.final',
@@ -273,6 +299,9 @@ final hostedSummaryTaskRunServiceProvider = Provider<HostedTaskRunService?>((
     'memory.folder',
   };
   if (model.isEmpty ||
+      capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < hostedTaskProtocolVersion ||
       tasks == null ||
       requiredProfiles.any(
         (profile) => tasks.profileForModel(profile, model) == null,
@@ -283,6 +312,8 @@ final hostedSummaryTaskRunServiceProvider = Provider<HostedTaskRunService?>((
     getSession: () => ref.read(currentSessionProvider),
     refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
     model: model,
+    maxBodyBytes: tasks.maxBodyBytes,
+    runStore: ref.watch(hostedTaskRunStoreProvider),
     onTokensUsed: (tokens) {
       ref.read(settingsProvider.notifier).addTokenUsage(tokens);
     },
@@ -293,8 +324,12 @@ final hostedChatTaskRunServiceProvider = Provider<HostedTaskRunService?>((ref) {
   final settings = ref.watch(settingsProvider).valueOrNull;
   if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
   final model = settings.hostedChatModel.trim();
-  final tasks = ref.watch(hostedAiCapabilitiesProvider).valueOrNull?.agentTasks;
+  final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
+  final tasks = capabilities?.agentTasks;
   if (model.isEmpty ||
+      capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion < hostedTaskProtocolVersion ||
       tasks?.profileForModel('retrieval.rewrite', model) == null) {
     return null;
   }
@@ -302,6 +337,8 @@ final hostedChatTaskRunServiceProvider = Provider<HostedTaskRunService?>((ref) {
     getSession: () => ref.read(currentSessionProvider),
     refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
     model: model,
+    maxBodyBytes: tasks!.maxBodyBytes,
+    runStore: ref.watch(hostedTaskRunStoreProvider),
     onTokensUsed: (tokens) {
       ref.read(settingsProvider.notifier).addTokenUsage(tokens);
     },

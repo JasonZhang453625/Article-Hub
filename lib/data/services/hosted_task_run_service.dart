@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../../config/backend_config.dart';
 import 'auth_service.dart';
 import 'hosted_agent_service.dart';
+import 'hosted_task_run_store.dart';
 
 const int hostedTaskProtocolVersion = 4;
 const int hostedTaskProfileVersion = 1;
@@ -60,26 +62,24 @@ HostedTaskSummaryLanguage hostedTaskSummaryLanguageForIndex(int index) {
   };
 }
 
-/// Builds a compact stable operation key without exposing article content in
-/// the HTTP header. The generation anchor must come from persisted article
-/// state so a process restart can reconcile the same logical stage run.
+/// Builds a compact operation key without exposing article content in the HTTP
+/// header. Content is intentionally excluded: the persisted logical generation
+/// and side-store binding keep a running task stable even when a page changes
+/// before a process-death recovery.
 Future<String> buildHostedTaskOperationKey({
   required String articleId,
   required String stage,
   required String generation,
   required String model,
   required String language,
-  required String content,
 }) async {
-  final contentDigest = await Sha256().hash(utf8.encode(content));
   final material = jsonEncode({
-    'version': 1,
+    'version': 2,
     'articleId': articleId,
     'stage': stage,
     'generation': generation,
     'model': model,
     'language': language,
-    'contentSha256': _hex(contentDigest.bytes),
   });
   final digest = await Sha256().hash(utf8.encode(material));
   return 'memora-task-v4-${_hex(digest.bytes)}';
@@ -125,11 +125,40 @@ class HostedTaskRunException implements Exception {
   String toString() => message;
 }
 
+class HostedTaskOperationContext {
+  final String articleId;
+  final String generation;
+  final String stage;
+
+  const HostedTaskOperationContext({
+    required this.articleId,
+    required this.generation,
+    required this.stage,
+  });
+
+  HostedTaskOperationContext child(String childStage) =>
+      HostedTaskOperationContext(
+        articleId: articleId,
+        generation: generation,
+        stage: childStage,
+      );
+}
+
 abstract interface class HostedTaskGateway {
   Future<HostedTaskRunResult> run({
     required HostedTaskProfile profile,
     required Map<String, dynamic> input,
     required String idempotencyKey,
+    HostedTaskOperationContext? operation,
+  });
+}
+
+abstract interface class HostedTaskRequestPreflight {
+  int get maxBodyBytes;
+
+  void validateRequest({
+    required HostedTaskProfile profile,
+    required Map<String, dynamic> input,
   });
 }
 
@@ -139,10 +168,12 @@ abstract interface class HostedTaskGateway {
 /// input. The backend owns the system prompt, result schema, tools, quota, and
 /// Pi runtime. A stable Idempotency-Key is mandatory so an ambiguous 202 can be
 /// reconciled without creating a second logical run.
-class HostedTaskRunService implements HostedTaskGateway {
+class HostedTaskRunService
+    implements HostedTaskGateway, HostedTaskRequestPreflight {
   static const Duration defaultRequestTimeout = Duration(seconds: 15);
   static const Duration defaultRunTimeout = Duration(minutes: 3);
   static const Duration defaultPollInterval = Duration(milliseconds: 350);
+  static const Duration defaultMaxPollInterval = Duration(seconds: 4);
 
   final AuthSession? Function() _getSession;
   final Future<AuthSession?> Function() _refreshSession;
@@ -150,18 +181,31 @@ class HostedTaskRunService implements HostedTaskGateway {
   final Duration requestTimeout;
   final Duration runTimeout;
   final Duration pollInterval;
+  final Duration maxPollInterval;
+  @override
+  final int maxBodyBytes;
+  final HostedTaskRunStore? runStore;
+  final double Function() _jitterSource;
+  final Future<void> Function(Duration) _delay;
   final void Function(int totalTokens)? onTokensUsed;
 
-  const HostedTaskRunService({
+  HostedTaskRunService({
     required AuthSession? Function() getSession,
     required Future<AuthSession?> Function() refreshSession,
     required this.model,
     this.requestTimeout = defaultRequestTimeout,
     this.runTimeout = defaultRunTimeout,
     this.pollInterval = defaultPollInterval,
+    this.maxPollInterval = defaultMaxPollInterval,
+    required this.maxBodyBytes,
+    this.runStore,
+    double Function()? jitterSource,
+    Future<void> Function(Duration)? delay,
     this.onTokensUsed,
   }) : _getSession = getSession,
-       _refreshSession = refreshSession;
+       _refreshSession = refreshSession,
+       _jitterSource = jitterSource ?? _defaultJitter,
+       _delay = delay ?? _defaultDelay;
 
   bool get isConfigured =>
       BackendConfig.isConfigured && model.trim().isNotEmpty;
@@ -171,8 +215,10 @@ class HostedTaskRunService implements HostedTaskGateway {
     required HostedTaskProfile profile,
     required Map<String, dynamic> input,
     required String idempotencyKey,
+    HostedTaskOperationContext? operation,
   }) async {
-    final key = _validIdempotencyKey(idempotencyKey);
+    final logicalKey = _validIdempotencyKey(idempotencyKey);
+    final body = _requestBody(profile, input);
     if (!isConfigured) {
       throw const HostedTaskRunException(
         code: 'hosted_tasks_not_configured',
@@ -182,47 +228,172 @@ class HostedTaskRunService implements HostedTaskGateway {
     }
     var session = await _freshSession();
     final ownerUserId = session.user.id;
+    final scopeHash = await _scopeHash(session);
+    final inputDigest = await _sha256(body);
+    var binding = operation == null
+        ? await runStore?.readBinding(scopeHash, logicalKey)
+        : await runStore?.readBindingForOperation(
+            scopeHash: scopeHash,
+            articleId: operation.articleId,
+            generation: operation.generation,
+            stage: operation.stage,
+          );
+    final key =
+        binding?.idempotencyKey ??
+        (operation == null || runStore == null
+            ? logicalKey
+            : await _effectiveOperationKey(logicalKey, inputDigest));
+    if (binding != null) {
+      try {
+        _validateBinding(binding, profile, operation);
+      } on HostedTaskRunException {
+        await _markBindingAbandoned(scopeHash, binding);
+        rethrow;
+      }
+      final boundRunId = binding.runId?.trim();
+      if (boundRunId != null && boundRunId.isNotEmpty) {
+        try {
+          final fetched = await _fetchWithAuth(
+            boundRunId,
+            session,
+            expectedOwnerUserId: ownerUserId,
+          );
+          session = fetched.session;
+          binding = await _persistSnapshot(
+            scopeHash,
+            binding,
+            fetched.snapshot,
+          );
+          return _waitForResult(
+            fetched.snapshot,
+            profile,
+            session,
+            expectedOwnerUserId: ownerUserId,
+            scopeHash: scopeHash,
+            binding: binding,
+          );
+        } on TimeoutException {
+          throw HostedTaskRunException(
+            code: 'task_observation_timeout',
+            message: 'Hosted Pi task is still running. Resume it later.',
+            retryable: true,
+            runId: boundRunId,
+          );
+        } on http.ClientException {
+          throw HostedTaskRunException(
+            code: 'task_observation_failed',
+            message: 'Hosted Pi task could not be observed. Resume it later.',
+            retryable: true,
+            runId: boundRunId,
+          );
+        } on _TaskHttpException catch (error) {
+          throw _fromHttp(error, runId: boundRunId);
+        }
+      }
+      if (binding.inputDigest != inputDigest) {
+        return _resumeChangedAmbiguousCreate(
+          binding,
+          profile,
+          session,
+          scopeHash: scopeHash,
+          expectedOwnerUserId: ownerUserId,
+        );
+      }
+      late final _TaskSnapshot recovered;
+      try {
+        recovered = await _reconcileAmbiguousCreate(
+          key,
+          profile,
+          expectedOwnerUserId: ownerUserId,
+          replay: () =>
+              _replayCreate(body, key, expectedOwnerUserId: ownerUserId),
+        );
+      } on HostedTaskRunException catch (error) {
+        if (!error.retryable) {
+          await _markBindingAbandoned(scopeHash, binding);
+        }
+        rethrow;
+      }
+      binding = await _persistSnapshot(scopeHash, binding, recovered);
+      return _waitForResult(
+        recovered,
+        profile,
+        session,
+        expectedOwnerUserId: ownerUserId,
+        scopeHash: scopeHash,
+        binding: binding,
+      );
+    } else {
+      binding = HostedTaskRunBinding(
+        idempotencyKey: key,
+        profile: profile.wireName,
+        model: model.trim(),
+        inputDigest: inputDigest,
+        articleId: operation?.articleId,
+        generation: operation?.generation,
+        stage: operation?.stage ?? profile.wireName,
+        runId: null,
+        state: HostedTaskBindingState.creating,
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await runStore?.writeBinding(scopeHash, binding);
+    }
+
     _TaskSnapshot snapshot;
     try {
-      snapshot = await _create(profile, input, key, session);
+      final created = await _createWithAuth(
+        body,
+        key,
+        session,
+        expectedOwnerUserId: ownerUserId,
+      );
+      snapshot = created.snapshot;
+      session = created.session;
     } on _TaskHttpException catch (error) {
-      if (error.statusCode != 401) throw _fromHttp(error);
-      session = await _refreshForOwner(ownerUserId);
-      try {
-        snapshot = await _create(profile, input, key, session);
-      } on _TaskHttpException catch (retryError) {
-        throw _fromHttp(retryError);
+      final failure = _fromHttp(error);
+      if (!failure.retryable) {
+        await _markBindingAbandoned(scopeHash, binding);
       }
+      throw failure;
     } on TimeoutException {
-      snapshot = await _reconcileAmbiguousCreate(
-        key,
-        profile,
-        expectedOwnerUserId: ownerUserId,
-        replay: () => _replayCreate(
-          profile,
-          input,
+      try {
+        snapshot = await _reconcileAmbiguousCreate(
           key,
+          profile,
           expectedOwnerUserId: ownerUserId,
-        ),
-      );
+          replay: () =>
+              _replayCreate(body, key, expectedOwnerUserId: ownerUserId),
+        );
+      } on HostedTaskRunException catch (error) {
+        if (!error.retryable) {
+          await _markBindingAbandoned(scopeHash, binding);
+        }
+        rethrow;
+      }
     } on http.ClientException {
-      snapshot = await _reconcileAmbiguousCreate(
-        key,
-        profile,
-        expectedOwnerUserId: ownerUserId,
-        replay: () => _replayCreate(
-          profile,
-          input,
+      try {
+        snapshot = await _reconcileAmbiguousCreate(
           key,
+          profile,
           expectedOwnerUserId: ownerUserId,
-        ),
-      );
+          replay: () =>
+              _replayCreate(body, key, expectedOwnerUserId: ownerUserId),
+        );
+      } on HostedTaskRunException catch (error) {
+        if (!error.retryable) {
+          await _markBindingAbandoned(scopeHash, binding);
+        }
+        rethrow;
+      }
     }
+    binding = await _persistSnapshot(scopeHash, binding, snapshot);
     return _waitForResult(
       snapshot,
       profile,
       session,
       expectedOwnerUserId: ownerUserId,
+      scopeHash: scopeHash,
+      binding: binding,
     );
   }
 
@@ -232,23 +403,73 @@ class HostedTaskRunService implements HostedTaskGateway {
   }) async {
     var session = await _freshSession();
     final ownerUserId = session.user.id;
-    _TaskSnapshot snapshot;
+    final scopeHash = await _scopeHash(session);
     try {
-      snapshot = await _fetch(runId, session);
+      final fetched = await _fetchWithAuth(
+        runId,
+        session,
+        expectedOwnerUserId: ownerUserId,
+      );
+      session = fetched.session;
+      return _waitForResult(
+        fetched.snapshot,
+        profile,
+        session,
+        expectedOwnerUserId: ownerUserId,
+        scopeHash: scopeHash,
+      );
+    } on TimeoutException {
+      throw HostedTaskRunException(
+        code: 'task_observation_timeout',
+        message: 'Hosted Pi task is still running. Resume it later.',
+        retryable: true,
+        runId: runId,
+      );
+    } on http.ClientException {
+      throw HostedTaskRunException(
+        code: 'task_observation_failed',
+        message: 'Hosted Pi task could not be observed. Resume it later.',
+        retryable: true,
+        runId: runId,
+      );
     } on _TaskHttpException catch (error) {
-      if (error.statusCode != 401) throw _fromHttp(error, runId: runId);
-      session = await _refreshForOwner(ownerUserId);
-      try {
-        snapshot = await _fetch(runId, session);
-      } on _TaskHttpException catch (retryError) {
-        throw _fromHttp(retryError, runId: runId);
-      }
+      throw _fromHttp(error, runId: runId);
     }
-    return _waitForResult(
-      snapshot,
-      profile,
-      session,
-      expectedOwnerUserId: ownerUserId,
+  }
+
+  @override
+  void validateRequest({
+    required HostedTaskProfile profile,
+    required Map<String, dynamic> input,
+  }) {
+    _requestBody(profile, input);
+  }
+
+  Future<bool> hasReplayableBindings({
+    required String articleId,
+    required String generation,
+  }) async {
+    final store = runStore;
+    if (store == null) return false;
+    final session = await _freshSession();
+    return store.hasReplayableBindings(
+      scopeHash: await _scopeHash(session),
+      articleId: articleId,
+      generation: generation,
+    );
+  }
+
+  Future<void> finalizeGeneration({
+    required String articleId,
+    required String generation,
+  }) async {
+    final store = runStore;
+    if (store == null) return;
+    final session = await _freshSession();
+    await store.finalizeGeneration(
+      scopeHash: await _scopeHash(session),
+      articleId: articleId,
+      generation: generation,
     );
   }
 
@@ -278,15 +499,30 @@ class HostedTaskRunService implements HostedTaskGateway {
     HostedTaskProfile profile,
     AuthSession initialSession, {
     required String expectedOwnerUserId,
+    required String scopeHash,
+    HostedTaskRunBinding? binding,
   }) async {
     var snapshot = initial;
     var session = initialSession;
     final deadline = DateTime.now().add(runTimeout);
+    var pollAttempt = 0;
     while (true) {
+      if (binding != null) {
+        binding = await _persistSnapshot(scopeHash, binding, snapshot);
+      }
       final terminal = _terminalResult(snapshot, profile);
       if (terminal != null) {
         final tokens = terminal.totalTokens;
-        if (tokens != null && tokens > 0) onTokensUsed?.call(tokens);
+        if (tokens != null && tokens > 0) {
+          final firstObservation =
+              await runStore?.recordTokenUsage(
+                scopeHash,
+                terminal.runId,
+                tokens,
+              ) ??
+              true;
+          if (firstObservation) onTokensUsed?.call(tokens);
+        }
         return terminal;
       }
       if (snapshot.isTerminal) throw _terminalFailure(snapshot);
@@ -299,19 +535,21 @@ class HostedTaskRunService implements HostedTaskGateway {
         );
       }
       if (pollInterval > Duration.zero) {
-        await Future<void>.delayed(pollInterval);
+        await _delay(_pollDelay(pollAttempt));
       }
+      pollAttempt++;
       try {
-        snapshot = await _fetch(snapshot.runId, session);
+        final fetched = await _fetchWithAuth(
+          snapshot.runId,
+          session,
+          expectedOwnerUserId: expectedOwnerUserId,
+        );
+        snapshot = fetched.snapshot;
+        session = fetched.session;
       } on _TaskHttpException catch (error) {
-        if (error.statusCode != 401) {
-          throw _fromHttp(error, runId: snapshot.runId);
-        }
-        session = await _refreshForOwner(expectedOwnerUserId);
-        try {
-          snapshot = await _fetch(snapshot.runId, session);
-        } on _TaskHttpException catch (retryError) {
-          throw _fromHttp(retryError, runId: snapshot.runId);
+        final failure = _fromHttp(error, runId: snapshot.runId);
+        if (!failure.retryable || !DateTime.now().isBefore(deadline)) {
+          throw failure;
         }
       } on TimeoutException {
         if (!DateTime.now().isBefore(deadline)) {
@@ -342,6 +580,19 @@ class HostedTaskRunService implements HostedTaskGateway {
     required String expectedOwnerUserId,
     required Future<_TaskSnapshot> Function() replay,
   }) async {
+    final existing = await _lookupAmbiguousCreate(
+      idempotencyKey,
+      profile,
+      expectedOwnerUserId: expectedOwnerUserId,
+    );
+    return existing ?? replay();
+  }
+
+  Future<_TaskSnapshot?> _lookupAmbiguousCreate(
+    String idempotencyKey,
+    HostedTaskProfile profile, {
+    required String expectedOwnerUserId,
+  }) async {
     for (var attempt = 0; attempt < 3; attempt++) {
       try {
         final lookup =
@@ -354,31 +605,102 @@ class HostedTaskRunService implements HostedTaskGateway {
               expectedOwnerUserId: expectedOwnerUserId,
             );
         final session = await _freshSession();
-        final snapshot = await _fetch(lookup.runId, session);
+        final snapshot = (await _fetchWithAuth(
+          lookup.runId,
+          session,
+          expectedOwnerUserId: expectedOwnerUserId,
+        )).snapshot;
         _validateTask(snapshot, profile);
         return snapshot;
       } on HostedAgentLookupException catch (error) {
         if (error.notFound && attempt < 2) {
-          await Future<void>.delayed(
-            Duration(milliseconds: 150 * (attempt + 1)),
-          );
+          await _delay(_reconciliationDelay(attempt));
           continue;
         }
-        if (error.notFound) return replay();
+        if (error.notFound) return null;
+        if (error.retryable && attempt < 2) {
+          await _delay(_reconciliationDelay(attempt));
+          continue;
+        }
         throw HostedTaskRunException(
           code: 'task_reconciliation_failed',
           message: error.message,
           statusCode: error.statusCode,
           retryable: error.retryable,
         );
+      } on TimeoutException {
+        if (attempt < 2) {
+          await _delay(_reconciliationDelay(attempt));
+          continue;
+        }
+        throw const HostedTaskRunException(
+          code: 'task_reconciliation_timeout',
+          message: 'Hosted Pi task reconciliation timed out. Retry later.',
+          retryable: true,
+        );
+      } on http.ClientException {
+        if (attempt < 2) {
+          await _delay(_reconciliationDelay(attempt));
+          continue;
+        }
+        throw const HostedTaskRunException(
+          code: 'task_reconciliation_failed',
+          message: 'Hosted Pi task reconciliation failed. Retry later.',
+          retryable: true,
+        );
+      } on _TaskHttpException catch (error) {
+        final failure = _fromHttp(error);
+        if (failure.retryable && attempt < 2) {
+          await _delay(_reconciliationDelay(attempt));
+          continue;
+        }
+        throw failure;
       }
     }
-    return replay();
+    return null;
+  }
+
+  Future<HostedTaskRunResult> _resumeChangedAmbiguousCreate(
+    HostedTaskRunBinding binding,
+    HostedTaskProfile profile,
+    AuthSession session, {
+    required String scopeHash,
+    required String expectedOwnerUserId,
+  }) async {
+    final snapshot = await _lookupAmbiguousCreate(
+      binding.idempotencyKey,
+      profile,
+      expectedOwnerUserId: expectedOwnerUserId,
+    );
+    if (snapshot == null) {
+      await runStore?.writeBinding(
+        scopeHash,
+        binding.copyWith(
+          state: HostedTaskBindingState.abandoned,
+          updatedAt: DateTime.now().toUtc(),
+        ),
+      );
+      throw const HostedTaskRunException(
+        code: 'task_input_changed_during_recovery',
+        message:
+            'The article changed while task creation was being reconciled. '
+            'Retry to start a new generation.',
+        retryable: true,
+      );
+    }
+    final persisted = await _persistSnapshot(scopeHash, binding, snapshot);
+    return _waitForResult(
+      snapshot,
+      profile,
+      session,
+      expectedOwnerUserId: expectedOwnerUserId,
+      scopeHash: scopeHash,
+      binding: persisted,
+    );
   }
 
   Future<_TaskSnapshot> _replayCreate(
-    HostedTaskProfile profile,
-    Map<String, dynamic> input,
+    String body,
     String idempotencyKey, {
     required String expectedOwnerUserId,
   }) async {
@@ -392,15 +714,12 @@ class HostedTaskRunService implements HostedTaskGateway {
       );
     }
     try {
-      return await _create(profile, input, idempotencyKey, session);
-    } on _TaskHttpException catch (error) {
-      if (error.statusCode != 401) throw _fromHttp(error);
-      session = await _refreshForOwner(expectedOwnerUserId);
-      try {
-        return await _create(profile, input, idempotencyKey, session);
-      } on _TaskHttpException catch (retryError) {
-        throw _fromHttp(retryError);
-      }
+      return (await _createWithAuth(
+        body,
+        idempotencyKey,
+        session,
+        expectedOwnerUserId: expectedOwnerUserId,
+      )).snapshot;
     } on TimeoutException {
       throw const HostedTaskRunException(
         code: 'task_create_ambiguous',
@@ -415,6 +734,8 @@ class HostedTaskRunService implements HostedTaskGateway {
             'Hosted Pi task creation is still ambiguous. Reconcile it later.',
         retryable: true,
       );
+    } on _TaskHttpException catch (error) {
+      throw _fromHttp(error);
     }
   }
 
@@ -455,9 +776,43 @@ class HostedTaskRunService implements HostedTaskGateway {
     return refreshed;
   }
 
+  Future<({_TaskSnapshot snapshot, AuthSession session})> _createWithAuth(
+    String body,
+    String idempotencyKey,
+    AuthSession session, {
+    required String expectedOwnerUserId,
+  }) async {
+    try {
+      return (
+        snapshot: await _create(body, idempotencyKey, session),
+        session: session,
+      );
+    } on _TaskHttpException catch (error) {
+      if (error.statusCode != 401) rethrow;
+      final refreshed = await _refreshForOwner(expectedOwnerUserId);
+      return (
+        snapshot: await _create(body, idempotencyKey, refreshed),
+        session: refreshed,
+      );
+    }
+  }
+
+  Future<({_TaskSnapshot snapshot, AuthSession session})> _fetchWithAuth(
+    String runId,
+    AuthSession session, {
+    required String expectedOwnerUserId,
+  }) async {
+    try {
+      return (snapshot: await _fetch(runId, session), session: session);
+    } on _TaskHttpException catch (error) {
+      if (error.statusCode != 401) rethrow;
+      final refreshed = await _refreshForOwner(expectedOwnerUserId);
+      return (snapshot: await _fetch(runId, refreshed), session: refreshed);
+    }
+  }
+
   Future<_TaskSnapshot> _create(
-    HostedTaskProfile profile,
-    Map<String, dynamic> input,
+    String body,
     String idempotencyKey,
     AuthSession session,
   ) {
@@ -469,12 +824,7 @@ class HostedTaskRunService implements HostedTaskGateway {
           'Content-Type': 'application/json; charset=utf-8',
           'Idempotency-Key': idempotencyKey,
         })
-        ..body = jsonEncode({
-          'task': profile.wireName,
-          'task_version': hostedTaskProfileVersion,
-          'model': model.trim(),
-          'input': input,
-        }),
+        ..body = body,
       acceptedStatuses: const {200, 202},
     );
   }
@@ -513,6 +863,140 @@ class HostedTaskRunService implements HostedTaskGateway {
       client.close();
     }
   }
+
+  String _requestBody(HostedTaskProfile profile, Map<String, dynamic> input) {
+    if (maxBodyBytes <= 0) {
+      throw const HostedTaskRunException(
+        code: 'hosted_task_limit_invalid',
+        message: 'Hosted Pi task request limits are unavailable.',
+        retryable: true,
+      );
+    }
+    final body = jsonEncode({
+      'task': profile.wireName,
+      'task_version': hostedTaskProfileVersion,
+      'model': model.trim(),
+      'input': input,
+    });
+    final encodedBytes = utf8.encode(body).length;
+    if (encodedBytes > maxBodyBytes) {
+      throw HostedTaskRunException(
+        code: 'hosted_task_request_too_large',
+        message:
+            'Hosted Pi task request is $encodedBytes bytes; the server limit '
+            'is $maxBodyBytes bytes.',
+        statusCode: 413,
+        retryable: false,
+      );
+    }
+    return body;
+  }
+
+  Future<String> _scopeHash(AuthSession session) => _sha256(
+    'hosted-task-scope-v1\u0000${session.user.id}\u0000${session.device.id}',
+  );
+
+  static Future<String> _effectiveOperationKey(
+    String logicalKey,
+    String inputDigest,
+  ) async {
+    final digest = await _sha256(
+      'hosted-task-effective-key-v1\u0000$logicalKey\u0000$inputDigest',
+    );
+    return 'memora-task-v4-$digest';
+  }
+
+  static Future<String> _sha256(String value) async {
+    final digest = await Sha256().hash(utf8.encode(value));
+    return _hex(digest.bytes);
+  }
+
+  void _validateBinding(
+    HostedTaskRunBinding binding,
+    HostedTaskProfile profile,
+    HostedTaskOperationContext? operation,
+  ) {
+    final operationMatches =
+        operation == null ||
+        (binding.articleId == operation.articleId &&
+            binding.generation == operation.generation &&
+            binding.stage == operation.stage);
+    if (binding.profile != profile.wireName ||
+        binding.model != model.trim() ||
+        !operationMatches) {
+      throw HostedTaskRunException(
+        code: 'hosted_task_binding_mismatch',
+        message: 'Hosted Pi task recovery metadata does not match the request.',
+        retryable: false,
+        runId: binding.runId,
+      );
+    }
+  }
+
+  Future<HostedTaskRunBinding> _persistSnapshot(
+    String scopeHash,
+    HostedTaskRunBinding binding,
+    _TaskSnapshot snapshot,
+  ) async {
+    final updated = binding.copyWith(
+      runId: snapshot.runId,
+      state: switch (snapshot.status) {
+        'queued' => HostedTaskBindingState.queued,
+        'running' => HostedTaskBindingState.running,
+        'waiting_client' => HostedTaskBindingState.waitingClient,
+        'completed' => HostedTaskBindingState.completed,
+        'failed' => HostedTaskBindingState.failed,
+        'cancelled' => HostedTaskBindingState.cancelled,
+        _ => HostedTaskBindingState.abandoned,
+      },
+      updatedAt: DateTime.now().toUtc(),
+    );
+    await runStore?.writeBinding(scopeHash, updated);
+    return updated;
+  }
+
+  Future<void> _markBindingAbandoned(
+    String scopeHash,
+    HostedTaskRunBinding binding,
+  ) {
+    return runStore?.writeBinding(
+          scopeHash,
+          binding.copyWith(
+            state: HostedTaskBindingState.abandoned,
+            updatedAt: DateTime.now().toUtc(),
+          ),
+        ) ??
+        Future<void>.value();
+  }
+
+  Duration _pollDelay(int attempt) {
+    if (pollInterval <= Duration.zero) return Duration.zero;
+    final maximum = maxPollInterval < pollInterval
+        ? pollInterval
+        : maxPollInterval;
+    final exponent = attempt.clamp(0, 10);
+    final multiplier = pow(2, exponent).toDouble();
+    final rawMilliseconds = pollInterval.inMilliseconds * multiplier;
+    final cappedMilliseconds = min(
+      rawMilliseconds,
+      maximum.inMilliseconds.toDouble(),
+    );
+    final jitter = 0.8 + (_jitterSource().clamp(0.0, 1.0) * 0.4);
+    return Duration(
+      milliseconds: max(1, (cappedMilliseconds * jitter).round()),
+    );
+  }
+
+  Duration _reconciliationDelay(int attempt) {
+    final multiplier = pow(2, attempt.clamp(0, 5)).toDouble();
+    final jitter = 0.8 + (_jitterSource().clamp(0.0, 1.0) * 0.4);
+    return Duration(milliseconds: max(1, (150 * multiplier * jitter).round()));
+  }
+
+  static final Random _random = Random.secure();
+  static double _defaultJitter() => _random.nextDouble();
+  static Future<void> _defaultDelay(Duration duration) =>
+      Future<void>.delayed(duration);
 
   HostedTaskRunResult? _terminalResult(
     _TaskSnapshot snapshot,
