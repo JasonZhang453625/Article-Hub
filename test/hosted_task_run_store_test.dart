@@ -32,6 +32,7 @@ void main() {
       profile: 'summary.chunk',
       model: 'mimo-v2.5-pro',
       inputDigest: 'sha256-only-no-article-text',
+      planDigest: 'summary-plan-sha256-only',
       articleId: 'article-1',
       generation: 'generation-1',
       stage: 'summary.chunk.0',
@@ -50,6 +51,7 @@ void main() {
       final restored = await store.readBinding('scope-a', 'memora-task-v4-key');
       expect(restored?.runId, 'run-1');
       expect(restored?.generation, 'generation-1');
+      expect(restored?.planDigest, 'summary-plan-sha256-only');
       expect(await store.readBinding('scope-b', 'memora-task-v4-key'), isNull);
       expect(
         (await store.readBindingForOperation(
@@ -74,6 +76,7 @@ void main() {
       final encoded = raw.values.single.toString();
       expect(encoded, isNot(contains('private article body')));
       expect(raw.values.single.keys, isNot(contains('input')));
+      expect(raw.values.single.keys, isNot(contains('content')));
       await store.close();
     },
   );

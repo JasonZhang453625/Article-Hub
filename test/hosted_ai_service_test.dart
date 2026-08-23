@@ -294,6 +294,157 @@ void main() {
     expect(result.memory?.conclusion, 'Structured conclusion');
   });
 
+  test('every summary child carries one full-plan digest', () async {
+    final tasks = _FakeTaskGateway();
+    final service = HostedAiService(
+      getSession: () => _session(_jwt('task')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5-pro',
+      purpose: HostedAiPurpose.summary,
+      taskGateway: tasks,
+    );
+    const operation = HostedTaskOperationContext(
+      articleId: 'article-plan',
+      generation: 'generation-1',
+      stage: 'summary',
+    );
+    final original = '${List.filled(12000, 'a').join()}b';
+
+    await service.summarizeWithTitleTask(
+      'Plan title',
+      original,
+      language: HostedTaskSummaryLanguage.en,
+      operationKey: 'plan-operation',
+      operation: operation,
+    );
+
+    final firstPlan = tasks.calls.first.operation?.planDigest;
+    expect(firstPlan, hasLength(64));
+    expect(tasks.calls.map((call) => call.operation?.planDigest).toSet(), {
+      firstPlan,
+    });
+    expect(tasks.calls.map((call) => call.operation?.stage), [
+      'summary.chunk.0',
+      'summary.chunk.1',
+      'summary.final',
+    ]);
+
+    tasks.calls.clear();
+    await service.summarizeWithTitleTask(
+      'Plan title',
+      '${List.filled(11999, 'a').join()}xb',
+      language: HostedTaskSummaryLanguage.en,
+      operationKey: 'plan-operation',
+      operation: operation,
+    );
+    expect(tasks.calls.first.operation?.planDigest, isNot(firstPlan));
+  });
+
+  test(
+    'malformed chunk result is invalidated before a new generation',
+    () async {
+      final tasks = _InvalidatingTaskGateway();
+      final service = HostedAiService(
+        getSession: () => _session(_jwt('task')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        purpose: HostedAiPurpose.summary,
+        taskGateway: tasks,
+      );
+
+      final first = await service.summarizeWithTitleTask(
+        'Title',
+        'Body',
+        language: HostedTaskSummaryLanguage.en,
+        operationKey: 'generation-one',
+        operation: const HostedTaskOperationContext(
+          articleId: 'article-invalid',
+          generation: 'generation-1',
+          stage: 'summary',
+        ),
+      );
+      expect(first.memory, isNull);
+      expect(tasks.invalidations, hasLength(1));
+      expect(tasks.invalidations.single.operation?.stage, 'summary.chunk.0');
+
+      final second = await service.summarizeWithTitleTask(
+        'Title',
+        'Body',
+        language: HostedTaskSummaryLanguage.en,
+        operationKey: 'generation-two',
+        operation: const HostedTaskOperationContext(
+          articleId: 'article-invalid',
+          generation: 'generation-2',
+          stage: 'summary',
+        ),
+      );
+      expect(second.memory, isNotNull);
+      expect(tasks.calls.map((call) => call.operation?.generation), [
+        'generation-1',
+        'generation-2',
+        'generation-2',
+      ]);
+      expect(
+        tasks.calls[0].idempotencyKey,
+        isNot(tasks.calls[1].idempotencyKey),
+      );
+    },
+  );
+
+  test(
+    'malformed tag and folder results are invalidated as retryable',
+    () async {
+      for (final profile in [
+        HostedTaskProfile.memoryTags,
+        HostedTaskProfile.memoryFolder,
+      ]) {
+        final tasks = _InvalidatingTaskGateway(malformedProfile: profile);
+        final service = HostedAiService(
+          getSession: () => _session(_jwt('task')),
+          refreshSession: () async => null,
+          model: 'mimo-v2.5-pro',
+          purpose: HostedAiPurpose.summary,
+          taskGateway: tasks,
+        );
+        const operation = HostedTaskOperationContext(
+          articleId: 'article-invalid',
+          generation: 'generation-1',
+          stage: 'classification',
+        );
+
+        final Future<Object?> call = profile == HostedTaskProfile.memoryTags
+            ? service.generateTagsTask(
+                title: 'Title',
+                summary: 'Summary',
+                content: 'Content',
+                existingTags: const [],
+                language: HostedTaskSummaryLanguage.en,
+                operationKey: 'classification-operation',
+                operation: operation,
+              )
+            : service.suggestFolderTask(
+                title: 'Title',
+                summary: 'Summary',
+                tags: const [],
+                folders: const [],
+                language: HostedTaskSummaryLanguage.en,
+                operationKey: 'classification-operation',
+                operation: operation,
+              );
+
+        await expectLater(
+          call,
+          throwsA(
+            isA<HostedTaskRunException>()
+                .having((error) => error.code, 'code', 'invalid_task_result')
+                .having((error) => error.retryable, 'retryable', isTrue),
+          ),
+        );
+        expect(tasks.invalidations, hasLength(1));
+      }
+    },
+  );
+
   test('follow-system summary no longer misroutes to Chinese', () async {
     final tasks = _FakeTaskGateway();
     final service = HostedAiService(
@@ -436,6 +587,88 @@ class _PreflightTaskGateway extends _FakeTaskGateway
     required HostedTaskProfile profile,
     required Map<String, dynamic> input,
   }) {}
+}
+
+class _InvalidatedTaskResult {
+  final HostedTaskRunResult result;
+  final String idempotencyKey;
+  final HostedTaskOperationContext? operation;
+
+  const _InvalidatedTaskResult(
+    this.result,
+    this.idempotencyKey,
+    this.operation,
+  );
+}
+
+class _InvalidatingTaskGateway extends _FakeTaskGateway
+    implements HostedTaskResultInvalidator {
+  final List<_InvalidatedTaskResult> invalidations = [];
+  final HostedTaskProfile malformedProfile;
+  bool _returnMalformed = true;
+
+  _InvalidatingTaskGateway({
+    this.malformedProfile = HostedTaskProfile.summaryChunk,
+  });
+
+  @override
+  Future<HostedTaskRunResult> run({
+    required HostedTaskProfile profile,
+    required Map<String, dynamic> input,
+    required String idempotencyKey,
+    HostedTaskOperationContext? operation,
+  }) async {
+    final valid = await super.run(
+      profile: profile,
+      input: input,
+      idempotencyKey: idempotencyKey,
+      operation: operation,
+    );
+    if (profile == malformedProfile && _returnMalformed) {
+      _returnMalformed = false;
+      final malformed = switch (profile) {
+        HostedTaskProfile.summaryChunk => const {
+          'schemaVersion': 1,
+          'summaryMarkdown': 7,
+        },
+        HostedTaskProfile.summaryFinal => const {
+          'schemaVersion': 1,
+          'title': 7,
+        },
+        HostedTaskProfile.memoryTags => const {
+          'schemaVersion': 1,
+          'tags': ['valid', 7],
+        },
+        HostedTaskProfile.memoryFolder => const {
+          'schemaVersion': 1,
+          'folderId': 7,
+        },
+        HostedTaskProfile.retrievalRewrite => const {
+          'schemaVersion': 1,
+          'query': 7,
+        },
+      };
+      return HostedTaskRunResult(
+        runId: valid.runId,
+        profile: valid.profile,
+        profileVersion: valid.profileVersion,
+        resultSchemaVersion: valid.resultSchemaVersion,
+        result: malformed,
+      );
+    }
+    return valid;
+  }
+
+  @override
+  Future<void> invalidateResult({
+    required HostedTaskRunResult result,
+    required String idempotencyKey,
+    HostedTaskOperationContext? operation,
+  }) async {
+    invalidations.add(
+      _InvalidatedTaskResult(result, idempotencyKey, operation),
+    );
+  }
 }
 
 AuthSession _session(String accessToken) => AuthSession(

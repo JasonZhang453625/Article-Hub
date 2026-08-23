@@ -285,7 +285,13 @@ class ProcessingPipeline {
           articleId: article.id,
           generation: generation,
         );
-        if (!replayable) generation = const Uuid().v4();
+        if (!replayable) {
+          await ai.finalizeTaskGeneration(
+            articleId: article.id,
+            generation: generation,
+          );
+          generation = const Uuid().v4();
+        }
       } catch (_) {
         // Fail closed: if local recovery metadata cannot be inspected, retain
         // the generation so a retry cannot create a duplicate paid task.

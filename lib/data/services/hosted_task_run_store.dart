@@ -25,6 +25,7 @@ class HostedTaskRunBinding {
   final String profile;
   final String model;
   final String inputDigest;
+  final String? planDigest;
   final String? articleId;
   final String? generation;
   final String stage;
@@ -37,6 +38,7 @@ class HostedTaskRunBinding {
     required this.profile,
     required this.model,
     required this.inputDigest,
+    this.planDigest,
     required this.articleId,
     required this.generation,
     required this.stage,
@@ -55,6 +57,7 @@ class HostedTaskRunBinding {
       profile: profile,
       model: model,
       inputDigest: inputDigest,
+      planDigest: planDigest,
       articleId: articleId,
       generation: generation,
       stage: stage,
@@ -72,6 +75,7 @@ class HostedTaskRunBinding {
     'profile': profile,
     'model': model,
     'inputDigest': inputDigest,
+    'planDigest': planDigest,
     'articleId': articleId,
     'generation': generation,
     'stage': stage,
@@ -91,6 +95,7 @@ class HostedTaskRunBinding {
         map['state'] is! String ||
         map['updatedAt'] is! String ||
         (map['articleId'] != null && map['articleId'] is! String) ||
+        (map['planDigest'] != null && map['planDigest'] is! String) ||
         (map['generation'] != null && map['generation'] is! String) ||
         (map['runId'] != null && map['runId'] is! String)) {
       return null;
@@ -106,6 +111,7 @@ class HostedTaskRunBinding {
       profile: map['profile'] as String,
       model: map['model'] as String,
       inputDigest: map['inputDigest'] as String,
+      planDigest: map['planDigest'] as String?,
       articleId: map['articleId'] as String?,
       generation: map['generation'] as String?,
       stage: map['stage'] as String,

@@ -802,14 +802,17 @@ HostedAgentImageInputCapabilities? hostedAgentImageInputForModel(
 /// Fetches hosted-AI capabilities from the backend.
 class HostedAiCapabilitiesService {
   final AuthSession? Function() _getSession;
+  final Future<AuthSession?> Function() _refreshSession;
   final http.Client _client;
   final Duration timeout;
 
   HostedAiCapabilitiesService({
     required AuthSession? Function() getSession,
+    required Future<AuthSession?> Function() refreshSession,
     http.Client? client,
     this.timeout = const Duration(seconds: 15),
   }) : _getSession = getSession,
+       _refreshSession = refreshSession,
        _client = client ?? http.Client();
 
   Future<HostedAiCapabilities> fetch() async {
@@ -821,12 +824,23 @@ class HostedAiCapabilitiesService {
         visionModels: [],
       );
     }
-    final response = await _client
-        .get(
-          BackendConfig.uri('/ai/capabilities'),
-          headers: {'Authorization': 'Bearer ${session.accessToken}'},
-        )
-        .timeout(timeout);
+    final ownerUserId = session.user.id;
+    final ownerDeviceId = session.device.id;
+    var response = await _fetchForSession(session);
+    if (response.statusCode == 401) {
+      final refreshed = await _refreshSession();
+      if (refreshed == null ||
+          refreshed.user.id != ownerUserId ||
+          refreshed.device.id != ownerDeviceId) {
+        throw const HostedAiCapabilitiesException(
+          'The hosted AI account or device changed during refresh.',
+          statusCode: 401,
+        );
+      }
+      // A capability read has no ambiguous write state. Retry exactly once
+      // with the refreshed owner, then surface a second 401 to the caller.
+      response = await _fetchForSession(refreshed);
+    }
     if (response.statusCode != 200) {
       throw HostedAiCapabilitiesException(
         'Request failed with status ${response.statusCode}.',
@@ -838,6 +852,15 @@ class HostedAiCapabilitiesService {
       throw const HostedAiCapabilitiesException('Invalid server response.');
     }
     return HostedAiCapabilities.fromJson(decoded);
+  }
+
+  Future<http.Response> _fetchForSession(AuthSession session) {
+    return _client
+        .get(
+          BackendConfig.uri('/ai/capabilities'),
+          headers: {'Authorization': 'Bearer ${session.accessToken}'},
+        )
+        .timeout(timeout);
   }
 
   Future<HostedAiCapabilities> fetchWithRetry({

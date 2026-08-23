@@ -316,6 +316,7 @@ void main() {
 
       final service = HostedAiCapabilitiesService(
         getSession: () => _session(),
+        refreshSession: () async => null,
         client: client,
       );
       final capabilities = await service.fetch();
@@ -323,7 +324,10 @@ void main() {
     });
 
     test('returns empty capabilities when signed out', () async {
-      final service = HostedAiCapabilitiesService(getSession: () => null);
+      final service = HostedAiCapabilitiesService(
+        getSession: () => null,
+        refreshSession: () async => null,
+      );
       final capabilities = await service.fetch();
       expect(capabilities.chatModels, isEmpty);
       expect(capabilities.hasServerChatModels, isFalse);
@@ -333,6 +337,7 @@ void main() {
       var calls = 0;
       final service = HostedAiCapabilitiesService(
         getSession: _session,
+        refreshSession: () async => null,
         client: MockClient((_) async {
           calls++;
           if (calls < 3) return http.Response('{}', 503);
@@ -352,6 +357,115 @@ void main() {
       expect(calls, 3);
       expect(result.chatModels, ['mimo-v2.5']);
     });
+
+    test(
+      'refreshes one expired capability request for the same owner',
+      () async {
+        final old = _session(accessToken: 'expired-token');
+        final fresh = _session(accessToken: 'fresh-token');
+        var current = old;
+        var refreshes = 0;
+        final authorizations = <String?>[];
+        final service = HostedAiCapabilitiesService(
+          getSession: () => current,
+          refreshSession: () async {
+            refreshes++;
+            current = fresh;
+            return fresh;
+          },
+          client: MockClient((request) async {
+            authorizations.add(request.headers['authorization']);
+            if (authorizations.length == 1) return http.Response('{}', 401);
+            return http.Response(
+              jsonEncode({
+                'agent': {'available': true, 'protocolVersion': 4},
+                'chat': {
+                  'models': ['mimo-v2.5'],
+                },
+              }),
+              200,
+            );
+          }),
+        );
+
+        final result = await service.fetchWithRetry(
+          initialDelay: Duration.zero,
+        );
+
+        expect(result.chatModels, ['mimo-v2.5']);
+        expect(refreshes, 1);
+        expect(authorizations, ['Bearer expired-token', 'Bearer fresh-token']);
+      },
+    );
+
+    test(
+      'fails closed when capability refresh changes owner identity',
+      () async {
+        for (final changedOwner in [
+          _session(accessToken: 'other-token', userId: 'user-2'),
+          _session(accessToken: 'other-token', deviceId: 'device-2'),
+        ]) {
+          var calls = 0;
+          var refreshes = 0;
+          final service = HostedAiCapabilitiesService(
+            getSession: () => _session(accessToken: 'expired-token'),
+            refreshSession: () async {
+              refreshes++;
+              return changedOwner;
+            },
+            client: MockClient((_) async {
+              calls++;
+              return http.Response('{}', 401);
+            }),
+          );
+
+          await expectLater(
+            service.fetchWithRetry(initialDelay: Duration.zero),
+            throwsA(
+              isA<HostedAiCapabilitiesException>().having(
+                (error) => error.statusCode,
+                'statusCode',
+                401,
+              ),
+            ),
+          );
+          expect(calls, 1);
+          expect(refreshes, 1);
+        }
+      },
+    );
+
+    test(
+      'a second capability 401 is bounded without another refresh',
+      () async {
+        var calls = 0;
+        var refreshes = 0;
+        final service = HostedAiCapabilitiesService(
+          getSession: () => _session(accessToken: 'expired-token'),
+          refreshSession: () async {
+            refreshes++;
+            return _session(accessToken: 'fresh-token');
+          },
+          client: MockClient((_) async {
+            calls++;
+            return http.Response('{}', 401);
+          }),
+        );
+
+        await expectLater(
+          service.fetchWithRetry(initialDelay: Duration.zero),
+          throwsA(
+            isA<HostedAiCapabilitiesException>().having(
+              (error) => error.statusCode,
+              'statusCode',
+              401,
+            ),
+          ),
+        );
+        expect(calls, 2);
+        expect(refreshes, 1);
+      },
+    );
   });
 
   group('HostedAiCapabilitiesCache', () {
@@ -388,13 +502,17 @@ void main() {
   });
 }
 
-AuthSession _session() {
-  return const AuthSession(
-    accessToken: 'test-token',
+AuthSession _session({
+  String accessToken = 'test-token',
+  String userId = 'user-1',
+  String deviceId = 'device-1',
+}) {
+  return AuthSession(
+    accessToken: accessToken,
     refreshToken: 'test-refresh',
     refreshTokenExpiresAt: null,
     user: AuthUser(
-      id: 'user-1',
+      id: userId,
       email: 'user@example.com',
       displayName: null,
       status: 'active',
@@ -402,8 +520,8 @@ AuthSession _session() {
       storageUsedBytes: '0',
     ),
     device: AuthDevice(
-      id: 'device-1',
-      userId: 'user-1',
+      id: deviceId,
+      userId: userId,
       deviceName: 'Test device',
       platform: 'test',
       appVersion: '1.0.0',

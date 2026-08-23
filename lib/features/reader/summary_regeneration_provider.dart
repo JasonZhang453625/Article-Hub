@@ -136,6 +136,7 @@ class SummaryRegenerationController extends StateNotifier<Set<String>> {
           processingStage: Article.clearValue,
           processingError: Article.clearValue,
           hostedTaskGeneration: Article.clearValue,
+          suggestedFolderId: Article.clearValue,
         ),
       );
       if (previousGeneration != null) {

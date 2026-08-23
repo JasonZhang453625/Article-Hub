@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../config/backend_config.dart';
@@ -177,6 +178,13 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
         lastError = 'Article is too long for hosted Pi summarization.';
         return const AiSummaryResult();
       }
+      final planDigest = await _summaryPlanDigest(
+        title: title,
+        content: normalizedContent,
+        language: language,
+        chunkCount: chunkCount,
+      );
+      final summaryOperation = operation?.withPlanDigest(planDigest);
       final chunkInputs = <Map<String, dynamic>>[];
       for (var index = 0; index < chunkCount; index++) {
         final start = index * _taskChunkSize;
@@ -199,76 +207,35 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
       );
       final chunkSummaries = <String>[];
       for (var index = 0; index < chunkCount; index++) {
-        final task = await gateway.run(
-          profile: HostedTaskProfile.summaryChunk,
-          idempotencyKey: _taskKey(
-            'summary-chunk-$index',
-            operationKey: operationKey,
-          ),
-          input: chunkInputs[index],
-          operation: operation?.child('summary.chunk.$index'),
+        final idempotencyKey = _taskKey(
+          'summary-chunk-$index',
+          operationKey: operationKey,
         );
-        final summary = _requiredResultString(task, 'summaryMarkdown');
+        final childOperation = summaryOperation?.child('summary.chunk.$index');
+        final summary = await _runValidatedTask<String>(
+          gateway: gateway,
+          profile: HostedTaskProfile.summaryChunk,
+          idempotencyKey: idempotencyKey,
+          input: chunkInputs[index],
+          operation: childOperation,
+          validate: (task) => _requiredResultString(task, 'summaryMarkdown'),
+        );
         chunkSummaries.add(summary);
       }
 
-      final finalTask = await gateway.run(
+      final finalKey = _taskKey('summary-final', operationKey: operationKey);
+      return await _runValidatedTask<AiSummaryResult>(
+        gateway: gateway,
         profile: HostedTaskProfile.summaryFinal,
-        idempotencyKey: _taskKey('summary-final', operationKey: operationKey),
+        idempotencyKey: finalKey,
         input: {
           if (title.trim().isNotEmpty) 'title': _limit(title.trim(), 2000),
           'chunks': chunkSummaries,
           'language': language.wireName,
         },
-        operation: operation?.child('summary.final'),
+        operation: summaryOperation?.child('summary.final'),
+        validate: _parseSummaryFinal,
       );
-      final generatedTitle = _requiredResultString(finalTask, 'title');
-      final overview = _requiredResultString(finalTask, 'overview');
-      final rawConclusion = finalTask.result['conclusion'];
-      if (rawConclusion is! String) {
-        throw const FormatException(
-          'Hosted Pi summary.final task returned invalid conclusion.',
-        );
-      }
-      final rawPoints = finalTask.result['keyPoints'];
-      if (rawPoints is! List || rawPoints.isEmpty) {
-        throw const FormatException(
-          'Hosted Pi summary.final task returned invalid keyPoints.',
-        );
-      }
-      final keyPoints = <MemoryKeyPoint>[];
-      for (final rawPoint in rawPoints) {
-        if (rawPoint is! Map) {
-          throw const FormatException(
-            'Hosted Pi summary.final task returned an invalid key point.',
-          );
-        }
-        final point = Map<String, dynamic>.from(rawPoint);
-        final topic = point['topic'];
-        final pointContent = point['content'];
-        if (topic is! String ||
-            topic.trim().isEmpty ||
-            pointContent is! String ||
-            pointContent.trim().isEmpty) {
-          throw const FormatException(
-            'Hosted Pi summary.final task returned an invalid key point.',
-          );
-        }
-        keyPoints.add(
-          MemoryKeyPoint(
-            id: 'kp_${const Uuid().v4()}',
-            order: keyPoints.length + 1,
-            topic: topic.trim(),
-            content: pointContent.trim(),
-          ),
-        );
-      }
-      final memory = MemoryDocument.ai(
-        overview: overview,
-        keyPoints: keyPoints,
-        conclusion: rawConclusion.trim(),
-      );
-      return AiSummaryResult(title: generatedTitle, memory: memory);
     } on HostedTaskRunException catch (error) {
       _captureTaskError(error);
       return const AiSummaryResult();
@@ -308,12 +275,13 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
         'language': language.wireName,
       };
       _preflight(gateway, HostedTaskProfile.retrievalRewrite, input);
-      final task = await gateway.run(
+      return await _runValidatedTask<String>(
+        gateway: gateway,
         profile: HostedTaskProfile.retrievalRewrite,
         idempotencyKey: _taskKey('retrieval-rewrite'),
         input: input,
+        validate: (task) => _requiredResultString(task, 'query'),
       );
-      return _requiredResultString(task, 'query');
     } on HostedTaskRunException catch (error) {
       _captureTaskError(error);
       return null;
@@ -353,22 +321,29 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
       'language': language.wireName,
     };
     _preflight(gateway, HostedTaskProfile.memoryTags, input);
-    final task = await gateway.run(
+    final idempotencyKey = _taskKey('memory-tags', operationKey: operationKey);
+    final childOperation = operation?.child('memory.tags');
+    return _runValidatedTask<List<String>>(
+      gateway: gateway,
       profile: HostedTaskProfile.memoryTags,
-      idempotencyKey: _taskKey('memory-tags', operationKey: operationKey),
+      idempotencyKey: idempotencyKey,
       input: input,
-      operation: operation?.child('memory.tags'),
+      operation: childOperation,
+      validate: (task) {
+        final raw = task.result['tags'];
+        if (raw is! List || raw.any((tag) => tag is! String)) {
+          throw const FormatException(
+            'Hosted Pi tag task returned invalid tags.',
+          );
+        }
+        return raw
+            .cast<String>()
+            .map((tag) => tag.trim())
+            .where((tag) => tag.isNotEmpty)
+            .take(12)
+            .toList(growable: false);
+      },
     );
-    final raw = task.result['tags'];
-    if (raw is! List) {
-      throw const FormatException('Hosted Pi tag task returned invalid tags.');
-    }
-    return raw
-        .whereType<String>()
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty)
-        .take(12)
-        .toList(growable: false);
   }
 
   Future<String?> suggestFolderTask({
@@ -413,20 +388,148 @@ class HostedAiService implements AiGateway, MultimodalAiGateway {
       'language': language.wireName,
     };
     _preflight(gateway, HostedTaskProfile.memoryFolder, input);
-    final task = await gateway.run(
-      profile: HostedTaskProfile.memoryFolder,
-      idempotencyKey: _taskKey('memory-folder', operationKey: operationKey),
-      input: input,
-      operation: operation?.child('memory.folder'),
+    final idempotencyKey = _taskKey(
+      'memory-folder',
+      operationKey: operationKey,
     );
-    final folderId = task.result['folderId'];
-    if (folderId == null) return null;
-    if (folderId is! String || folderId.trim().isEmpty) {
-      throw const FormatException(
-        'Hosted Pi folder task returned an invalid folder id.',
+    final childOperation = operation?.child('memory.folder');
+    return _runValidatedTask<String?>(
+      gateway: gateway,
+      profile: HostedTaskProfile.memoryFolder,
+      idempotencyKey: idempotencyKey,
+      input: input,
+      operation: childOperation,
+      validate: (task) {
+        final folderId = task.result['folderId'];
+        if (folderId == null) return null;
+        if (folderId is! String || folderId.trim().isEmpty) {
+          throw const FormatException(
+            'Hosted Pi folder task returned an invalid folder id.',
+          );
+        }
+        return folderId.trim();
+      },
+    );
+  }
+
+  Future<String> _summaryPlanDigest({
+    required String title,
+    required String content,
+    required HostedTaskSummaryLanguage language,
+    required int chunkCount,
+  }) async {
+    final material = jsonEncode({
+      'version': 1,
+      'model': model.trim(),
+      'title': title.trim(),
+      'content': content,
+      'language': language.wireName,
+      'profiles': [
+        {
+          'id': HostedTaskProfile.summaryChunk.wireName,
+          'version': hostedTaskProfileVersion,
+          'resultSchemaVersion': hostedTaskResultSchemaVersion,
+        },
+        {
+          'id': HostedTaskProfile.summaryFinal.wireName,
+          'version': hostedTaskProfileVersion,
+          'resultSchemaVersion': hostedTaskResultSchemaVersion,
+        },
+      ],
+      'chunking': {
+        'algorithm': 'utf16-code-units',
+        'maxCodeUnits': _taskChunkSize,
+        'chunkCount': chunkCount,
+      },
+    });
+    final digest = await Sha256().hash(utf8.encode(material));
+    return digest.bytes
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
+  Future<T> _runValidatedTask<T>({
+    required HostedTaskGateway gateway,
+    required HostedTaskProfile profile,
+    required String idempotencyKey,
+    required Map<String, dynamic> input,
+    HostedTaskOperationContext? operation,
+    required T Function(HostedTaskRunResult task) validate,
+  }) async {
+    final task = await gateway.run(
+      profile: profile,
+      idempotencyKey: idempotencyKey,
+      input: input,
+      operation: operation,
+    );
+    try {
+      return validate(task);
+    } on FormatException catch (error) {
+      if (gateway is HostedTaskResultInvalidator) {
+        final invalidator = gateway as HostedTaskResultInvalidator;
+        await invalidator.invalidateResult(
+          result: task,
+          idempotencyKey: idempotencyKey,
+          operation: operation,
+        );
+      }
+      throw HostedTaskRunException(
+        code: 'invalid_task_result',
+        message: error.message,
+        retryable: true,
+        runId: task.runId,
       );
     }
-    return folderId.trim();
+  }
+
+  static AiSummaryResult _parseSummaryFinal(HostedTaskRunResult finalTask) {
+    final generatedTitle = _requiredResultString(finalTask, 'title');
+    final overview = _requiredResultString(finalTask, 'overview');
+    final rawConclusion = finalTask.result['conclusion'];
+    if (rawConclusion is! String) {
+      throw const FormatException(
+        'Hosted Pi summary.final task returned invalid conclusion.',
+      );
+    }
+    final rawPoints = finalTask.result['keyPoints'];
+    if (rawPoints is! List || rawPoints.isEmpty) {
+      throw const FormatException(
+        'Hosted Pi summary.final task returned invalid keyPoints.',
+      );
+    }
+    final keyPoints = <MemoryKeyPoint>[];
+    for (final rawPoint in rawPoints) {
+      if (rawPoint is! Map) {
+        throw const FormatException(
+          'Hosted Pi summary.final task returned an invalid key point.',
+        );
+      }
+      final point = Map<String, dynamic>.from(rawPoint);
+      final topic = point['topic'];
+      final pointContent = point['content'];
+      if (topic is! String ||
+          topic.trim().isEmpty ||
+          pointContent is! String ||
+          pointContent.trim().isEmpty) {
+        throw const FormatException(
+          'Hosted Pi summary.final task returned an invalid key point.',
+        );
+      }
+      keyPoints.add(
+        MemoryKeyPoint(
+          id: 'kp_${const Uuid().v4()}',
+          order: keyPoints.length + 1,
+          topic: topic.trim(),
+          content: pointContent.trim(),
+        ),
+      );
+    }
+    final memory = MemoryDocument.ai(
+      overview: overview,
+      keyPoints: keyPoints,
+      conclusion: rawConclusion.trim(),
+    );
+    return AiSummaryResult(title: generatedTitle, memory: memory);
   }
 
   static HostedTaskSummaryLanguage _summaryLanguageFromHint(String hint) {

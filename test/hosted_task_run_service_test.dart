@@ -10,6 +10,13 @@ import 'package:memora/data/services/hosted_task_run_store.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('default polling starts at one second', () {
+    expect(
+      HostedTaskRunService.defaultPollInterval,
+      const Duration(seconds: 1),
+    );
+  });
+
   test(
     'creates a v4 task with a mandatory key and polls a typed result',
     () async {
@@ -573,6 +580,265 @@ void main() {
     expect(gets, 1);
     expect(tokens, 19);
   });
+
+  test(
+    'summary plan resumes unchanged but abandons changed process-death recovery',
+    () async {
+      final store = _MemoryTaskRunStore();
+      var posts = 0;
+      var gets = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'POST') {
+          posts++;
+        } else {
+          gets++;
+        }
+        return http.Response(
+          jsonEncode(
+            _snapshot(
+              status: 'completed',
+              task: 'summary.chunk',
+              result: {'schemaVersion': 1, 'summaryMarkdown': 'bounded chunk'},
+            ),
+          ),
+          200,
+        );
+      });
+      final service = HostedTaskRunService(
+        getSession: _session,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5-pro',
+        maxBodyBytes: 1024 * 1024,
+        pollInterval: Duration.zero,
+        runStore: store,
+      );
+      const oldPlan = HostedTaskOperationContext(
+        articleId: 'article-1',
+        generation: 'generation-1',
+        stage: 'summary.chunk.0',
+        planDigest: 'old-summary-plan',
+      );
+
+      await http.runWithClient(() async {
+        await service.run(
+          profile: HostedTaskProfile.summaryChunk,
+          input: {
+            'content': 'old boundary content',
+            'chunkIndex': 0,
+            'chunkCount': 2,
+            'language': 'en',
+          },
+          idempotencyKey: 'old-generation-key',
+          operation: oldPlan,
+        );
+        await service.run(
+          profile: HostedTaskProfile.summaryChunk,
+          input: {
+            'content': 'old boundary content',
+            'chunkIndex': 0,
+            'chunkCount': 2,
+            'language': 'en',
+          },
+          idempotencyKey: 'old-generation-key',
+          operation: oldPlan,
+        );
+
+        await expectLater(
+          service.run(
+            profile: HostedTaskProfile.summaryChunk,
+            input: {
+              'content': 'changed boundary content',
+              'chunkIndex': 0,
+              'chunkCount': 2,
+              'language': 'en',
+            },
+            idempotencyKey: 'old-generation-key',
+            operation: const HostedTaskOperationContext(
+              articleId: 'article-1',
+              generation: 'generation-1',
+              stage: 'summary.chunk.0',
+              planDigest: 'changed-summary-plan',
+            ),
+          ),
+          throwsA(
+            isA<HostedTaskRunException>()
+                .having(
+                  (error) => error.code,
+                  'code',
+                  'hosted_task_summary_plan_mismatch',
+                )
+                .having((error) => error.retryable, 'retryable', isTrue),
+          ),
+        );
+
+        expect(
+          store.bindings.values
+              .where((binding) => binding.generation == 'generation-1')
+              .single
+              .state,
+          HostedTaskBindingState.abandoned,
+        );
+
+        await service.run(
+          profile: HostedTaskProfile.summaryChunk,
+          input: {
+            'content': 'changed boundary content',
+            'chunkIndex': 0,
+            'chunkCount': 2,
+            'language': 'en',
+          },
+          idempotencyKey: 'new-generation-key',
+          operation: const HostedTaskOperationContext(
+            articleId: 'article-1',
+            generation: 'generation-2',
+            stage: 'summary.chunk.0',
+            planDigest: 'changed-summary-plan',
+          ),
+        );
+      }, () => client);
+
+      expect(posts, 2);
+      expect(gets, 1, reason: 'same plan resumes the completed child by id');
+    },
+  );
+
+  test('legacy summary binding without plan digest fails safe', () async {
+    final store = _MemoryTaskRunStore();
+    final service = HostedTaskRunService(
+      getSession: _session,
+      refreshSession: () async => null,
+      model: 'mimo-v2.5-pro',
+      maxBodyBytes: 1024 * 1024,
+      pollInterval: Duration.zero,
+      runStore: store,
+    );
+    const legacyOperation = HostedTaskOperationContext(
+      articleId: 'article-legacy',
+      generation: 'generation-legacy',
+      stage: 'summary.chunk.0',
+    );
+    final client = MockClient(
+      (_) async => http.Response(
+        jsonEncode(
+          _snapshot(
+            status: 'completed',
+            task: 'summary.chunk',
+            result: {'schemaVersion': 1, 'summaryMarkdown': 'legacy chunk'},
+          ),
+        ),
+        200,
+      ),
+    );
+
+    await http.runWithClient(() async {
+      await service.run(
+        profile: HostedTaskProfile.summaryChunk,
+        input: {
+          'content': 'legacy',
+          'chunkIndex': 0,
+          'chunkCount': 1,
+          'language': 'en',
+        },
+        idempotencyKey: 'legacy-plan-key',
+        operation: legacyOperation,
+      );
+      await expectLater(
+        service.run(
+          profile: HostedTaskProfile.summaryChunk,
+          input: {
+            'content': 'legacy',
+            'chunkIndex': 0,
+            'chunkCount': 1,
+            'language': 'en',
+          },
+          idempotencyKey: 'legacy-plan-key',
+          operation: const HostedTaskOperationContext(
+            articleId: 'article-legacy',
+            generation: 'generation-legacy',
+            stage: 'summary.chunk.0',
+            planDigest: 'current-plan',
+          ),
+        ),
+        throwsA(
+          isA<HostedTaskRunException>().having(
+            (error) => error.code,
+            'code',
+            'hosted_task_summary_plan_mismatch',
+          ),
+        ),
+      );
+    }, () => client);
+  });
+
+  test(
+    'invalid completed schema abandons binding before retry generation',
+    () async {
+      final store = _MemoryTaskRunStore();
+      var posts = 0;
+      final service = HostedTaskRunService(
+        getSession: _session,
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+        maxBodyBytes: 1024 * 1024,
+        pollInterval: Duration.zero,
+        runStore: store,
+      );
+      final client = MockClient((_) async {
+        posts++;
+        return http.Response(
+          jsonEncode(
+            _snapshot(
+              status: 'completed',
+              task: 'retrieval.rewrite',
+              result: {
+                'schemaVersion': posts == 1 ? 0 : 1,
+                'query': 'standalone',
+              },
+            ),
+          ),
+          202,
+        );
+      });
+
+      await http.runWithClient(() async {
+        await expectLater(
+          service.run(
+            profile: HostedTaskProfile.retrievalRewrite,
+            input: {'question': 'Q', 'language': 'en'},
+            idempotencyKey: 'invalid-generation-key',
+            operation: const HostedTaskOperationContext(
+              articleId: 'article-invalid',
+              generation: 'generation-1',
+              stage: 'rewrite',
+            ),
+          ),
+          throwsA(
+            isA<HostedTaskRunException>().having(
+              (error) => error.code,
+              'code',
+              'invalid_task_result',
+            ),
+          ),
+        );
+        expect(
+          store.bindings.values.single.state,
+          HostedTaskBindingState.abandoned,
+        );
+        await service.run(
+          profile: HostedTaskProfile.retrievalRewrite,
+          input: {'question': 'Q', 'language': 'en'},
+          idempotencyKey: 'valid-generation-key',
+          operation: const HostedTaskOperationContext(
+            articleId: 'article-invalid',
+            generation: 'generation-2',
+            stage: 'rewrite',
+          ),
+        );
+      }, () => client);
+
+      expect(posts, 2);
+    },
+  );
 
   test(
     'missing side binding derives a different key for changed page content',

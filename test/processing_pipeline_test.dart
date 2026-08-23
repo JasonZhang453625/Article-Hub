@@ -15,11 +15,13 @@ import 'package:memora/data/models/settings.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
 import 'package:memora/data/services/ai_service.dart';
+import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/content_extractor.dart';
 import 'package:memora/data/services/attachment_store.dart';
 import 'package:memora/data/services/image_understanding_service.dart';
 import 'package:memora/data/services/hosted_ai_service.dart';
 import 'package:memora/data/services/hosted_task_run_service.dart';
+import 'package:memora/data/services/hosted_task_run_store.dart';
 import 'package:memora/data/services/http_client.dart';
 import 'package:memora/data/services/metadata_service.dart';
 import 'package:memora/data/services/processing_pipeline.dart';
@@ -390,6 +392,52 @@ void main() {
       expect(retried.processingStatus, ProcessingStatus.failed);
       expect(retried.processingError, startsWith('content:'));
     });
+
+    test(
+      'rotating a dead hosted generation deletes its old side metadata',
+      () async {
+        final failed = seedArticle().copyWith(
+          processingStatus: ProcessingStatus.failed,
+          processingError: 'summary: invalid task result',
+          hostedTaskGeneration: 'dead-generation',
+        );
+        final notifier = await seedAndGetNotifier(failed);
+        final store = _RotationTrackingTaskRunStore();
+        final tasks = HostedTaskRunService(
+          getSession: _pipelineAuthSession,
+          refreshSession: () async => null,
+          model: 'mimo-v2.5-pro',
+          maxBodyBytes: 1024 * 1024,
+          runStore: store,
+        );
+        final hosted = HostedAiService(
+          getSession: _pipelineAuthSession,
+          refreshSession: () async => null,
+          model: 'mimo-v2.5-pro',
+          purpose: HostedAiPurpose.summary,
+          taskGateway: tasks,
+        );
+        final pipeline = ProcessingPipeline(
+          articles: notifier,
+          getSettings: () => AppSettings(languageIndex: 2),
+          getFolders: () => const <Folder>[],
+          aiGateway: hosted,
+          metadata: MetadataService(
+            http: mockHttp(
+              (_) async => htmlResponse('<html><title>X</title></html>'),
+            ),
+          ),
+          extractor: ContentExtractor(
+            http: mockHttp((_) async => http.Response('unavailable', 500)),
+          ),
+        );
+
+        final result = await pipeline.retry(failed);
+
+        expect(store.finalized, ['p1::dead-generation']);
+        expect(result?.hostedTaskGeneration, isNot('dead-generation'));
+      },
+    );
   });
 
   group('Durable resume semantics', () {
@@ -980,6 +1028,87 @@ class _FakeImageUnderstandingGateway implements ImageUnderstandingGateway {
       combinedMarkdown: '# 图片转写\n\n完整图片内容',
     );
   }
+}
+
+class _RotationTrackingTaskRunStore implements HostedTaskRunStore {
+  final List<String> finalized = [];
+
+  @override
+  Future<HostedTaskRunBinding?> readBinding(
+    String scopeHash,
+    String idempotencyKey,
+  ) async => null;
+
+  @override
+  Future<HostedTaskRunBinding?> readBindingForOperation({
+    required String scopeHash,
+    required String articleId,
+    required String generation,
+    required String stage,
+  }) async => null;
+
+  @override
+  Future<void> writeBinding(
+    String scopeHash,
+    HostedTaskRunBinding binding,
+  ) async {}
+
+  @override
+  Future<bool> recordTokenUsage(
+    String scopeHash,
+    String runId,
+    int totalTokens,
+  ) async => true;
+
+  @override
+  Future<bool> hasReplayableBindings({
+    required String scopeHash,
+    required String articleId,
+    required String generation,
+  }) async => false;
+
+  @override
+  Future<void> finalizeGeneration({
+    required String scopeHash,
+    required String articleId,
+    required String generation,
+  }) async {
+    finalized.add('$articleId::$generation');
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
+AuthSession _pipelineAuthSession() {
+  final payload = base64Url.encode(
+    utf8.encode(
+      jsonEncode({
+        'sessionId': '11111111-1111-4111-8111-111111111111',
+        'deviceId': '22222222-2222-4222-8222-222222222222',
+      }),
+    ),
+  );
+  return AuthSession(
+    accessToken: 'header.${payload.replaceAll('=', '')}.signature',
+    refreshToken: 'refresh',
+    refreshTokenExpiresAt: null,
+    user: const AuthUser(
+      id: 'user-1',
+      email: 'user@example.com',
+      displayName: null,
+      status: 'active',
+      plan: 'free',
+      storageUsedBytes: '0',
+    ),
+    device: const AuthDevice(
+      id: 'device-1',
+      userId: 'user-1',
+      deviceName: 'test',
+      platform: 'test',
+      appVersion: '1.0.0',
+    ),
+  );
 }
 
 class _PipelineTaskCall {

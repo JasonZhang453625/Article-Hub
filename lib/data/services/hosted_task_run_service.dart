@@ -129,18 +129,29 @@ class HostedTaskOperationContext {
   final String articleId;
   final String generation;
   final String stage;
+  final String? planDigest;
 
   const HostedTaskOperationContext({
     required this.articleId,
     required this.generation,
     required this.stage,
+    this.planDigest,
   });
+
+  HostedTaskOperationContext withPlanDigest(String digest) =>
+      HostedTaskOperationContext(
+        articleId: articleId,
+        generation: generation,
+        stage: stage,
+        planDigest: digest,
+      );
 
   HostedTaskOperationContext child(String childStage) =>
       HostedTaskOperationContext(
         articleId: articleId,
         generation: generation,
         stage: childStage,
+        planDigest: planDigest,
       );
 }
 
@@ -148,6 +159,18 @@ abstract interface class HostedTaskGateway {
   Future<HostedTaskRunResult> run({
     required HostedTaskProfile profile,
     required Map<String, dynamic> input,
+    required String idempotencyKey,
+    HostedTaskOperationContext? operation,
+  });
+}
+
+/// Lets a typed consumer reject a completed result after profile-level parsing.
+///
+/// The durable binding must become non-replayable before the caller retries,
+/// otherwise a malformed completed result would be fetched forever.
+abstract interface class HostedTaskResultInvalidator {
+  Future<void> invalidateResult({
+    required HostedTaskRunResult result,
     required String idempotencyKey,
     HostedTaskOperationContext? operation,
   });
@@ -169,10 +192,13 @@ abstract interface class HostedTaskRequestPreflight {
 /// Pi runtime. A stable Idempotency-Key is mandatory so an ambiguous 202 can be
 /// reconciled without creating a second logical run.
 class HostedTaskRunService
-    implements HostedTaskGateway, HostedTaskRequestPreflight {
+    implements
+        HostedTaskGateway,
+        HostedTaskRequestPreflight,
+        HostedTaskResultInvalidator {
   static const Duration defaultRequestTimeout = Duration(seconds: 15);
   static const Duration defaultRunTimeout = Duration(minutes: 3);
-  static const Duration defaultPollInterval = Duration(milliseconds: 350);
+  static const Duration defaultPollInterval = Duration(seconds: 1);
   static const Duration defaultMaxPollInterval = Duration(seconds: 4);
 
   final AuthSession? Function() _getSession;
@@ -329,6 +355,7 @@ class HostedTaskRunService
         profile: profile.wireName,
         model: model.trim(),
         inputDigest: inputDigest,
+        planDigest: operation?.planDigest,
         articleId: operation?.articleId,
         generation: operation?.generation,
         stage: operation?.stage ?? profile.wireName,
@@ -473,6 +500,33 @@ class HostedTaskRunService
     );
   }
 
+  @override
+  Future<void> invalidateResult({
+    required HostedTaskRunResult result,
+    required String idempotencyKey,
+    HostedTaskOperationContext? operation,
+  }) async {
+    final store = runStore;
+    if (store == null) return;
+    final session = await _freshSession();
+    final scopeHash = await _scopeHash(session);
+    final binding = operation == null
+        ? await store.readBinding(
+            scopeHash,
+            _validIdempotencyKey(idempotencyKey),
+          )
+        : await store.readBindingForOperation(
+            scopeHash: scopeHash,
+            articleId: operation.articleId,
+            generation: operation.generation,
+            stage: operation.stage,
+          );
+    if (binding == null || binding.runId?.trim() != result.runId.trim()) {
+      return;
+    }
+    await _markBindingAbandoned(scopeHash, binding);
+  }
+
   Future<HostedAgentRunLookup> reconcile(String idempotencyKey) async {
     final session = await _freshSession();
     return HostedAgentControlService(
@@ -510,7 +564,15 @@ class HostedTaskRunService
       if (binding != null) {
         binding = await _persistSnapshot(scopeHash, binding, snapshot);
       }
-      final terminal = _terminalResult(snapshot, profile);
+      HostedTaskRunResult? terminal;
+      try {
+        terminal = _terminalResult(snapshot, profile);
+      } on HostedTaskRunException {
+        if (binding != null && snapshot.status == 'completed') {
+          await _markBindingAbandoned(scopeHash, binding);
+        }
+        rethrow;
+      }
       if (terminal != null) {
         final tokens = terminal.totalTokens;
         if (tokens != null && tokens > 0) {
@@ -921,13 +983,22 @@ class HostedTaskRunService
         (binding.articleId == operation.articleId &&
             binding.generation == operation.generation &&
             binding.stage == operation.stage);
+    final expectedPlanDigest = operation?.planDigest;
+    final planMatches =
+        expectedPlanDigest == null || binding.planDigest == expectedPlanDigest;
     if (binding.profile != profile.wireName ||
         binding.model != model.trim() ||
-        !operationMatches) {
+        !operationMatches ||
+        !planMatches) {
       throw HostedTaskRunException(
-        code: 'hosted_task_binding_mismatch',
-        message: 'Hosted Pi task recovery metadata does not match the request.',
-        retryable: false,
+        code: !planMatches
+            ? 'hosted_task_summary_plan_mismatch'
+            : 'hosted_task_binding_mismatch',
+        message: !planMatches
+            ? 'The article changed during hosted Pi summarization. Retry to '
+                  'start a consistent summary plan.'
+            : 'Hosted Pi task recovery metadata does not match the request.',
+        retryable: !planMatches,
         runId: binding.runId,
       );
     }

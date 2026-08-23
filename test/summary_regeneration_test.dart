@@ -112,7 +112,10 @@ void main() {
       );
 
       final result = await controller.regenerate(
-        article.copyWith(hostedTaskGeneration: 'old-generation'),
+        article.copyWith(
+          hostedTaskGeneration: 'old-generation',
+          suggestedFolderId: 'stale-folder',
+        ),
         settings,
       );
 
@@ -121,6 +124,7 @@ void main() {
       expect(scheduled.single.summary, isNull);
       expect(scheduled.single.processingStatus, ProcessingStatus.pending);
       expect(scheduled.single.hostedTaskGeneration, isNull);
+      expect(scheduled.single.suggestedFolderId, isNull);
       expect(finalized, ['article-1::old-generation']);
       expect(controller.state, isEmpty);
     },

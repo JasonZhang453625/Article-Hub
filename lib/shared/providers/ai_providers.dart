@@ -116,6 +116,7 @@ final hostedAiCapabilitiesProvider = FutureProvider<HostedAiCapabilities?>((
   try {
     final capabilities = await HostedAiCapabilitiesService(
       getSession: () => ref.read(currentSessionProvider),
+      refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
     ).fetchWithRetry();
     cache.store(capabilities, scope: scope);
     scheduleRefresh(cache.remainingTtl);
