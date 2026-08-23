@@ -3,10 +3,21 @@ import 'rag_context_builder.dart';
 class RagConversationTurn {
   final String role;
   final String content;
+  final bool privateEvidence;
 
-  const RagConversationTurn({required this.role, required this.content});
+  const RagConversationTurn({
+    required this.role,
+    required this.content,
+    this.privateEvidence = false,
+  });
 
   Map<String, String> toMessage() => {'role': role, 'content': content};
+
+  Map<String, dynamic> toHostedMessage() => {
+    'role': role,
+    'content': content,
+    'private_evidence': privateEvidence,
+  };
 }
 
 class ChatContextWindow {
@@ -64,13 +75,48 @@ class ChatContextWindow {
       final content = turn.content.trim();
       if (content.isEmpty) continue;
       if (role == 'user') {
-        pendingUser = RagConversationTurn(role: 'user', content: content);
+        pendingUser = RagConversationTurn(
+          role: 'user',
+          content: content,
+          privateEvidence: turn.privateEvidence,
+        );
       } else if (role == 'assistant' && pendingUser != null) {
+        final pairPrivateEvidence =
+            pendingUser.privateEvidence || turn.privateEvidence;
         pairs.add([
-          pendingUser,
-          RagConversationTurn(role: 'assistant', content: content),
+          RagConversationTurn(
+            role: 'user',
+            content: pendingUser.content,
+            privateEvidence: pairPrivateEvidence,
+          ),
+          RagConversationTurn(
+            role: 'assistant',
+            content: content,
+            privateEvidence: pairPrivateEvidence,
+          ),
         ]);
         pendingUser = null;
+      }
+    }
+
+    var privateEvidenceIsSticky = false;
+    for (var index = 0; index < pairs.length; index++) {
+      final pair = pairs[index];
+      privateEvidenceIsSticky =
+          privateEvidenceIsSticky || pair.first.privateEvidence;
+      if (privateEvidenceIsSticky && !pair.first.privateEvidence) {
+        pairs[index] = [
+          RagConversationTurn(
+            role: 'user',
+            content: pair.first.content,
+            privateEvidence: true,
+          ),
+          RagConversationTurn(
+            role: 'assistant',
+            content: pair.last.content,
+            privateEvidence: true,
+          ),
+        ];
       }
     }
 

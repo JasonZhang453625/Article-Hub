@@ -750,6 +750,7 @@ void main() {
           aiRunEventSeq: 4,
           aiRunRequestKey: 'request-attempt-1',
           aiRunOwnerUserId: 'user-1',
+          privateEvidenceUsed: true,
         ),
       );
 
@@ -760,6 +761,7 @@ void main() {
       expect(restored.aiRunEventSeq, 4);
       expect(restored.aiRunRequestKey, 'request-attempt-1');
       expect(restored.aiRunOwnerUserId, 'user-1');
+      expect(restored.privateEvidenceUsed, isTrue);
     },
   );
 
@@ -803,6 +805,7 @@ void main() {
     expect(restored, isNotNull);
     expect(restored?.aiRunRequestKey, 'legacy-attempt');
     expect(restored?.aiRunOwnerUserId, isNull);
+    expect(restored?.privateEvidenceUsed, isFalse);
   });
 
   test(

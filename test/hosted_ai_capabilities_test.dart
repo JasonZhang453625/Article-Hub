@@ -168,6 +168,49 @@ void main() {
       );
     });
 
+    test('parses only the exact memora.chat@2 provenance contract', () {
+      HostedAiCapabilities parse(Map<String, dynamic> chatRuns) {
+        return HostedAiCapabilities.fromJson({
+          'agent': {
+            'available': true,
+            'protocolVersion': 4,
+            'chatRuns': chatRuns,
+          },
+        });
+      }
+
+      final exact = parse(_chatRunsV2());
+      expect(exact.agentChatRuns, isNotNull);
+      expect(exact.agentChatRuns?.models, ['mimo-v2.5']);
+      expect(
+        hostedChatRunsForModel(exact, 'MIMO-V2.5'),
+        same(exact.agentChatRuns),
+      );
+
+      final stalePrompt = _chatRunsV2();
+      (stalePrompt['promptSpec'] as Map<String, dynamic>)['version'] = 1;
+      (stalePrompt['promptSpec'] as Map<String, dynamic>)['wire'] =
+          'memora.chat@1';
+      expect(parse(stalePrompt).agentChatRuns, isNull);
+
+      final missingHistoryRule = _chatRunsV2();
+      final fields = missingHistoryRule['fields'] as Map<String, dynamic>;
+      final historyMessage = Map<String, dynamic>.from(
+        fields['historyMessage'] as Map,
+      )..remove('monotonicRule');
+      fields['historyMessage'] = historyMessage;
+      expect(parse(missingHistoryRule).agentChatRuns, isNull);
+
+      final unsafePrivacy = _chatRunsV2();
+      (unsafePrivacy['privacy']
+              as Map<String, dynamic>)['historyPrivateEvidenceWithWebSearch'] =
+          true;
+      expect(parse(unsafePrivacy).agentChatRuns, isNull);
+
+      final missingResult = _chatRunsV2()..remove('resultFields');
+      expect(parse(missingResult).agentChatRuns, isNull);
+    });
+
     test('fails closed for stale or malformed task capability contracts', () {
       HostedAiCapabilities parse(int protocol, String endpoint) {
         return HostedAiCapabilities.fromJson({
@@ -366,4 +409,54 @@ AuthSession _session() {
       appVersion: '1.0.0',
     ),
   );
+}
+
+Map<String, dynamic> _chatRunsV2() {
+  return {
+    'protocolVersion': 4,
+    'createEndpoint': '/ai/chat/runs',
+    'durable': true,
+    'promptSpec': {'id': 'memora.chat', 'version': 2, 'wire': 'memora.chat@2'},
+    'models': ['mimo-v2.5'],
+    'available': true,
+    'fields': {
+      'knowledgeMode': ['only', 'hybrid'],
+      'length': ['concise', 'detailed'],
+      'language': ['follow-user', 'zh-CN', 'en'],
+      'webSearch': 'boolean',
+      'localKnowledge': 'boolean',
+      'historyMessage': {
+        'fields': ['role', 'content', 'private_evidence'],
+        'roles': ['user', 'assistant'],
+        'privateEvidence': 'boolean',
+        'pairRule': 'same_value_on_completed_user_assistant_pair',
+        'monotonicRule': 'true_remains_true_for_all_later_pairs',
+      },
+    },
+    'resultFields': {'privateEvidenceUsed': 'boolean'},
+    'lengthTokenLimits': {'concise': 1000, 'detailed': 2500},
+    'limits': {
+      'maxBodyBytes': 18874368,
+      'maxQuestionChars': 20000,
+      'maxHistoryMessages': 20,
+      'maxHistoryMessageChars': 8000,
+      'maxHistoryChars': 120000,
+      'maxAttachments': 4,
+      'maxAttachmentIdChars': 128,
+      'maxAttachmentNameChars': 256,
+      'maxAttachmentTextChars': 100000,
+      'maxTotalAttachmentTextChars': 200000,
+      'maxPromptChars': 250000,
+      'maxImages': 4,
+      'maxImageBytes': 5242880,
+      'maxTotalImageBytes': 12582912,
+    },
+    'privacy': {
+      'attachmentsWithWebSearch': false,
+      'imagesWithWebSearch': false,
+      'historyPrivateEvidenceWithWebSearch': false,
+      'privateEvidencePropagation': 'transitive',
+      'enforcement': 'fail-closed',
+    },
+  };
 }

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../config/backend_config.dart';
 import '../models/ai_image_input.dart';
+import '../models/ai_text_attachment_input.dart';
 import '../models/ai_thinking_level.dart';
 import 'ai_service.dart';
 import 'auth_service.dart';
@@ -13,12 +14,59 @@ const int maxHostedAgentImages = 4;
 const int maxHostedAgentImageBytes = 5 * 1024 * 1024;
 const int maxHostedAgentImageTotalBytes = 12 * 1024 * 1024;
 const int maxHostedAgentBodyBytes = 18 * 1024 * 1024;
+const int maxHostedChatQuestionCharacters = 20000;
+const int maxHostedChatHistoryMessages = 20;
+const int maxHostedChatHistoryMessageCharacters = 8000;
+const int maxHostedChatHistoryCharacters = 120000;
+const int maxHostedChatAttachments = 4;
+const int maxHostedChatAttachmentIdCharacters = 128;
+const int maxHostedChatAttachmentNameCharacters = 256;
+const int maxHostedChatAttachmentTextCharacters = 100000;
+const int maxHostedChatAttachmentTotalCharacters = 200000;
+const String legacyPrivateAttachmentMarker =
+    'Attached material from that turn:';
 const Set<String> hostedAgentImageMimeTypes = {
   'image/png',
   'image/jpeg',
   'image/gif',
   'image/webp',
 };
+
+enum HostedChatKnowledgeMode {
+  only('only'),
+  hybrid('hybrid');
+
+  final String wireName;
+
+  const HostedChatKnowledgeMode(this.wireName);
+}
+
+enum HostedChatLength {
+  concise('concise'),
+  detailed('detailed');
+
+  final String wireName;
+
+  const HostedChatLength(this.wireName);
+}
+
+enum HostedChatLanguage {
+  followUser('follow-user'),
+  zhCn('zh-CN'),
+  en('en');
+
+  final String wireName;
+
+  const HostedChatLanguage(this.wireName);
+}
+
+HostedChatLanguage hostedChatLanguageForIndex(int languageIndex) {
+  return switch (languageIndex) {
+    1 => HostedChatLanguage.zhCn,
+    2 => HostedChatLanguage.en,
+    _ => HostedChatLanguage.followUser,
+  };
+}
 
 class HostedAgentSource {
   final String id;
@@ -210,14 +258,14 @@ class HostedAgentControlService {
   /// Finds the run owned by this account and [idempotencyKey] through the
   /// backend's read-only `GET /ai/runs` control endpoint.
   ///
-  /// This method never replays `POST /ai/runs`: once a create may have been
+  /// This method never replays `POST /ai/chat/runs`: once a create may have been
   /// accepted, only this lookup can safely resolve the missing 202 response.
   Future<HostedAgentRunLookup> lookupRunByIdempotencyKey(
     String idempotencyKey, {
     String? expectedOwnerUserId,
   }) async {
     final normalizedKey = idempotencyKey.trim();
-    if (normalizedKey.isEmpty || normalizedKey.length > 200) {
+    if (normalizedKey.isEmpty || normalizedKey.length > 128) {
       throw const HostedAgentLookupException(
         message: 'Hosted Agent reconciliation key is invalid.',
         retryable: false,
@@ -496,6 +544,15 @@ class HostedAgentService {
   final int maxImageBytes;
   final int maxTotalImageBytes;
   final int maxBodyBytes;
+  final int maxQuestionChars;
+  final int maxHistoryMessages;
+  final int maxHistoryMessageChars;
+  final int maxHistoryChars;
+  final int maxAttachments;
+  final int maxAttachmentIdChars;
+  final int maxAttachmentNameChars;
+  final int maxAttachmentTextChars;
+  final int maxTotalAttachmentTextChars;
   final Set<String> allowedImageMimeTypes;
   final bool imageInputEnabled;
   final void Function(HostedAgentClientToolWake wake)? _onClientToolWake;
@@ -508,6 +565,7 @@ class HostedAgentService {
   List<HostedAgentLocalSource> lastLocalSources = const [];
   List<HostedAgentEvent> lastEvents = const [];
   String? lastRunStatus;
+  bool lastPrivateEvidenceUsed = false;
   bool lastChunkIsFullAnswer = false;
   bool _lastRunResultWasEmpty = false;
   http.Client? _activeCreateClient;
@@ -526,6 +584,15 @@ class HostedAgentService {
     this.maxImageBytes = maxHostedAgentImageBytes,
     this.maxTotalImageBytes = maxHostedAgentImageTotalBytes,
     this.maxBodyBytes = maxHostedAgentBodyBytes,
+    this.maxQuestionChars = maxHostedChatQuestionCharacters,
+    this.maxHistoryMessages = maxHostedChatHistoryMessages,
+    this.maxHistoryMessageChars = maxHostedChatHistoryMessageCharacters,
+    this.maxHistoryChars = maxHostedChatHistoryCharacters,
+    this.maxAttachments = maxHostedChatAttachments,
+    this.maxAttachmentIdChars = maxHostedChatAttachmentIdCharacters,
+    this.maxAttachmentNameChars = maxHostedChatAttachmentNameCharacters,
+    this.maxAttachmentTextChars = maxHostedChatAttachmentTextCharacters,
+    this.maxTotalAttachmentTextChars = maxHostedChatAttachmentTotalCharacters,
     this.allowedImageMimeTypes = hostedAgentImageMimeTypes,
     this.imageInputEnabled = false,
     void Function(HostedAgentClientToolWake wake)? onClientToolWake,
@@ -565,7 +632,7 @@ class HostedAgentService {
     ).cancelRun(runId, expectedOwnerUserId: expectedOwnerUserId);
   }
 
-  /// Stops an in-flight `POST /ai/runs` upload owned by this observer.
+  /// Stops an in-flight `POST /ai/chat/runs` upload owned by this observer.
   ///
   /// A server run may already have been committed even when its 202 response
   /// has not reached the device. The stable Idempotency-Key remains the source
@@ -662,7 +729,185 @@ class HostedAgentService {
     }
   }
 
-  /// Creates a durable hosted run and yields its answer events.
+  String _validatedQuestion(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized.length > maxQuestionChars) {
+      throw const HostedAgentInputException(
+        code: 'invalid_question',
+        message: 'Hosted chat question is empty or too large.',
+      );
+    }
+    return normalized;
+  }
+
+  ({List<Map<String, dynamic>> messages, bool privateEvidence})
+  _validatedHistory(List<Map<String, dynamic>> history) {
+    if (history.length > maxHistoryMessages || history.length.isOdd) {
+      throw const HostedAgentInputException(
+        code: 'invalid_history',
+        message: 'Hosted chat history must contain complete recent turns.',
+      );
+    }
+    var totalCharacters = 0;
+    final normalized = <Map<String, dynamic>>[];
+    for (var index = 0; index < history.length; index++) {
+      final message = history[index];
+      final expectedRole = index.isEven ? 'user' : 'assistant';
+      final rawContent = message['content'];
+      final content = rawContent is String ? rawContent.trim() : '';
+      if (message.length != 3 ||
+          !message.containsKey('role') ||
+          !message.containsKey('content') ||
+          !message.containsKey('private_evidence') ||
+          message['role'] != expectedRole ||
+          message['private_evidence'] is! bool ||
+          content.isEmpty ||
+          content.length > maxHistoryMessageChars) {
+        throw const HostedAgentInputException(
+          code: 'invalid_history',
+          message:
+              'Hosted chat history must alternate complete user/assistant turns.',
+        );
+      }
+      totalCharacters += content.length;
+      if (totalCharacters > maxHistoryChars) {
+        throw const HostedAgentInputException(
+          code: 'invalid_history',
+          message: 'Hosted chat history is too large.',
+        );
+      }
+      normalized.add({
+        'role': expectedRole,
+        'content': content,
+        'private_evidence': message['private_evidence'] as bool,
+      });
+    }
+
+    var stickyPrivateEvidence = false;
+    final protected = <Map<String, dynamic>>[];
+    for (var index = 0; index < normalized.length; index += 2) {
+      final user = normalized[index];
+      final assistant = normalized[index + 1];
+      final userPrivate = user['private_evidence'] as bool;
+      final assistantPrivate = assistant['private_evidence'] as bool;
+      if (userPrivate != assistantPrivate) {
+        throw const HostedAgentInputException(
+          code: 'invalid_history',
+          message:
+              'Hosted chat private evidence must match within each completed turn.',
+        );
+      }
+      final legacyPrivate =
+          (user['content'] as String).contains(legacyPrivateAttachmentMarker) ||
+          (assistant['content'] as String).contains(
+            legacyPrivateAttachmentMarker,
+          );
+      stickyPrivateEvidence =
+          stickyPrivateEvidence || userPrivate || legacyPrivate;
+      protected.add({
+        'role': 'user',
+        'content': user['content'],
+        'private_evidence': stickyPrivateEvidence,
+      });
+      protected.add({
+        'role': 'assistant',
+        'content': assistant['content'],
+        'private_evidence': stickyPrivateEvidence,
+      });
+    }
+    return (
+      messages: List.unmodifiable(protected),
+      privateEvidence: stickyPrivateEvidence,
+    );
+  }
+
+  List<Map<String, dynamic>> _legacyHistoryWithProvenance(
+    List<Map<String, String>> history,
+  ) {
+    var stickyPrivateEvidence = false;
+    final result = <Map<String, dynamic>>[];
+    for (var index = 0; index + 1 < history.length; index += 2) {
+      final user = history[index];
+      final assistant = history[index + 1];
+      stickyPrivateEvidence =
+          stickyPrivateEvidence ||
+          (user['content'] ?? '').contains(legacyPrivateAttachmentMarker) ||
+          (assistant['content'] ?? '').contains(legacyPrivateAttachmentMarker);
+      result.add({...user, 'private_evidence': stickyPrivateEvidence});
+      result.add({...assistant, 'private_evidence': stickyPrivateEvidence});
+    }
+    if (history.length.isOdd) {
+      final dangling = history.last;
+      result.add({...dangling, 'private_evidence': stickyPrivateEvidence});
+    }
+    return result;
+  }
+
+  List<Map<String, String>> _validatedAttachments(
+    List<AiTextAttachmentInput> attachments,
+  ) {
+    if (attachments.length > maxAttachments) {
+      throw const HostedAgentInputException(
+        code: 'too_many_attachments',
+        message: 'Hosted chat has too many text attachments.',
+      );
+    }
+    final ids = <String>{};
+    var totalCharacters = 0;
+    final normalized = <Map<String, String>>[];
+    for (final attachment in attachments) {
+      final id = attachment.id.trim();
+      final name = attachment.name?.trim();
+      final text = attachment.text.trim();
+      if (id.isEmpty ||
+          id.length > maxAttachmentIdChars ||
+          !ids.add(id) ||
+          name != null &&
+              (name.isEmpty || name.length > maxAttachmentNameChars) ||
+          text.isEmpty ||
+          text.length > maxAttachmentTextChars) {
+        throw const HostedAgentInputException(
+          code: 'invalid_attachment',
+          message: 'Hosted chat text attachment is invalid.',
+        );
+      }
+      totalCharacters += text.length;
+      if (totalCharacters > maxTotalAttachmentTextChars) {
+        throw const HostedAgentInputException(
+          code: 'attachments_too_large',
+          message: 'Hosted chat text attachments are too large.',
+        );
+      }
+      final normalizedAttachment = <String, String>{'id': id, 'text': text};
+      if (name != null) normalizedAttachment['name'] = name;
+      normalized.add(normalizedAttachment);
+    }
+    return List.unmodifiable(normalized);
+  }
+
+  String _validatedIdempotencyKey(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized.length > 128) {
+      throw const HostedAgentInputException(
+        code: 'invalid_idempotency_key',
+        message: 'Hosted chat Idempotency-Key must contain 1-128 characters.',
+      );
+    }
+    return normalized;
+  }
+
+  Map<String, String>? _chatThinkingPayload() {
+    if (!supportsDeepSeekThinking(model: model)) return null;
+    final effort = thinkingLevel.deepSeekReasoningEffort;
+    final payload = <String, String>{
+      'type': effort == null ? 'disabled' : 'enabled',
+    };
+    if (effort != null) payload['reasoning_effort'] = effort;
+    return payload;
+  }
+
+  /// Compatibility wrapper for callers that have not adopted the typed v4
+  /// signature yet. The client-authored system/user prompt is never sent.
   Stream<String> chatStream({
     required String systemPrompt,
     required String userMessage,
@@ -674,18 +919,18 @@ class HostedAgentService {
     bool webSearch = false,
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
-    String? idempotencyKey,
+    required String idempotencyKey,
   }) {
-    return _chatStreamInternal(
-      systemPrompt: systemPrompt,
-      userMessage: userMessage,
-      userQuestion: userQuestion,
+    return chatStreamV4(
+      question: userQuestion,
       images: images,
-      history: history,
-      temperature: temperature,
-      maxTokens: maxTokens,
+      history: _legacyHistoryWithProvenance(history),
+      knowledgeMode: HostedChatKnowledgeMode.hybrid,
+      length: maxTokens > 1000
+          ? HostedChatLength.detailed
+          : HostedChatLength.concise,
+      language: HostedChatLanguage.followUser,
       webSearch: webSearch,
-      clientToolsV3: false,
       localKnowledge: false,
       onEvent: onEvent,
       onRunCreated: onRunCreated,
@@ -706,20 +951,62 @@ class HostedAgentService {
     String? knowledgeMode,
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
-    String? idempotencyKey,
+    required String idempotencyKey,
+  }) {
+    final mode = switch (knowledgeMode) {
+      'only' => HostedChatKnowledgeMode.only,
+      'hybrid' || null => HostedChatKnowledgeMode.hybrid,
+      _ => throw const HostedAgentInputException(
+        code: 'invalid_knowledge_mode',
+        message: 'Hosted Agent local knowledge mode is invalid.',
+      ),
+    };
+    return chatStreamV4(
+      question: userQuestion,
+      images: images,
+      history: _legacyHistoryWithProvenance(history),
+      knowledgeMode: mode,
+      length: maxTokens > 1000
+          ? HostedChatLength.detailed
+          : HostedChatLength.concise,
+      language: HostedChatLanguage.followUser,
+      webSearch: webSearch,
+      localKnowledge: localKnowledge,
+      onEvent: onEvent,
+      onRunCreated: onRunCreated,
+      idempotencyKey: idempotencyKey,
+    );
+  }
+
+  /// Creates a durable protocol-v4 hosted chat run and yields answer events.
+  ///
+  /// The request is intentionally typed around server-owned `memora.chat@2`.
+  /// There is no system-prompt parameter. Historical private evidence is
+  /// represented only by pair-equal, monotonic provenance flags.
+  Stream<String> chatStreamV4({
+    required String question,
+    List<Map<String, dynamic>> history = const [],
+    required HostedChatKnowledgeMode knowledgeMode,
+    required HostedChatLength length,
+    required HostedChatLanguage language,
+    required bool webSearch,
+    required bool localKnowledge,
+    List<AiTextAttachmentInput> attachments = const [],
+    List<AiImageInput> images = const [],
+    void Function(HostedAgentEvent event)? onEvent,
+    FutureOr<void> Function(String runId)? onRunCreated,
+    required String idempotencyKey,
   }) {
     return _chatStreamInternal(
-      systemPrompt: systemPrompt,
-      userMessage: userMessage,
-      userQuestion: userQuestion,
-      images: images,
+      question: question,
       history: history,
-      temperature: temperature,
-      maxTokens: maxTokens,
-      webSearch: webSearch,
-      clientToolsV3: true,
-      localKnowledge: localKnowledge,
       knowledgeMode: knowledgeMode,
+      length: length,
+      language: language,
+      webSearch: webSearch,
+      localKnowledge: localKnowledge,
+      attachments: attachments,
+      images: images,
       onEvent: onEvent,
       onRunCreated: onRunCreated,
       idempotencyKey: idempotencyKey,
@@ -727,20 +1014,18 @@ class HostedAgentService {
   }
 
   Stream<String> _chatStreamInternal({
-    required String systemPrompt,
-    required String userMessage,
-    required String userQuestion,
-    required List<AiImageInput> images,
-    required List<Map<String, String>> history,
-    required double temperature,
-    required int maxTokens,
+    required String question,
+    required List<Map<String, dynamic>> history,
+    required HostedChatKnowledgeMode knowledgeMode,
+    required HostedChatLength length,
+    required HostedChatLanguage language,
     required bool webSearch,
-    required bool clientToolsV3,
     required bool localKnowledge,
-    String? knowledgeMode,
+    required List<AiTextAttachmentInput> attachments,
+    required List<AiImageInput> images,
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
-    String? idempotencyKey,
+    required String idempotencyKey,
   }) async* {
     _resetRunState();
     if (!isConfigured) {
@@ -751,57 +1036,52 @@ class HostedAgentService {
     var session = await _freshSession();
     if (session == null) return;
 
+    final normalizedQuestion = _validatedQuestion(question);
+    final normalizedHistory = _validatedHistory(history);
+    final normalizedAttachments = _validatedAttachments(attachments);
+    final normalizedKey = _validatedIdempotencyKey(idempotencyKey);
     _validateImages(images);
-    if (clientToolsV3 &&
-        localKnowledge &&
-        knowledgeMode != 'only' &&
-        knowledgeMode != 'hybrid') {
-      throw const HostedAgentInputException(
-        code: 'invalid_knowledge_mode',
-        message: 'Hosted Agent local knowledge mode is invalid.',
-      );
-    }
-    final userContent = images.isEmpty
-        ? userMessage
-        : <Map<String, dynamic>>[
-            {'type': 'text', 'text': userMessage},
-            for (final image in images)
-              {
+    final hasPrivateEvidence =
+        normalizedHistory.privateEvidence ||
+        normalizedAttachments.isNotEmpty ||
+        images.isNotEmpty;
+    final effectiveWebSearch = hasPrivateEvidence ? false : webSearch;
+    final thinking = _chatThinkingPayload();
+    final requestBody = <String, dynamic>{
+      'protocol_version': 4,
+      'prompt_spec': 'memora.chat@2',
+      'model': model,
+      'question': normalizedQuestion,
+      'history': normalizedHistory.messages,
+      'knowledge_mode': knowledgeMode.wireName,
+      'length': length.wireName,
+      'language': language.wireName,
+      'web_search': effectiveWebSearch,
+      'local_knowledge': localKnowledge,
+      if (normalizedAttachments.isNotEmpty)
+        'attachments': normalizedAttachments,
+      if (images.isNotEmpty)
+        'images': images
+            .map(
+              (image) => {
                 'type': 'image',
                 'data': base64.encode(image.bytes),
                 'mimeType': image.mimeType.trim().toLowerCase(),
               },
-          ];
-    final requestBody = <String, dynamic>{
-      'model': model,
-      'messages': [
-        {'role': 'system', 'content': systemPrompt},
-        ...history,
-        {'role': 'user', 'content': userContent},
-      ],
-      'user_question': userQuestion,
-      'temperature': temperature,
-      'max_completion_tokens': maxTokens,
-      'stream': true,
-      'memora_tools': {
-        'web_search': webSearch,
-        if (clientToolsV3) 'local_knowledge': localKnowledge,
-      },
-      if (clientToolsV3 && localKnowledge) 'knowledge_mode': knowledgeMode,
-      if (supportsDeepSeekThinking(model: model))
-        ...deepSeekThinkingOptions(thinkingLevel),
+            )
+            .toList(growable: false),
     };
+    if (thinking != null) requestBody['thinking'] = thinking;
 
     Map<String, dynamic>? created;
     var refreshedCreateSession = false;
-    final canReplayCreate = idempotencyKey?.trim().isNotEmpty == true;
     for (var attempt = 0; attempt < 3; attempt++) {
       if (_createCancelled) {
         lastError = 'Hosted Agent request was cancelled.';
         return;
       }
       try {
-        created = await _createRun(session!, requestBody, idempotencyKey);
+        created = await _createRun(session!, requestBody, normalizedKey);
         break;
       } on HostedAgentInputException {
         rethrow;
@@ -824,7 +1104,7 @@ class HostedAgentService {
           return;
         }
         lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';
-        if (canReplayCreate && attempt < 2) continue;
+        if (attempt < 2) continue;
         return;
       } on http.ClientException catch (error) {
         if (_createCancelled) {
@@ -832,11 +1112,11 @@ class HostedAgentService {
           return;
         }
         lastError = 'Hosted Agent request failed: $error';
-        if (canReplayCreate && attempt < 2) continue;
+        if (attempt < 2) continue;
         return;
       } on FormatException catch (error) {
         lastError = 'Hosted Agent returned an invalid response: $error';
-        if (canReplayCreate && attempt < 2) continue;
+        if (attempt < 2) continue;
         return;
       } catch (error) {
         if (_createCancelled) {
@@ -1044,7 +1324,7 @@ class HostedAgentService {
   Future<Map<String, dynamic>> _createRun(
     AuthSession session,
     Map<String, dynamic> body,
-    String? idempotencyKey,
+    String idempotencyKey,
   ) async {
     if (!_isCurrentSessionIdentity(session)) {
       throw const HostedAgentInputException(
@@ -1065,13 +1345,12 @@ class HostedAgentService {
           message: 'Hosted Agent request exceeds the advertised body limit.',
         );
       }
-      final request = http.Request('POST', BackendConfig.uri('/ai/runs'))
+      final request = http.Request('POST', BackendConfig.uri('/ai/chat/runs'))
         ..headers.addAll({
           'Authorization': 'Bearer ${session.accessToken}',
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
-            'Idempotency-Key': idempotencyKey.trim(),
+          'Idempotency-Key': idempotencyKey,
         })
         ..bodyBytes = encodedBody;
       final response = await client.send(request).timeout(timeout);
@@ -1306,6 +1585,7 @@ class HostedAgentService {
     if (event.type == 'run.result') {
       _captureSources(decoded['sources']);
       _captureLocalSources(decoded['localSources']);
+      _capturePrivateEvidenceUsed(decoded['privateEvidenceUsed']);
       _runIsTerminal = true;
       lastRunStatus = 'completed';
       lastChunkIsFullAnswer = true;
@@ -1340,6 +1620,7 @@ class HostedAgentService {
   }) {
     _captureSources(decoded['sources']);
     _captureLocalSources(decoded['localSources']);
+    _capturePrivateEvidenceUsed(decoded['privateEvidenceUsed']);
     final status = (decoded['status'] ?? '').toString();
     if (status.isNotEmpty) lastRunStatus = status;
     if (status == 'failed' || status == 'cancelled') {
@@ -1358,6 +1639,19 @@ class HostedAgentService {
       data: _sanitizePublicEvent(decoded),
     );
     onEvent?.call(event);
+  }
+
+  void _capturePrivateEvidenceUsed(dynamic value) {
+    if (value == null) {
+      lastPrivateEvidenceUsed = false;
+      return;
+    }
+    if (value is! bool) {
+      throw const FormatException(
+        'Hosted Agent response omitted private-evidence provenance.',
+      );
+    }
+    lastPrivateEvidenceUsed = value;
   }
 
   void _captureSources(dynamic rawSources) {
@@ -1443,6 +1737,7 @@ class HostedAgentService {
     lastLocalSources = const [];
     lastEvents = const [];
     lastRunStatus = null;
+    lastPrivateEvidenceUsed = false;
     lastChunkIsFullAnswer = false;
     _lastRunResultWasEmpty = false;
     _runIsTerminal = false;

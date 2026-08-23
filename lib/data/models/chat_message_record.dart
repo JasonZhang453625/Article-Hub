@@ -77,6 +77,14 @@ class ChatMessageRecord {
 
   final bool attachmentContextIncludesImages;
 
+  /// Whether this completed turn used private evidence.
+  ///
+  /// Hosted `memora.chat@2` reports the authoritative value after a durable
+  /// run completes. The flag is copied to both messages in the completed
+  /// user/assistant pair so later turns can propagate the DLP boundary without
+  /// replaying attachment text into ordinary history.
+  final bool privateEvidenceUsed;
+
   bool get hasUnresolvedAiRunCreate =>
       aiRunId == null &&
       aiRunOwnerUserId?.trim().isNotEmpty == true &&
@@ -118,6 +126,7 @@ class ChatMessageRecord {
     this.attachmentIdsForCleanup = const [],
     this.attachmentContext,
     this.attachmentContextIncludesImages = false,
+    this.privateEvidenceUsed = false,
   });
 
   ChatMessageRecord copyWith({
@@ -144,6 +153,7 @@ class ChatMessageRecord {
     List<String>? attachmentIdsForCleanup,
     String? attachmentContext,
     bool? attachmentContextIncludesImages,
+    bool? privateEvidenceUsed,
   }) {
     return ChatMessageRecord(
       id: id,
@@ -177,6 +187,7 @@ class ChatMessageRecord {
       attachmentContextIncludesImages:
           attachmentContextIncludesImages ??
           this.attachmentContextIncludesImages,
+      privateEvidenceUsed: privateEvidenceUsed ?? this.privateEvidenceUsed,
     );
   }
 
@@ -207,6 +218,7 @@ class ChatMessageRecord {
       aiRunClientToolsVersion: null,
       aiRunKnowledgeMode: null,
       attachmentIdsForCleanup: attachmentIdsForCleanup,
+      privateEvidenceUsed: false,
     );
   }
 }
@@ -249,13 +261,14 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       aiRunProtocolVersion: (fields[24] as num?)?.toInt(),
       aiRunClientToolsVersion: (fields[25] as num?)?.toInt(),
       aiRunKnowledgeMode: fields[26] as String?,
+      privateEvidenceUsed: fields[27] as bool? ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(27)
+      ..writeByte(28)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -314,7 +327,9 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(25)
       ..write(obj.aiRunClientToolsVersion)
       ..writeByte(26)
-      ..write(obj.aiRunKnowledgeMode);
+      ..write(obj.aiRunKnowledgeMode)
+      ..writeByte(27)
+      ..write(obj.privateEvidenceUsed);
   }
 }
 

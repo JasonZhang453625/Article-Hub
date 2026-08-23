@@ -54,4 +54,32 @@ void main() {
     expect(selected.first.content, 'recent question');
     expect(selected.last.content, 'recent answer');
   });
+
+  test('preserves pair-equal monotonic private provenance when trimming', () {
+    final selected = window.selectRecentCompleteTurns(const [
+      RagConversationTurn(role: 'user', content: 'safe q'),
+      RagConversationTurn(role: 'assistant', content: 'safe a'),
+      RagConversationTurn(
+        role: 'user',
+        content: 'private q',
+        privateEvidence: true,
+      ),
+      RagConversationTurn(role: 'assistant', content: 'private a'),
+      RagConversationTurn(role: 'user', content: 'later q'),
+      RagConversationTurn(role: 'assistant', content: 'later a'),
+    ], tokenBudget: 1000);
+
+    expect(selected.map((turn) => turn.privateEvidence), [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(
+      selected.map((turn) => turn.toHostedMessage()).toList(),
+      everyElement(containsPair('private_evidence', isA<bool>())),
+    );
+  });
 }

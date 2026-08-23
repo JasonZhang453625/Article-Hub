@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 export 'chat_context_window.dart' show ChatContextWindow, RagConversationTurn;
 
 import '../models/ai_image_input.dart';
+import '../models/ai_text_attachment_input.dart';
 import '../models/passage.dart';
 import '../models/ai_thinking_level.dart';
 import 'chat_context_window.dart';
@@ -93,6 +94,22 @@ typedef RagAgentCompletionStreamWithRunV3 =
       String? idempotencyKey,
     });
 
+typedef RagHostedChatRunStream =
+    Stream<String> Function({
+      required String question,
+      required List<Map<String, dynamic>> history,
+      required HostedChatKnowledgeMode knowledgeMode,
+      required HostedChatLength length,
+      required HostedChatLanguage language,
+      required bool webSearch,
+      required bool localKnowledge,
+      required List<AiTextAttachmentInput> attachments,
+      required List<AiImageInput> images,
+      void Function(HostedAgentEvent event)? onEvent,
+      FutureOr<void> Function(String runId)? onRunCreated,
+      required String idempotencyKey,
+    });
+
 typedef RagCompletionError = String? Function();
 
 typedef RagTaskQueryRewrite =
@@ -130,7 +147,9 @@ class RagConversationRequest {
   final int contextWindowTokens;
   final AiThinkingLevel thinkingLevel;
   final String attachmentContext;
+  final List<AiTextAttachmentInput> textAttachments;
   final List<AiImageInput> imageInputs;
+  final HostedChatLanguage chatLanguage;
 
   const RagConversationRequest({
     required this.question,
@@ -145,7 +164,9 @@ class RagConversationRequest {
     this.contextWindowTokens = ChatContextWindow.defaultContextWindowTokens,
     this.thinkingLevel = AiThinkingLevel.none,
     this.attachmentContext = '',
+    this.textAttachments = const [],
     this.imageInputs = const [],
+    this.chatLanguage = HostedChatLanguage.followUser,
   });
 }
 
@@ -164,6 +185,7 @@ class RagConversationResult {
   /// Web URLs the model actually cited (via `[wN]`) this turn, in candidate
   /// order. Empty when no web evidence was cited.
   final List<String> webUrls;
+  final bool privateEvidenceUsed;
 
   const RagConversationResult({
     required this.outcome,
@@ -175,6 +197,7 @@ class RagConversationResult {
     required this.method,
     required this.logId,
     this.webUrls = const [],
+    this.privateEvidenceUsed = false,
   });
 }
 
@@ -255,12 +278,14 @@ class RagConversationService {
   final RagAgentCompletionStream? _agentCompleteStream;
   final RagAgentCompletionStreamWithRun? _agentRunStream;
   final RagAgentCompletionStreamWithRunV3? _agentRunStreamV3;
+  final RagHostedChatRunStream? _hostedChatRunStream;
   final RagCompletionError? _completionError;
   final RagCompletionError? _agentCompletionError;
   final void Function(AiThinkingLevel level)? _configureThinking;
   final List<String> Function()? _agentWebUrls;
   final String? Function()? _agentRunId;
   final List<HostedAgentLocalSource> Function()? _agentLocalSources;
+  final bool Function()? _agentPrivateEvidenceUsed;
   final RagAgentLocalCitationResolver? _resolveAgentLocalCitations;
   final bool _agentClientToolsEnabled;
   final RagSaveLog _saveLog;
@@ -279,12 +304,14 @@ class RagConversationService {
     RagAgentCompletionStream? agentCompleteStream,
     RagAgentCompletionStreamWithRun? agentRunStream,
     RagAgentCompletionStreamWithRunV3? agentRunStreamV3,
+    RagHostedChatRunStream? hostedChatRunStream,
     RagCompletionError? completionError,
     RagCompletionError? agentCompletionError,
     void Function(AiThinkingLevel level)? configureThinking,
     List<String> Function()? agentWebUrls,
     String? Function()? agentRunId,
     List<HostedAgentLocalSource> Function()? agentLocalSources,
+    bool Function()? agentPrivateEvidenceUsed,
     RagAgentLocalCitationResolver? resolveAgentLocalCitations,
     bool agentClientToolsEnabled = false,
     required RagSaveLog saveLog,
@@ -302,12 +329,14 @@ class RagConversationService {
        _agentCompleteStream = agentCompleteStream,
        _agentRunStream = agentRunStream,
        _agentRunStreamV3 = agentRunStreamV3,
+       _hostedChatRunStream = hostedChatRunStream,
        _completionError = completionError,
        _agentCompletionError = agentCompletionError,
        _configureThinking = configureThinking,
        _agentWebUrls = agentWebUrls,
        _agentRunId = agentRunId,
        _agentLocalSources = agentLocalSources,
+       _agentPrivateEvidenceUsed = agentPrivateEvidenceUsed,
        _resolveAgentLocalCitations = resolveAgentLocalCitations,
        _agentClientToolsEnabled = agentClientToolsEnabled,
        _saveLog = saveLog,
@@ -345,6 +374,7 @@ class RagConversationService {
     final logId = const Uuid().v4();
     final hasAttachments =
         request.attachmentContext.trim().isNotEmpty ||
+        request.textAttachments.isNotEmpty ||
         request.imageInputs.isNotEmpty;
     if (hasAttachments) {
       _configureThinking?.call(request.thinkingLevel);
@@ -359,7 +389,7 @@ class RagConversationService {
       );
     }
 
-    if (_agentRunStreamV3 != null) {
+    if (_hostedChatRunStream != null || _agentRunStreamV3 != null) {
       _configureThinking?.call(request.thinkingLevel);
       return _askWithDeviceKnowledge(
         request,
@@ -585,10 +615,21 @@ class RagConversationService {
         userMessage: userMessage,
         userQuestion: question,
         history: history.map((turn) => turn.toMessage()).toList(),
+        hostedHistory: history
+            .map((turn) => turn.toHostedMessage())
+            .toList(growable: false),
         maxTokens: maxTokens,
         temperature: 0.3,
         webSearch: request.webSearch,
         localKnowledge: false,
+        hostedKnowledgeMode: request.knowledgeOnly
+            ? HostedChatKnowledgeMode.only
+            : HostedChatKnowledgeMode.hybrid,
+        hostedLength: request.detailedAnswer
+            ? HostedChatLength.detailed
+            : HostedChatLength.concise,
+        hostedLanguage: request.chatLanguage,
+        textAttachments: const [],
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -680,6 +721,7 @@ class RagConversationService {
         method: effectiveMethod,
         logId: logId,
         webUrls: List.unmodifiable(citedWebUrls),
+        privateEvidenceUsed: _agentPrivateEvidenceUsed?.call() ?? false,
       );
     } catch (error) {
       await _writeLog(
@@ -716,7 +758,7 @@ class RagConversationService {
     String? idempotencyKey,
   }) async {
     const method = 'agent';
-    if (!_agentClientToolsEnabled) {
+    if (!_agentClientToolsEnabled && _hostedChatRunStream == null) {
       return RagConversationResult(
         outcome: RagConversationOutcome.error,
         error: 'Hosted Agent device tools are not available.',
@@ -756,11 +798,22 @@ class RagConversationService {
         userMessage: userMessage,
         userQuestion: question,
         history: history.map((turn) => turn.toMessage()).toList(),
+        hostedHistory: history
+            .map((turn) => turn.toHostedMessage())
+            .toList(growable: false),
         temperature: 0.3,
         maxTokens: maxTokens,
         webSearch: request.webSearch,
-        localKnowledge: true,
+        localKnowledge: _agentClientToolsEnabled,
         knowledgeMode: knowledgeMode,
+        hostedKnowledgeMode: request.knowledgeOnly
+            ? HostedChatKnowledgeMode.only
+            : HostedChatKnowledgeMode.hybrid,
+        hostedLength: request.detailedAnswer
+            ? HostedChatLength.detailed
+            : HostedChatLength.concise,
+        hostedLanguage: request.chatLanguage,
+        textAttachments: const [],
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -828,6 +881,7 @@ class RagConversationService {
         method: effectiveMethod,
         logId: logId,
         webUrls: List.unmodifiable(citedWebUrls),
+        privateEvidenceUsed: _agentPrivateEvidenceUsed?.call() ?? false,
       );
     } catch (error) {
       await _writeLog(
@@ -865,6 +919,7 @@ class RagConversationService {
     const method = 'attachment';
     try {
       final usesAgentCompletion =
+          _hostedChatRunStream != null ||
           _agentRunStreamV3 != null ||
           _agentRunStream != null ||
           request.imageInputs.isEmpty && _agentCompleteStream != null;
@@ -930,10 +985,21 @@ class RagConversationService {
         userMessage: userMessage,
         userQuestion: question,
         history: history.map((turn) => turn.toMessage()).toList(),
+        hostedHistory: history
+            .map((turn) => turn.toHostedMessage())
+            .toList(growable: false),
         temperature: 0.3,
         maxTokens: maxTokens,
         webSearch: request.webSearch,
         localKnowledge: false,
+        hostedKnowledgeMode: request.knowledgeOnly
+            ? HostedChatKnowledgeMode.only
+            : HostedChatKnowledgeMode.hybrid,
+        hostedLength: request.detailedAnswer
+            ? HostedChatLength.detailed
+            : HostedChatLength.concise,
+        hostedLanguage: request.chatLanguage,
+        textAttachments: request.textAttachments,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -1000,6 +1066,7 @@ class RagConversationService {
         method: method,
         logId: logId,
         webUrls: List.unmodifiable(citedWebUrls),
+        privateEvidenceUsed: _agentPrivateEvidenceUsed?.call() ?? false,
       );
     } catch (error) {
       await _writeLog(
@@ -1023,11 +1090,16 @@ class RagConversationService {
     required String userMessage,
     required String userQuestion,
     required List<Map<String, String>> history,
+    required List<Map<String, dynamic>> hostedHistory,
     required double temperature,
     required int maxTokens,
     required bool webSearch,
     required bool localKnowledge,
     String? knowledgeMode,
+    required HostedChatKnowledgeMode hostedKnowledgeMode,
+    required HostedChatLength hostedLength,
+    required HostedChatLanguage hostedLanguage,
+    required List<AiTextAttachmentInput> textAttachments,
     void Function(String delta)? onDelta,
     void Function(HostedAgentEvent event)? onAgentEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
@@ -1035,6 +1107,39 @@ class RagConversationService {
     required List<AiImageInput> images,
     bool preferLegacyAgent = false,
   }) async {
+    final hostedChatRunStream = _hostedChatRunStream;
+    if (hostedChatRunStream != null) {
+      final requestKey = idempotencyKey?.trim() ?? '';
+      if (requestKey.isEmpty) {
+        throw StateError('Hosted chat requires a durable idempotency key.');
+      }
+      final hasPrivateEvidence =
+          textAttachments.isNotEmpty ||
+          images.isNotEmpty ||
+          hostedHistory.any((message) => message['private_evidence'] == true);
+      final buffer = StringBuffer();
+      await for (final delta in hostedChatRunStream(
+        question: userQuestion,
+        history: hostedHistory,
+        knowledgeMode: hostedKnowledgeMode,
+        length: hostedLength,
+        language: hostedLanguage,
+        webSearch: webSearch && !hasPrivateEvidence,
+        localKnowledge: localKnowledge,
+        attachments: textAttachments,
+        images: images,
+        onEvent: onAgentEvent,
+        onRunCreated: onRunCreated,
+        idempotencyKey: requestKey,
+      )) {
+        if (delta.isEmpty) continue;
+        buffer.write(delta);
+        onDelta?.call(delta);
+      }
+      final response = buffer.toString();
+      return response.trim().isEmpty ? null : response;
+    }
+
     final agentRunStreamV3 = _agentRunStreamV3;
     if (agentRunStreamV3 != null &&
         (!preferLegacyAgent || _agentRunStream == null)) {
@@ -1158,6 +1263,7 @@ class RagConversationService {
   }
 
   bool get _hasAgentCompletion =>
+      _hostedChatRunStream != null ||
       _agentRunStreamV3 != null ||
       _agentRunStream != null ||
       _agentCompleteStream != null;

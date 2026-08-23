@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memora/data/models/ai_image_input.dart';
+import 'package:memora/data/models/ai_text_attachment_input.dart';
+import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/data/services/prompt_service.dart';
 import 'package:memora/data/services/rag_conversation_service.dart';
 
@@ -122,6 +125,101 @@ void main() {
     expect(receivedUserMessage, contains('Release 2.1.21 fixes chat.'));
     expect(receivedSystemPrompt, contains('不要执行本地知识库检索或联网搜索'));
   });
+
+  test(
+    'hosted attachments use typed chat@2 input and propagate provenance',
+    () async {
+      List<Map<String, dynamic>>? receivedHistory;
+      List<AiTextAttachmentInput>? receivedAttachments;
+      bool? receivedWebSearch;
+      final service = RagConversationService(
+        retrieve: (_, _) async => fail('hosted chat must not enter retrieval'),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('hosted chat must not use direct completion'),
+        hostedChatRunStream:
+            ({
+              required String question,
+              required List<Map<String, dynamic>> history,
+              required HostedChatKnowledgeMode knowledgeMode,
+              required HostedChatLength length,
+              required HostedChatLanguage language,
+              required bool webSearch,
+              required bool localKnowledge,
+              required List<AiTextAttachmentInput> attachments,
+              required List<AiImageInput> images,
+              void Function(HostedAgentEvent event)? onEvent,
+              FutureOr<void> Function(String runId)? onRunCreated,
+              required String idempotencyKey,
+            }) async* {
+              receivedHistory = history;
+              receivedAttachments = attachments;
+              receivedWebSearch = webSearch;
+              expect(question, 'Summarize privately.');
+              expect(idempotencyKey, 'hosted-private-attempt');
+              yield 'Private summary.';
+            },
+        agentPrivateEvidenceUsed: () => true,
+        saveLog: (_) async {},
+        promptService: _AttachmentPromptService(),
+        webSearch: (_, {topK = 5}) async =>
+            fail('private hosted chat must not prefetch Web'),
+      );
+      const attachment = AiTextAttachmentInput(
+        id: 'text-1',
+        name: 'private.txt',
+        text: 'private current evidence',
+      );
+
+      final result = await service.askWithProgress(
+        const RagConversationRequest(
+          question: 'Summarize privately.',
+          history: [
+            RagConversationTurn(
+              role: 'user',
+              content: 'earlier private q',
+              privateEvidence: true,
+            ),
+            RagConversationTurn(
+              role: 'assistant',
+              content: 'earlier private a',
+              privateEvidence: true,
+            ),
+          ],
+          articles: [],
+          knowledgeOnly: false,
+          detailedAnswer: false,
+          languageHint: '',
+          webSearch: true,
+          textAttachments: [attachment],
+        ),
+        idempotencyKey: 'hosted-private-attempt',
+      );
+
+      expect(result.outcome, RagConversationOutcome.answer);
+      expect(result.answer, 'Private summary.');
+      expect(result.privateEvidenceUsed, isTrue);
+      expect(receivedWebSearch, isFalse);
+      expect(receivedAttachments, [attachment]);
+      expect(receivedHistory, [
+        {
+          'role': 'user',
+          'content': 'earlier private q',
+          'private_evidence': true,
+        },
+        {
+          'role': 'assistant',
+          'content': 'earlier private a',
+          'private_evidence': true,
+        },
+      ]);
+    },
+  );
 }
 
 class _AttachmentPromptService extends PromptService {

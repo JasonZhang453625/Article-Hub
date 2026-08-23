@@ -40,6 +40,59 @@ import 'chat_tools_sheet.dart';
 
 enum _ChatToolAction { image, file, skill }
 
+/// Builds only complete user/assistant history pairs for hosted chat.
+///
+/// Attachment contents are intentionally excluded. Their private provenance
+/// is represented by a pair-equal flag that becomes sticky after first use.
+List<RagConversationTurn> buildCompletedChatHistory(
+  List<ChatMessageRecord> messages,
+) {
+  final turns = <RagConversationTurn>[];
+  ChatMessageRecord? pendingUser;
+  var stickyPrivateEvidence = false;
+  for (final message in messages) {
+    if (message.status != ChatMessageStatus.completed ||
+        message.role == ChatMessageRole.system ||
+        message.content.trim().isEmpty) {
+      continue;
+    }
+    if (message.role == ChatMessageRole.user) {
+      pendingUser = message;
+      continue;
+    }
+    final user = pendingUser;
+    if (message.role != ChatMessageRole.assistant || user == null) continue;
+    stickyPrivateEvidence =
+        stickyPrivateEvidence ||
+        _chatMessageUsedPrivateEvidence(user) ||
+        _chatMessageUsedPrivateEvidence(message);
+    turns.add(
+      RagConversationTurn(
+        role: 'user',
+        content: user.content.trim(),
+        privateEvidence: stickyPrivateEvidence,
+      ),
+    );
+    turns.add(
+      RagConversationTurn(
+        role: 'assistant',
+        content: message.content.trim(),
+        privateEvidence: stickyPrivateEvidence,
+      ),
+    );
+    pendingUser = null;
+  }
+  return List.unmodifiable(turns);
+}
+
+bool _chatMessageUsedPrivateEvidence(ChatMessageRecord message) {
+  return message.privateEvidenceUsed ||
+      message.attachments.isNotEmpty ||
+      message.attachmentIdsForCleanup.isNotEmpty ||
+      message.attachmentContext?.trim().isNotEmpty == true ||
+      message.content.contains(legacyPrivateAttachmentMarker);
+}
+
 class _AnswerRunControl {
   final int localRunId;
   String? threadId;
@@ -779,6 +832,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           webSearch: ref.read(chatWebSearchEnabledProvider),
           thinkingLevel: ref.read(chatThinkingLevelProvider),
           attachmentContext: preparedAttachments.textContext,
+          textAttachments: preparedAttachments.textInputs,
           imageInputs: preparedAttachments.imageInputs,
         ),
         onDelta: publishDelta,
@@ -851,6 +905,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       switch (result.outcome) {
         case RagConversationOutcome.answer:
+          final privateEvidenceUsed =
+              await _persistCompletedTurnPrivateEvidence(
+                assistantMessage: activePending,
+                userMessage: userMessage,
+                serverPrivateEvidence: result.privateEvidenceUsed,
+              );
           await finish(
             activePending.copyWith(
               content: result.answer ?? streamedAnswer.toString(),
@@ -859,10 +919,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               method: result.method,
               logId: result.logId,
               status: ChatMessageStatus.completed,
+              privateEvidenceUsed: privateEvidenceUsed,
             ),
           );
           break;
         case RagConversationOutcome.noResult:
+          final noResultPrivateEvidence =
+              await _persistCompletedTurnPrivateEvidence(
+                assistantMessage: activePending,
+                userMessage: userMessage,
+                serverPrivateEvidence: result.privateEvidenceUsed,
+              );
           await finish(
             activePending.copyWith(
               content: s.notEnoughInfo,
@@ -872,6 +939,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               logId: result.logId,
               query: pending.query,
               status: ChatMessageStatus.completed,
+              privateEvidenceUsed: noResultPrivateEvidence,
             ),
           );
           break;
@@ -1143,6 +1211,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   .toSet(),
             );
       }
+      final privateEvidenceUsed = await _persistCompletedTurnPrivateEvidence(
+        assistantMessage: message,
+        serverPrivateEvidence: hostedAgent.lastPrivateEvidenceUsed,
+      );
       await sessions.updateMessage(
         message.copyWith(
           content: answer,
@@ -1157,6 +1229,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ? 'web'
               : message.method,
           aiRunEventSeq: hostedAgent.lastEventSeq,
+          privateEvidenceUsed: privateEvidenceUsed,
         ),
       );
     } on HostedAgentResumeException catch (error, stackTrace) {
@@ -1200,27 +1273,61 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   List<RagConversationTurn> _completedHistory(
     List<ChatMessageRecord> messages,
-  ) {
-    return messages
-        .where(
-          (message) =>
-              message.status == ChatMessageStatus.completed &&
-              message.role != ChatMessageRole.system &&
-              message.content.trim().isNotEmpty,
-        )
-        .map((message) {
-          final attachmentContext = message.attachmentContext?.trim() ?? '';
-          final content =
-              message.role == ChatMessageRole.user &&
-                  attachmentContext.isNotEmpty
-              ? '${message.content}\n\nAttached material from that turn:\n$attachmentContext'
-              : message.content;
-          return RagConversationTurn(
-            role: message.role == ChatMessageRole.user ? 'user' : 'assistant',
-            content: content,
-          );
-        })
-        .toList();
+  ) => buildCompletedChatHistory(messages);
+
+  Future<bool> _persistCompletedTurnPrivateEvidence({
+    required ChatMessageRecord assistantMessage,
+    ChatMessageRecord? userMessage,
+    required bool serverPrivateEvidence,
+  }) async {
+    final sessions = ref.read(chatSessionsProvider.notifier);
+    final messages =
+        ref.read(chatSessionsProvider).valueOrNull?.messages ??
+        const <ChatMessageRecord>[];
+    var assistantIndex = messages.indexWhere(
+      (message) => message.id == assistantMessage.id,
+    );
+    ChatMessageRecord? sourceUser;
+    if (userMessage != null) {
+      for (final message in messages) {
+        if (message.id == userMessage.id) {
+          sourceUser = message;
+          break;
+        }
+      }
+      sourceUser ??= userMessage;
+    }
+    if (sourceUser == null && assistantIndex >= 0) {
+      for (var index = assistantIndex - 1; index >= 0; index--) {
+        if (messages[index].role == ChatMessageRole.user) {
+          sourceUser = messages[index];
+          break;
+        }
+      }
+    }
+    var inheritedPrivateEvidence = false;
+    if (assistantIndex < 0) assistantIndex = messages.length;
+    for (var index = 0; index < assistantIndex; index++) {
+      final message = messages[index];
+      if (message.status == ChatMessageStatus.completed &&
+          _chatMessageUsedPrivateEvidence(message)) {
+        inheritedPrivateEvidence = true;
+        break;
+      }
+    }
+    final pairPrivateEvidence =
+        serverPrivateEvidence ||
+        inheritedPrivateEvidence ||
+        (sourceUser != null && _chatMessageUsedPrivateEvidence(sourceUser)) ||
+        _chatMessageUsedPrivateEvidence(assistantMessage);
+    if (pairPrivateEvidence &&
+        sourceUser != null &&
+        !sourceUser.privateEvidenceUsed) {
+      await sessions.updateMessage(
+        sourceUser.copyWith(privateEvidenceUsed: true),
+      );
+    }
+    return pairPrivateEvidence;
   }
 
   ChatMessageRecord? _findMessage(List<ChatMessageRecord> messages, String id) {

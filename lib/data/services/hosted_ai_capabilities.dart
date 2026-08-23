@@ -18,6 +18,7 @@ class HostedAiCapabilities {
   final List<String> visionModels;
   final bool agentAvailable;
   final int agentProtocolVersion;
+  final HostedChatRunCapabilities? agentChatRuns;
   final HostedAgentImageInputCapabilities? agentImageInput;
   final HostedAgentClientToolsCapabilities? agentClientTools;
   final HostedTaskCapabilities? agentTasks;
@@ -28,6 +29,7 @@ class HostedAiCapabilities {
     required this.visionModels,
     this.agentAvailable = false,
     this.agentProtocolVersion = 1,
+    this.agentChatRuns,
     this.agentImageInput,
     this.agentClientTools,
     this.agentTasks,
@@ -47,6 +49,7 @@ class HostedAiCapabilities {
       visionModels: _visionModels(json['image']),
       agentAvailable: _agentAvailable(json['agent']),
       agentProtocolVersion: _agentProtocolVersion(json['agent']),
+      agentChatRuns: HostedChatRunCapabilities.fromAgentSection(json['agent']),
       agentImageInput: HostedAgentImageInputCapabilities.fromAgentSection(
         json['agent'],
       ),
@@ -90,6 +93,270 @@ class HostedAiCapabilities {
   bool get hasServerSummaryModels => summaryModels.isNotEmpty;
 
   bool get hasServerVisionModels => visionModels.isNotEmpty;
+}
+
+/// Fail-closed protocol-v4 contract for server-owned durable hosted chat.
+class HostedChatRunCapabilities {
+  static const int supportedProtocolVersion = 4;
+  static const String supportedCreateEndpoint = '/ai/chat/runs';
+  static const String supportedPromptSpecId = 'memora.chat';
+  static const int supportedPromptSpecVersion = 2;
+  static const String supportedPromptSpecWire = 'memora.chat@2';
+
+  final List<String> models;
+  final int conciseTokenLimit;
+  final int detailedTokenLimit;
+  final int maxBodyBytes;
+  final int maxQuestionChars;
+  final int maxHistoryMessages;
+  final int maxHistoryMessageChars;
+  final int maxHistoryChars;
+  final int maxAttachments;
+  final int maxAttachmentIdChars;
+  final int maxAttachmentNameChars;
+  final int maxAttachmentTextChars;
+  final int maxTotalAttachmentTextChars;
+  final int maxPromptChars;
+  final int maxImages;
+  final int maxImageBytes;
+  final int maxTotalImageBytes;
+
+  const HostedChatRunCapabilities({
+    required this.models,
+    required this.conciseTokenLimit,
+    required this.detailedTokenLimit,
+    required this.maxBodyBytes,
+    required this.maxQuestionChars,
+    required this.maxHistoryMessages,
+    required this.maxHistoryMessageChars,
+    required this.maxHistoryChars,
+    required this.maxAttachments,
+    required this.maxAttachmentIdChars,
+    required this.maxAttachmentNameChars,
+    required this.maxAttachmentTextChars,
+    required this.maxTotalAttachmentTextChars,
+    required this.maxPromptChars,
+    required this.maxImages,
+    required this.maxImageBytes,
+    required this.maxTotalImageBytes,
+  });
+
+  static HostedChatRunCapabilities? fromAgentSection(dynamic agentSection) {
+    if (agentSection is! Map || agentSection['protocolVersion'] is! int) {
+      return null;
+    }
+    if ((agentSection['protocolVersion'] as int) < supportedProtocolVersion) {
+      return null;
+    }
+    final raw = agentSection['chatRuns'];
+    if (raw is! Map || raw['available'] != true) return null;
+    const requiredKeys = {
+      'protocolVersion',
+      'createEndpoint',
+      'durable',
+      'promptSpec',
+      'models',
+      'available',
+      'fields',
+      'lengthTokenLimits',
+      'limits',
+      'privacy',
+      'resultFields',
+    };
+    const allowedKeys = {...requiredKeys, 'migration'};
+    if (!raw.keys.toSet().containsAll(requiredKeys) ||
+        raw.keys.any((key) => !allowedKeys.contains(key))) {
+      return null;
+    }
+    final promptSpec = raw['promptSpec'];
+    final fields = raw['fields'];
+    final tokenLimits = raw['lengthTokenLimits'];
+    final limits = raw['limits'];
+    final privacy = raw['privacy'];
+    final resultFields = raw['resultFields'];
+    final models = _strictNonEmptyStrings(raw['models']);
+    if (raw['protocolVersion'] != supportedProtocolVersion ||
+        raw['createEndpoint'] != supportedCreateEndpoint ||
+        raw['durable'] != true ||
+        promptSpec is! Map ||
+        !_hasExactMapKeys(promptSpec, const {'id', 'version', 'wire'}) ||
+        promptSpec['id'] != supportedPromptSpecId ||
+        promptSpec['version'] != supportedPromptSpecVersion ||
+        promptSpec['wire'] != supportedPromptSpecWire ||
+        models == null ||
+        fields is! Map ||
+        !_hasExactMapKeys(fields, const {
+          'knowledgeMode',
+          'length',
+          'language',
+          'webSearch',
+          'localKnowledge',
+          'historyMessage',
+        }) ||
+        !_hasExactStrings(fields['knowledgeMode'], const ['only', 'hybrid']) ||
+        !_hasExactStrings(fields['length'], const ['concise', 'detailed']) ||
+        !_hasExactStrings(fields['language'], const [
+          'follow-user',
+          'zh-CN',
+          'en',
+        ]) ||
+        fields['webSearch'] != 'boolean' ||
+        fields['localKnowledge'] != 'boolean' ||
+        !_hasExactHistoryMessageContract(fields['historyMessage']) ||
+        resultFields is! Map ||
+        !_hasExactMapKeys(resultFields, const {'privateEvidenceUsed'}) ||
+        resultFields['privateEvidenceUsed'] != 'boolean' ||
+        tokenLimits is! Map ||
+        !_hasExactMapKeys(tokenLimits, const {'concise', 'detailed'}) ||
+        limits is! Map ||
+        !_hasExactMapKeys(limits, const {
+          'maxBodyBytes',
+          'maxQuestionChars',
+          'maxHistoryMessages',
+          'maxHistoryMessageChars',
+          'maxHistoryChars',
+          'maxAttachments',
+          'maxAttachmentIdChars',
+          'maxAttachmentNameChars',
+          'maxAttachmentTextChars',
+          'maxTotalAttachmentTextChars',
+          'maxPromptChars',
+          'maxImages',
+          'maxImageBytes',
+          'maxTotalImageBytes',
+        }) ||
+        privacy is! Map ||
+        !_hasExactMapKeys(privacy, const {
+          'attachmentsWithWebSearch',
+          'imagesWithWebSearch',
+          'historyPrivateEvidenceWithWebSearch',
+          'privateEvidencePropagation',
+          'enforcement',
+        }) ||
+        privacy['attachmentsWithWebSearch'] != false ||
+        privacy['imagesWithWebSearch'] != false ||
+        privacy['historyPrivateEvidenceWithWebSearch'] != false ||
+        privacy['privateEvidencePropagation'] != 'transitive' ||
+        privacy['enforcement'] != 'fail-closed') {
+      return null;
+    }
+
+    final concise = _strictPositiveInteger(tokenLimits['concise']);
+    final detailed = _strictPositiveInteger(tokenLimits['detailed']);
+    final parsedLimits = <String, int>{};
+    for (final key in limits.keys.cast<String>()) {
+      final value = _strictPositiveInteger(limits[key]);
+      if (value == null) return null;
+      parsedLimits[key] = value;
+    }
+    if (concise == null ||
+        detailed == null ||
+        detailed < concise ||
+        parsedLimits['maxHistoryMessages']! > 20 ||
+        parsedLimits['maxHistoryMessageChars']! > 8000 ||
+        parsedLimits['maxHistoryChars']! <
+            parsedLimits['maxHistoryMessageChars']! ||
+        parsedLimits['maxTotalAttachmentTextChars']! <
+            parsedLimits['maxAttachmentTextChars']! ||
+        parsedLimits['maxTotalImageBytes']! < parsedLimits['maxImageBytes']!) {
+      return null;
+    }
+
+    return HostedChatRunCapabilities(
+      models: List.unmodifiable(models),
+      conciseTokenLimit: concise,
+      detailedTokenLimit: detailed,
+      maxBodyBytes: parsedLimits['maxBodyBytes']!,
+      maxQuestionChars: parsedLimits['maxQuestionChars']!,
+      maxHistoryMessages: parsedLimits['maxHistoryMessages']!,
+      maxHistoryMessageChars: parsedLimits['maxHistoryMessageChars']!,
+      maxHistoryChars: parsedLimits['maxHistoryChars']!,
+      maxAttachments: parsedLimits['maxAttachments']!,
+      maxAttachmentIdChars: parsedLimits['maxAttachmentIdChars']!,
+      maxAttachmentNameChars: parsedLimits['maxAttachmentNameChars']!,
+      maxAttachmentTextChars: parsedLimits['maxAttachmentTextChars']!,
+      maxTotalAttachmentTextChars: parsedLimits['maxTotalAttachmentTextChars']!,
+      maxPromptChars: parsedLimits['maxPromptChars']!,
+      maxImages: parsedLimits['maxImages']!,
+      maxImageBytes: parsedLimits['maxImageBytes']!,
+      maxTotalImageBytes: parsedLimits['maxTotalImageBytes']!,
+    );
+  }
+
+  bool supportsModel(String model) {
+    final normalized = model.trim().toLowerCase();
+    return normalized.isNotEmpty &&
+        models.any((candidate) => candidate.toLowerCase() == normalized);
+  }
+
+  static bool _hasExactStrings(dynamic value, List<String> expected) {
+    if (value is! List || value.length != expected.length) return false;
+    for (var index = 0; index < expected.length; index++) {
+      if (value[index] != expected[index]) return false;
+    }
+    return true;
+  }
+
+  static bool _hasExactHistoryMessageContract(dynamic value) {
+    if (value is! Map ||
+        !_hasExactMapKeys(value, const {
+          'fields',
+          'roles',
+          'privateEvidence',
+          'pairRule',
+          'monotonicRule',
+        })) {
+      return false;
+    }
+    return _hasExactStrings(value['fields'], const [
+          'role',
+          'content',
+          'private_evidence',
+        ]) &&
+        _hasExactStrings(value['roles'], const ['user', 'assistant']) &&
+        value['privateEvidence'] == 'boolean' &&
+        value['pairRule'] == 'same_value_on_completed_user_assistant_pair' &&
+        value['monotonicRule'] == 'true_remains_true_for_all_later_pairs';
+  }
+
+  static List<String>? _strictNonEmptyStrings(dynamic value) {
+    if (value is! List ||
+        value.isEmpty ||
+        value.any((item) => item is! String)) {
+      return null;
+    }
+    final normalized = value
+        .cast<String>()
+        .map((item) => item.trim())
+        .toList(growable: false);
+    if (normalized.any((item) => item.isEmpty) ||
+        normalized.toSet().length != normalized.length) {
+      return null;
+    }
+    return normalized;
+  }
+
+  static int? _strictPositiveInteger(dynamic value) =>
+      value is int && value > 0 ? value : null;
+
+  static bool _hasExactMapKeys(Map value, Set<String> keys) =>
+      value.length == keys.length && value.keys.toSet().containsAll(keys);
+}
+
+HostedChatRunCapabilities? hostedChatRunsForModel(
+  HostedAiCapabilities? capabilities,
+  String model,
+) {
+  final chatRuns = capabilities?.agentChatRuns;
+  if (capabilities == null ||
+      !capabilities.agentAvailable ||
+      capabilities.agentProtocolVersion <
+          HostedChatRunCapabilities.supportedProtocolVersion ||
+      chatRuns == null ||
+      !chatRuns.supportsModel(model)) {
+    return null;
+  }
+  return chatRuns;
 }
 
 /// Fail-closed protocol-v4 contract for server-owned durable Pi task profiles.

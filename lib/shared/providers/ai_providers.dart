@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/ai_image_input.dart';
+import '../../data/models/ai_text_attachment_input.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
 import '../../data/services/agent_client_tool_store.dart';
@@ -211,11 +212,11 @@ final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
   if (settings == null || !ref.watch(hostedAiEnabledProvider)) return null;
   if (settings.hostedChatModel.trim().isEmpty) return null;
   final capabilities = ref.watch(hostedAiCapabilitiesProvider).valueOrNull;
-  if (capabilities == null ||
-      !capabilities.agentAvailable ||
-      capabilities.agentProtocolVersion < 2) {
-    return null;
-  }
+  final chatRuns = hostedChatRunsForModel(
+    capabilities,
+    settings.hostedChatModel,
+  );
+  if (chatRuns == null) return null;
   final imageCapabilities = ref.watch(
     hostedAgentImageInputCapabilitiesProvider,
   );
@@ -223,24 +224,75 @@ final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
     getSession: () => ref.read(currentSessionProvider),
     refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
     model: settings.hostedChatModel.trim(),
-    maxImages: imageCapabilities == null
-        ? maxHostedAgentImages
-        : _lowerLimit(imageCapabilities.maxImages, maxHostedAgentImages),
-    maxImageBytes: imageCapabilities == null
-        ? maxHostedAgentImageBytes
-        : _lowerLimit(
-            imageCapabilities.maxImageBytes,
-            maxHostedAgentImageBytes,
-          ),
-    maxTotalImageBytes: imageCapabilities == null
-        ? maxHostedAgentImageTotalBytes
-        : _lowerLimit(
-            imageCapabilities.maxTotalImageBytes,
-            maxHostedAgentImageTotalBytes,
-          ),
-    maxBodyBytes: imageCapabilities == null
-        ? maxHostedAgentBodyBytes
-        : _lowerLimit(imageCapabilities.maxBodyBytes, maxHostedAgentBodyBytes),
+    maxImages: _lowerLimit(
+      chatRuns.maxImages,
+      imageCapabilities == null
+          ? maxHostedAgentImages
+          : _lowerLimit(imageCapabilities.maxImages, maxHostedAgentImages),
+    ),
+    maxImageBytes: _lowerLimit(
+      chatRuns.maxImageBytes,
+      imageCapabilities == null
+          ? maxHostedAgentImageBytes
+          : _lowerLimit(
+              imageCapabilities.maxImageBytes,
+              maxHostedAgentImageBytes,
+            ),
+    ),
+    maxTotalImageBytes: _lowerLimit(
+      chatRuns.maxTotalImageBytes,
+      imageCapabilities == null
+          ? maxHostedAgentImageTotalBytes
+          : _lowerLimit(
+              imageCapabilities.maxTotalImageBytes,
+              maxHostedAgentImageTotalBytes,
+            ),
+    ),
+    maxBodyBytes: _lowerLimit(
+      chatRuns.maxBodyBytes,
+      imageCapabilities == null
+          ? maxHostedAgentBodyBytes
+          : _lowerLimit(
+              imageCapabilities.maxBodyBytes,
+              maxHostedAgentBodyBytes,
+            ),
+    ),
+    maxQuestionChars: _lowerLimit(
+      chatRuns.maxQuestionChars,
+      maxHostedChatQuestionCharacters,
+    ),
+    maxHistoryMessages: _lowerLimit(
+      chatRuns.maxHistoryMessages,
+      maxHostedChatHistoryMessages,
+    ),
+    maxHistoryMessageChars: _lowerLimit(
+      chatRuns.maxHistoryMessageChars,
+      maxHostedChatHistoryMessageCharacters,
+    ),
+    maxHistoryChars: _lowerLimit(
+      chatRuns.maxHistoryChars,
+      maxHostedChatHistoryCharacters,
+    ),
+    maxAttachments: _lowerLimit(
+      chatRuns.maxAttachments,
+      maxHostedChatAttachments,
+    ),
+    maxAttachmentIdChars: _lowerLimit(
+      chatRuns.maxAttachmentIdChars,
+      maxHostedChatAttachmentIdCharacters,
+    ),
+    maxAttachmentNameChars: _lowerLimit(
+      chatRuns.maxAttachmentNameChars,
+      maxHostedChatAttachmentNameCharacters,
+    ),
+    maxAttachmentTextChars: _lowerLimit(
+      chatRuns.maxAttachmentTextChars,
+      maxHostedChatAttachmentTextCharacters,
+    ),
+    maxTotalAttachmentTextChars: _lowerLimit(
+      chatRuns.maxTotalAttachmentTextChars,
+      maxHostedChatAttachmentTotalCharacters,
+    ),
     allowedImageMimeTypes: imageCapabilities == null
         ? hostedAgentImageMimeTypes
         : imageCapabilities.mimeTypes.intersection(hostedAgentImageMimeTypes),
@@ -514,7 +566,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               webSearch: webSearch,
               onEvent: onEvent,
               onRunCreated: onRunCreated,
-              idempotencyKey: idempotencyKey,
+              idempotencyKey: idempotencyKey ?? '',
             );
           },
     agentRunStreamV3: hostedAgent == null || clientToolsCapabilities == null
@@ -547,6 +599,37 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               knowledgeMode: knowledgeMode,
               onEvent: onEvent,
               onRunCreated: onRunCreated,
+              idempotencyKey: idempotencyKey ?? '',
+            );
+          },
+    hostedChatRunStream: hostedAgent == null
+        ? null
+        : ({
+            required String question,
+            required List<Map<String, dynamic>> history,
+            required HostedChatKnowledgeMode knowledgeMode,
+            required HostedChatLength length,
+            required HostedChatLanguage language,
+            required bool webSearch,
+            required bool localKnowledge,
+            required List<AiTextAttachmentInput> attachments,
+            required List<AiImageInput> images,
+            void Function(HostedAgentEvent event)? onEvent,
+            FutureOr<void> Function(String runId)? onRunCreated,
+            required String idempotencyKey,
+          }) {
+            return hostedAgent.chatStreamV4(
+              question: question,
+              history: history,
+              knowledgeMode: knowledgeMode,
+              length: length,
+              language: language,
+              webSearch: webSearch,
+              localKnowledge: localKnowledge,
+              attachments: attachments,
+              images: images,
+              onEvent: onEvent,
+              onRunCreated: onRunCreated,
               idempotencyKey: idempotencyKey,
             );
           },
@@ -576,6 +659,9 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
     agentLocalSources: hostedAgent == null
         ? null
         : () => hostedAgent.lastLocalSources,
+    agentPrivateEvidenceUsed: hostedAgent == null
+        ? null
+        : () => hostedAgent.lastPrivateEvidenceUsed,
     agentClientToolsEnabled: clientToolsCapabilities != null,
     resolveAgentLocalCitations: hostedAgent == null
         ? null

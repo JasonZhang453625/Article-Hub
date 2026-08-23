@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 import '../models/ai_image_input.dart';
+import '../models/ai_text_attachment_input.dart';
 import '../models/chat_attachment.dart';
 import 'attachment_store.dart';
 import 'chat_attachment_service.dart';
@@ -14,11 +15,13 @@ const int maxChatAttachmentContextCharacters = 12000;
 
 class PreparedChatAttachments {
   final String textContext;
+  final List<AiTextAttachmentInput> textInputs;
   final List<AiImageInput> imageInputs;
   final bool includesImageUnderstanding;
 
   const PreparedChatAttachments({
     this.textContext = '',
+    this.textInputs = const [],
     this.imageInputs = const [],
     this.includesImageUnderstanding = false,
   });
@@ -101,10 +104,35 @@ class ChatAttachmentPipeline {
     final sections = <String>[];
     if (cached.isNotEmpty) sections.add(cached);
 
+    final textInputs = <AiTextAttachmentInput>[];
     if (cached.isEmpty) {
-      for (final file in files) {
-        sections.add(await _extractFileSection(file));
+      var remainingText = maxChatAttachmentContextCharacters;
+      for (var index = 0; index < files.length; index++) {
+        final file = files[index];
+        final rawText = await _extractFileText(file);
+        final remainingFiles = files.length - index;
+        final allowance = remainingText ~/ remainingFiles;
+        final text = _boundedAttachmentText(rawText, allowance);
+        remainingText -= text.length;
+        textInputs.add(
+          AiTextAttachmentInput(
+            id: file.id,
+            name: file.originalFileName,
+            text: text,
+          ),
+        );
+        sections.add('### File: ${file.originalFileName}\n$text');
       }
+    } else if (files.isNotEmpty) {
+      textInputs.add(
+        AiTextAttachmentInput(
+          id: 'cached-current-turn-text',
+          name: files.length == 1
+              ? files.single.originalFileName
+              : 'Attached files',
+          text: cached,
+        ),
+      );
     }
 
     final imageInputs = <AiImageInput>[];
@@ -129,12 +157,13 @@ class ChatAttachmentPipeline {
 
     return PreparedChatAttachments(
       textContext: _boundedContext(sections.join('\n\n')),
+      textInputs: List.unmodifiable(textInputs),
       imageInputs: List.unmodifiable(imageInputs),
       includesImageUnderstanding: false,
     );
   }
 
-  Future<String> _extractFileSection(ChatAttachment attachment) async {
+  Future<String> _extractFileText(ChatAttachment attachment) async {
     final resolved = await _resolve(attachment);
     if (resolved == null) {
       throw ChatAttachmentException(
@@ -170,7 +199,7 @@ class ChatAttachmentPipeline {
         );
       }
     }
-    return '### File: ${attachment.originalFileName}\n$content';
+    return content;
   }
 
   Future<Uint8List> _verifiedBytes(
@@ -213,6 +242,16 @@ String _boundedContext(String value) {
   final text = value.trim();
   if (text.length <= maxChatAttachmentContextCharacters) return text;
   return '${text.substring(0, maxChatAttachmentContextCharacters)}\n\n[Attachment content truncated]';
+}
+
+String _boundedAttachmentText(String value, int maxCharacters) {
+  final text = value.trim();
+  if (text.length <= maxCharacters) return text;
+  const marker = '\n\n[Attachment content truncated]';
+  if (maxCharacters <= marker.length) {
+    return text.substring(0, maxCharacters);
+  }
+  return '${text.substring(0, maxCharacters - marker.length)}$marker';
 }
 
 String _hex(List<int> bytes) {

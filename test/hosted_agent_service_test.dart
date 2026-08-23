@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:memora/data/models/ai_thinking_level.dart';
 import 'package:memora/data/models/ai_image_input.dart';
+import 'package:memora/data/models/ai_text_attachment_input.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 
@@ -66,6 +67,7 @@ void main() {
               localKnowledge: true,
               knowledgeMode: 'only',
               onEvent: publicEvents.add,
+              idempotencyKey: 'wake-attempt',
             )
             .toList(),
         () => client,
@@ -139,14 +141,21 @@ void main() {
               userMessage: 'latest docs',
               userQuestion: 'latest docs',
               webSearch: true,
+              idempotencyKey: 'web-attempt',
             )
             .toList(),
         () => client,
       );
 
       expect(chunks, ['Answer [w1]']);
-      expect(payload?['memora_tools'], {'web_search': true});
-      expect(payload?['user_question'], 'latest docs');
+      expect(payload?['protocol_version'], 4);
+      expect(payload?['prompt_spec'], 'memora.chat@2');
+      expect(payload?['question'], 'latest docs');
+      expect(payload?['history'], isEmpty);
+      expect(payload?['web_search'], isTrue);
+      expect(payload?['local_knowledge'], isFalse);
+      expect(payload?.containsKey('system'), isFalse);
+      expect(payload?.containsKey('messages'), isFalse);
       expect(service.lastEvents.map((event) => event.type), [
         'tool.call.started',
         'sources',
@@ -155,6 +164,112 @@ void main() {
       expect(service.lastError, isNull);
     },
   );
+
+  test('chat@2 sends pair-equal sticky provenance and disables Web', () async {
+    late Map<String, dynamic> payload;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-private","status":"queued"}'),
+          ),
+          202,
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-private",'
+            '"answer":"private answer","sources":[],'
+            '"privateEvidenceUsed":true}\n\n',
+          ),
+        ),
+        200,
+      );
+    });
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('private-history')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+    );
+
+    final chunks = await http.runWithClient(
+      () => service
+          .chatStreamV4(
+            question: 'follow up',
+            history: const [
+              {'role': 'user', 'content': 'safe q', 'private_evidence': false},
+              {
+                'role': 'assistant',
+                'content': 'safe a',
+                'private_evidence': false,
+              },
+              {
+                'role': 'user',
+                'content': 'private q',
+                'private_evidence': true,
+              },
+              {
+                'role': 'assistant',
+                'content': 'private a',
+                'private_evidence': true,
+              },
+              {'role': 'user', 'content': 'later q', 'private_evidence': false},
+              {
+                'role': 'assistant',
+                'content': 'later a',
+                'private_evidence': false,
+              },
+            ],
+            knowledgeMode: HostedChatKnowledgeMode.hybrid,
+            length: HostedChatLength.concise,
+            language: HostedChatLanguage.followUser,
+            webSearch: true,
+            localKnowledge: true,
+            attachments: const [
+              AiTextAttachmentInput(
+                id: 'attachment-1',
+                name: 'private.txt',
+                text: 'current private text',
+              ),
+            ],
+            idempotencyKey: 'private-history-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+
+    final history = (payload['history'] as List<dynamic>)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    expect(chunks, ['private answer']);
+    expect(payload['prompt_spec'], 'memora.chat@2');
+    expect(payload['web_search'], isFalse);
+    expect(payload.containsKey('system'), isFalse);
+    expect(
+      history.map((item) => item.keys.toSet()),
+      everyElement({'role', 'content', 'private_evidence'}),
+    );
+    expect(history.map((item) => item['private_evidence']), [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(payload['attachments'], [
+      {
+        'id': 'attachment-1',
+        'name': 'private.txt',
+        'text': 'current private text',
+      },
+    ]);
+    expect(service.lastPrivateEvidenceUsed, isTrue);
+  });
 
   test('sends native image blocks through the durable Agent run', () async {
     Map<String, dynamic>? payload;
@@ -214,19 +329,19 @@ void main() {
                 bytes: bytes,
               ),
             ],
+            idempotencyKey: 'image-attempt',
           )
           .toList(),
       () => client,
     );
 
-    final messages = payload?['messages'] as List<dynamic>;
-    final user = Map<String, dynamic>.from(messages.last as Map);
-    final content = (user['content'] as List<dynamic>)
+    final images = (payload?['images'] as List<dynamic>)
         .map((item) => Map<String, dynamic>.from(item as Map))
         .toList();
     expect(chunks, ['A chart.']);
-    expect(content.first, {'type': 'text', 'text': 'Describe this image.'});
-    expect(content.last, {
+    expect(payload?['question'], 'Describe this image.');
+    expect(payload?['web_search'], isFalse);
+    expect(images.single, {
       'type': 'image',
       'data': base64.encode(bytes),
       'mimeType': 'image/png',
@@ -304,6 +419,7 @@ void main() {
                   bytes: Uint8List.fromList([1]),
                 ),
               ],
+              idempotencyKey: 'image-rejected-attempt',
             )
             .toList(),
         throwsA(
@@ -405,6 +521,7 @@ void main() {
             systemPrompt: 'system',
             userMessage: 'question',
             userQuestion: 'question',
+            idempotencyKey: 'refresh-create-attempt',
           )
           .toList(),
       () => client,
@@ -462,6 +579,7 @@ void main() {
               userQuestion: 'question',
               localKnowledge: true,
               knowledgeMode: 'only',
+              idempotencyKey: 'device-race-attempt',
             )
             .toList(),
         () => client,
@@ -474,68 +592,68 @@ void main() {
     },
   );
 
-  test(
-    'v3 wire adds local knowledge while legacy v2 wire stays exact',
-    () async {
-      final payloads = <Map<String, dynamic>>[];
-      var run = 0;
-      final client = MockClient.streaming((request, bodyStream) async {
-        if (request.method == 'POST') {
-          run++;
-          payloads.add(jsonDecode(await bodyStream.bytesToString()));
-          return http.StreamedResponse(
-            Stream<List<int>>.value(
-              utf8.encode('{"id":"wire-$run","status":"queued"}'),
-            ),
-            202,
-          );
-        }
+  test('compatibility wrappers both compile the exact v4 chat wire', () async {
+    final payloads = <Map<String, dynamic>>[];
+    var run = 0;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        run++;
+        payloads.add(jsonDecode(await bodyStream.bytesToString()));
         return http.StreamedResponse(
           Stream<List<int>>.value(
-            utf8.encode(
-              'id: 1\nevent: agent\ndata: {"type":"run.result",'
-              '"runId":"wire-$run","answer":"ok","sources":[]}\n\n',
-            ),
+            utf8.encode('{"id":"wire-$run","status":"queued"}'),
           ),
-          200,
+          202,
         );
-      });
-      HostedAgentService service() => HostedAgentService(
-        getSession: () => _session(_jwt('wire')),
-        refreshSession: () async => null,
-        model: 'mimo-v2.5',
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\nevent: agent\ndata: {"type":"run.result",'
+            '"runId":"wire-$run","answer":"ok","sources":[]}\n\n',
+          ),
+        ),
+        200,
       );
-      await http.runWithClient(
-        () => service()
-            .chatStream(
-              systemPrompt: 'system',
-              userMessage: 'legacy',
-              userQuestion: 'legacy',
-            )
-            .toList(),
-        () => client,
-      );
-      await http.runWithClient(
-        () => service()
-            .chatStreamV3(
-              systemPrompt: 'system',
-              userMessage: 'v3',
-              userQuestion: 'v3',
-              localKnowledge: true,
-              knowledgeMode: 'hybrid',
-            )
-            .toList(),
-        () => client,
-      );
-      expect(payloads[0]['memora_tools'], {'web_search': false});
-      expect(payloads[0].containsKey('knowledge_mode'), isFalse);
-      expect(payloads[1]['memora_tools'], {
-        'web_search': false,
-        'local_knowledge': true,
-      });
-      expect(payloads[1]['knowledge_mode'], 'hybrid');
-    },
-  );
+    });
+    HostedAgentService service() => HostedAgentService(
+      getSession: () => _session(_jwt('wire')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+    );
+    await http.runWithClient(
+      () => service()
+          .chatStream(
+            systemPrompt: 'system',
+            userMessage: 'legacy',
+            userQuestion: 'legacy',
+            idempotencyKey: 'legacy-wire-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+    await http.runWithClient(
+      () => service()
+          .chatStreamV3(
+            systemPrompt: 'system',
+            userMessage: 'v3',
+            userQuestion: 'v3',
+            localKnowledge: true,
+            knowledgeMode: 'hybrid',
+            idempotencyKey: 'v3-wire-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+    expect(payloads[0]['prompt_spec'], 'memora.chat@2');
+    expect(payloads[0]['web_search'], isFalse);
+    expect(payloads[0]['local_knowledge'], isFalse);
+    expect(payloads[0]['knowledge_mode'], 'hybrid');
+    expect(payloads[1]['prompt_spec'], 'memora.chat@2');
+    expect(payloads[1]['web_search'], isFalse);
+    expect(payloads[1]['local_knowledge'], isTrue);
+    expect(payloads[1]['knowledge_mode'], 'hybrid');
+  });
 
   test('replays an ambiguous create with the same idempotency key', () async {
     var createCalls = 0;
@@ -644,13 +762,14 @@ void main() {
             systemPrompt: 'system',
             userMessage: 'question',
             userQuestion: 'question',
+            idempotencyKey: 'thinking-attempt',
           )
           .toList(),
       () => client,
     );
 
-    expect(payload['thinking'], {'type': 'enabled'});
-    expect(payload['reasoning_effort'], 'max');
+    expect(payload['thinking'], {'type': 'enabled', 'reasoning_effort': 'max'});
+    expect(payload.containsKey('reasoning_effort'), isFalse);
   });
 
   test('replays a truncated SSE event without skipping its id', () async {
@@ -720,6 +839,7 @@ void main() {
             systemPrompt: 'system',
             userMessage: 'question',
             userQuestion: 'question',
+            idempotencyKey: 'replay-event-attempt',
           )
           .toList(),
       () => client,
@@ -797,6 +917,7 @@ void main() {
             systemPrompt: 'system',
             userMessage: 'question',
             userQuestion: 'question',
+            idempotencyKey: 'refresh-event-attempt',
           )
           .toList(),
       () => client,
@@ -863,6 +984,7 @@ void main() {
               systemPrompt: 'system',
               userMessage: 'question',
               userQuestion: 'question',
+              idempotencyKey: 'terminal-order-attempt',
             )
             .toList(),
         () => client,
@@ -893,6 +1015,7 @@ void main() {
               'answer': 'Restored after process death',
               'lastEventSeq': 6,
               'sources': [],
+              'privateEvidenceUsed': true,
             }),
           ),
         ),
@@ -913,6 +1036,7 @@ void main() {
 
     expect(chunks, ['Restored after process death']);
     expect(service.lastEventSeq, 6);
+    expect(service.lastPrivateEvidenceUsed, isTrue);
     expect(requests, 1);
   });
 
