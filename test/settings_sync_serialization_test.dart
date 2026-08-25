@@ -16,8 +16,8 @@ void main() {
         imageAiApiKey: 'sk-image-secret',
         imageAiModel: 'model-vision',
         aiProviderMode: 1,
-        hostedAiModel: 'mimo-v2.5-pro',
-        hostedChatModel: 'mimo-v2.5',
+        hostedAiModel: 'deepseek-v4-flash',
+        hostedChatModel: 'deepseek-v4-pro',
         hostedVisionModel: 'sensenova-6.7-flash-lite',
         embeddingBaseUrl: 'https://embedding.example/v1',
         embeddingApiKey: 'sk-embedding-secret',
@@ -41,8 +41,8 @@ void main() {
         expect(settings.toSyncJson().containsKey(key), isFalse);
         expect(settings.toBackupJson().containsKey(key), isTrue);
       }
-      expect(settings.toSyncJson()['hostedAiModel'], 'mimo-v2.5-pro');
-      expect(settings.toSyncJson()['hostedChatModel'], 'mimo-v2.5');
+      expect(settings.toSyncJson()['hostedAiModel'], 'deepseek-v4-flash');
+      expect(settings.toSyncJson()['hostedChatModel'], 'deepseek-v4-pro');
       expect(
         settings.toSyncJson()['hostedVisionModel'],
         'sensenova-6.7-flash-lite',
@@ -65,7 +65,8 @@ void main() {
     expect(settings.imageAiBaseUrl, isEmpty);
     expect(settings.imageAiApiKey, isEmpty);
     expect(settings.aiProviderMode, 0);
-    expect(settings.hostedChatModel, 'mimo-v2.5-pro');
+    expect(settings.hostedAiModel, AppSettings.defaultHostedTextModel);
+    expect(settings.hostedChatModel, AppSettings.defaultHostedTextModel);
     expect(settings.hostedVisionModel, AppSettings.defaultHostedVisionModel);
   });
 }

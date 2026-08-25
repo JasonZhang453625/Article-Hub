@@ -40,8 +40,8 @@ void main() {
       imageAiApiKey: 'vision-secret',
       imageAiModel: 'vision-model',
       aiProviderMode: 1,
-      hostedAiModel: 'mimo-v2.5-pro',
-      hostedChatModel: 'mimo-v2.5',
+      hostedAiModel: 'deepseek-v4-flash',
+      hostedChatModel: 'deepseek-v4-pro',
       hostedVisionModel: 'sensenova-6.7-flash-lite',
     );
 
@@ -58,6 +58,28 @@ void main() {
     expect(restored.hostedChatModel, settings.hostedChatModel);
     expect(restored.hostedVisionModel, settings.hostedVisionModel);
   });
+
+  test(
+    'expired MiMo text selections migrate through the Hive adapter',
+    () async {
+      final box = await Hive.openBox<AppSettings>('legacy-mimo-model-fields');
+      await box.put(
+        'settings',
+        AppSettings(
+          hostedAiModel: 'mimo-v2.5-pro',
+          hostedChatModel: 'mimo-v2.5',
+        ),
+      );
+      await box.close();
+
+      final reopened = await Hive.openBox<AppSettings>(
+        'legacy-mimo-model-fields',
+      );
+      final restored = reopened.get('settings')!;
+      expect(restored.hostedAiModel, AppSettings.defaultHostedTextModel);
+      expect(restored.hostedChatModel, AppSettings.defaultHostedTextModel);
+    },
+  );
 
   test(
     'auth loading preserves hosted mode, then logout persists BYOK',
@@ -93,64 +115,69 @@ void main() {
     },
   );
 
-  test('server-advertised deepseek model persists through hosted setters', () async {
-    HostedAiCapabilitiesCache.instance.store(
-      const HostedAiCapabilities(
-        chatModels: [
-          'mimo-v2.5',
-          'mimo-v2.5-pro',
-          'deepseek-v4-flash',
-          'deepseek-v4-pro',
+  test(
+    'server-advertised deepseek model persists through hosted setters',
+    () async {
+      HostedAiCapabilitiesCache.instance.store(
+        const HostedAiCapabilities(
+          chatModels: [
+            'mimo-v2.5',
+            'mimo-v2.5-pro',
+            'deepseek-v4-flash',
+            'deepseek-v4-pro',
+          ],
+          summaryModels: [
+            'mimo-v2.5',
+            'mimo-v2.5-pro',
+            'deepseek-v4-flash',
+            'deepseek-v4-pro',
+          ],
+          visionModels: ['mimo-v2.5', 'sensenova-6.7-flash-lite'],
+        ),
+      );
+      addTearDown(HostedAiCapabilitiesCache.instance.clear);
+
+      final box = await Hive.openBox<AppSettings>('app_settings');
+      await box.put('settings', AppSettings());
+      final auth = _ControllableAuthController(AsyncValue.data(_session()));
+      final container = ProviderContainer(
+        overrides: [
+          hiveInitProvider.overrideWith((ref) async {}),
+          authControllerProvider.overrideWith((ref) => auth),
         ],
-        summaryModels: [
-          'mimo-v2.5',
-          'mimo-v2.5-pro',
-          'deepseek-v4-flash',
-          'deepseek-v4-pro',
-        ],
-        visionModels: ['mimo-v2.5', 'sensenova-6.7-flash-lite'],
-      ),
-    );
-    addTearDown(HostedAiCapabilitiesCache.instance.clear);
+      );
+      addTearDown(container.dispose);
 
-    final box = await Hive.openBox<AppSettings>('app_settings');
-    await box.put('settings', AppSettings());
-    final auth = _ControllableAuthController(AsyncValue.data(_session()));
-    final container = ProviderContainer(
-      overrides: [
-        hiveInitProvider.overrideWith((ref) async {}),
-        authControllerProvider.overrideWith((ref) => auth),
-      ],
-    );
-    addTearDown(container.dispose);
+      await _waitFor(
+        () => container.read(settingsProvider).valueOrNull != null,
+      );
 
-    await _waitFor(
-      () => container.read(settingsProvider).valueOrNull != null,
-    );
+      await container
+          .read(settingsProvider.notifier)
+          .setAiProviderMode(
+            1,
+            hostedChatModel: 'deepseek-v4-flash',
+            hostedModel: 'deepseek-v4-flash',
+          );
+      expect(
+        container.read(settingsProvider).value!.hostedChatModel,
+        'deepseek-v4-flash',
+      );
+      expect(
+        container.read(settingsProvider).value!.hostedAiModel,
+        'deepseek-v4-flash',
+      );
 
-    await container.read(settingsProvider.notifier).setAiProviderMode(
-      1,
-      hostedChatModel: 'deepseek-v4-flash',
-      hostedModel: 'deepseek-v4-flash',
-    );
-    expect(
-      container.read(settingsProvider).value!.hostedChatModel,
-      'deepseek-v4-flash',
-    );
-    expect(
-      container.read(settingsProvider).value!.hostedAiModel,
-      'deepseek-v4-flash',
-    );
-
-    await container
-        .read(settingsProvider.notifier)
-        .setHostedAiModels(summaryModel: 'deepseek-v4-pro');
-    expect(
-      container.read(settingsProvider).value!.hostedAiModel,
-      'deepseek-v4-pro',
-    );
-    expect(box.get('settings')!.hostedAiModel, 'deepseek-v4-pro');
-  });
+      await container
+          .read(settingsProvider.notifier)
+          .setHostedAiModels(summaryModel: 'deepseek-v4-pro');
+      expect(
+        container.read(settingsProvider).value!.hostedAiModel,
+        'deepseek-v4-pro',
+      );
+      expect(box.get('settings')!.hostedAiModel, 'deepseek-v4-pro');
+    },
+  );
 }
 
 Future<void> _waitFor(bool Function() condition) async {

@@ -6,13 +6,31 @@ import 'source_platform.dart';
 class AppSettings {
   static const int typeId = 2;
 
-  static const String defaultHostedTextModel = 'mimo-v2.5';
+  static const String defaultHostedTextModel = 'deepseek-v4-pro';
   static const String defaultHostedVisionModel = 'sensenova-6.7-flash-lite';
-  static const List<String> hostedTextModels = ['mimo-v2.5', 'mimo-v2.5-pro'];
+  static const List<String> hostedTextModels = [
+    'deepseek-v4-pro',
+    'deepseek-v4-flash',
+  ];
   static const List<String> hostedVisionModels = [
     'mimo-v2.5',
     'sensenova-6.7-flash-lite',
   ];
+
+  static const Set<String> _retiredHostedTextModels = {
+    'mimo-v2.5',
+    'mimo-v2.5-pro',
+  };
+
+  /// Migrates the expired hosted MiMo text subscription to DeepSeek while
+  /// preserving future server-advertised text model ids.
+  static String normalizeHostedTextModel(String? value) {
+    final normalized = value?.trim() ?? '';
+    if (normalized.isEmpty || _retiredHostedTextModels.contains(normalized)) {
+      return defaultHostedTextModel;
+    }
+    return normalized;
+  }
 
   /// Suggested OpenAI-compatible embedding configuration.
   ///
@@ -441,14 +459,18 @@ class AppSettings {
           ? json['imageAiModel'] as String
           : 'mimo-v2.5',
       aiProviderMode: (json['aiProviderMode'] as num?)?.toInt() == 1 ? 1 : 0,
-      hostedAiModel: json['hostedAiModel'] is String
-          ? json['hostedAiModel'] as String
-          : defaultHostedTextModel,
-      hostedChatModel: json['hostedChatModel'] is String
-          ? json['hostedChatModel'] as String
-          : (json['hostedAiModel'] is String
-                ? json['hostedAiModel'] as String
-                : defaultHostedTextModel),
+      hostedAiModel: normalizeHostedTextModel(
+        json['hostedAiModel'] is String
+            ? json['hostedAiModel'] as String
+            : null,
+      ),
+      hostedChatModel: normalizeHostedTextModel(
+        json['hostedChatModel'] is String
+            ? json['hostedChatModel'] as String
+            : (json['hostedAiModel'] is String
+                  ? json['hostedAiModel'] as String
+                  : null),
+      ),
       hostedVisionModel: json['hostedVisionModel'] is String
           ? json['hostedVisionModel'] as String
           : defaultHostedVisionModel,
@@ -530,8 +552,9 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       embeddingModel: (fields[12] as String?) ?? '',
       tavilyApiKey: (fields[22] as String?) ?? '',
       aiProviderMode: (fields[23] as num?)?.toInt() == 1 ? 1 : 0,
-      hostedAiModel:
-          (fields[24] as String?) ?? AppSettings.defaultHostedTextModel,
+      hostedAiModel: AppSettings.normalizeHostedTextModel(
+        fields[24] as String?,
+      ),
       chatAiBaseUrl: (fields[25] as String?) ?? (fields[6] as String?) ?? '',
       chatAiApiKey: (fields[26] as String?) ?? (fields[7] as String?) ?? '',
       chatAiModel:
@@ -539,10 +562,9 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       imageAiBaseUrl: (fields[28] as String?) ?? '',
       imageAiApiKey: (fields[29] as String?) ?? '',
       imageAiModel: (fields[30] as String?) ?? 'mimo-v2.5',
-      hostedChatModel:
-          (fields[31] as String?) ??
-          (fields[24] as String?) ??
-          AppSettings.defaultHostedTextModel,
+      hostedChatModel: AppSettings.normalizeHostedTextModel(
+        (fields[31] as String?) ?? (fields[24] as String?),
+      ),
       hostedVisionModel:
           (fields[32] as String?) ?? AppSettings.defaultHostedVisionModel,
       cloudSyncEnabled: (fields[33] as bool?) ?? false,

@@ -200,14 +200,15 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   }
 
   String _hostedTextModel(String value) {
+    final normalized = AppSettings.normalizeHostedTextModel(value);
     final capabilities = HostedAiCapabilitiesCache.instance.value;
     final serverTextModels = <String>{
       ...?capabilities?.chatModels,
       ...?capabilities?.summaryModels,
     };
-    return AppSettings.hostedTextModels.contains(value) ||
-            serverTextModels.contains(value)
-        ? value
+    return AppSettings.hostedTextModels.contains(normalized) ||
+            serverTextModels.contains(normalized)
+        ? normalized
         : AppSettings.defaultHostedTextModel;
   }
 
