@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'dart:convert';
 
 import '../../data/models/passage.dart';
 import '../../data/models/chat_attachment.dart';
 import '../../shared/providers/locale_provider.dart';
+import '../../shared/utils/locale_strings.dart';
 import 'chat_message.dart';
 import 'chat_citation_chips.dart';
 import 'chat_feedback.dart';
@@ -41,10 +43,21 @@ class ChatBubble extends ConsumerWidget {
     final s = ref.watch(stringsProvider);
     final isUser = message.role == MessageRole.user;
 
-    if (message.isPending && message.text.trim().isEmpty) {
-      // The in-flight answer is a real (persisted) message now — render the
-      // typing animation on it so an app restart can still recover it.
-      return const ChatTypingIndicator();
+    if (message.isPending &&
+        message.text.trim().isEmpty &&
+        message.toolEvents.isEmpty) {
+      // The in-flight answer is a real (persisted) message now. Show the
+      // animated working label while the Agent thinks, before any tool call
+      // or visible text has arrived.
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _WorkingIndicator(
+          toolEvents: message.toolEvents,
+          thinkingLabel: s.chatWorkingThinking,
+          retrievingLabel: s.chatWorkingRetrieving,
+          boilingLabel: s.chatWorkingBoiling,
+        ),
+      );
     }
 
     if (message.isInterrupted && message.text.trim().isEmpty) {
@@ -151,6 +164,15 @@ class ChatBubble extends ConsumerWidget {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (message.isPending && message.text.trim().isEmpty)
+          _WorkingIndicator(
+            toolEvents: message.toolEvents,
+            thinkingLabel: s.chatWorkingThinking,
+            retrievingLabel: s.chatWorkingRetrieving,
+            boilingLabel: s.chatWorkingBoiling,
+          ),
+        if (message.toolEvents.isNotEmpty)
+          _ToolCallList(events: message.toolEvents, s: s),
         MarkdownBody(
           data: message.text,
           selectable: true,
@@ -252,7 +274,7 @@ class ChatBubble extends ConsumerWidget {
             onCitationClick: onCitationClick,
           ),
         ],
-        if (message.isPending) ...[
+        if (message.isPending && message.text.trim().isNotEmpty) ...[
           const SizedBox(height: 6),
           const ChatTypingIndicator(),
         ] else if (!message.isNoResult &&
@@ -540,6 +562,155 @@ class _InterruptedAnswerNotice extends StatelessWidget {
             label: Text(retryLabel),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _WorkingIndicator extends StatefulWidget {
+  final List<String> toolEvents;
+  final String thinkingLabel;
+  final String retrievingLabel;
+  final String boilingLabel;
+
+  const _WorkingIndicator({
+    required this.toolEvents,
+    required this.thinkingLabel,
+    required this.retrievingLabel,
+    required this.boilingLabel,
+  });
+
+  @override
+  State<_WorkingIndicator> createState() => _WorkingIndicatorState();
+}
+
+class _WorkingIndicatorState extends State<_WorkingIndicator> {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    var label = widget.thinkingLabel;
+    if (widget.toolEvents.isNotEmpty) {
+      final hasCompletedTool = widget.toolEvents.any(
+        (raw) => raw.contains('"state":"completed"'),
+      );
+      label = hasCompletedTool ? widget.boilingLabel : widget.retrievingLabel;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+            ),
+          ),
+          const SizedBox(width: 10),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            child: Text(
+              label,
+              key: ValueKey(label),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolCallList extends StatelessWidget {
+  final List<String> events;
+  final LocaleStrings s;
+
+  const _ToolCallList({required this.events, required this.s});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final rows = <Widget>[];
+    for (final raw in events) {
+      Map<String, dynamic> event;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) continue;
+        event = decoded;
+      } catch (_) {
+        continue;
+      }
+      final tool = (event['tool'] ?? '').toString().trim();
+      final state = (event['state'] ?? '').toString();
+      if (tool.isEmpty || state.isEmpty) continue;
+
+      final String line;
+      final IconData icon;
+      switch (state) {
+        case 'started':
+          icon = Icons.build_circle_outlined;
+          final query = (event['query'] ?? '').toString().trim();
+          line = tool == 'web_search'
+              ? query.isEmpty
+                    ? '🔎 ${s.chatToolSearching}'
+                    : '🔎 ${s.chatToolSearching}: $query'
+              : '🛠️ ${s.chatToolCalling}: $tool';
+          break;
+        case 'completed':
+          icon = Icons.check_circle_outline;
+          final sourceCount = event['sourceCount'];
+          final sources = sourceCount is num && sourceCount > 0
+              ? ' (${sourceCount.toInt()} ${s.chatToolSources})'
+              : '';
+          line = '✓ ${s.chatToolCompleted}: $tool$sources';
+          break;
+        case 'failed':
+          icon = Icons.error_outline;
+          line = '⚠️ ${s.chatToolFailed}: $tool';
+          break;
+        default:
+          icon = Icons.settings_outlined;
+          line = tool;
+      }
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  line,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: rows,
       ),
     );
   }

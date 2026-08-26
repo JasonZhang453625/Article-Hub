@@ -35,6 +35,55 @@
   → 查看引用卡片并返回原文
 ```
 
+## 项目全景（开发者 / Agent）
+
+Memora 是一个多组件产品。这个仓库以 Flutter 客户端为主，但一次完整迭代可能同时涉及 Landing、生产后端、数据库、Hosted Agent、Admin 和发布链路。
+
+| 组件 | 源码与职责 | 运行位置 / 入口 |
+|---|---|---|
+| Flutter App | 本仓库 `lib/`、`test/` 与各平台目录；本地知识库、采集/处理、检索/RAG、账号与同步客户端 | Android 为主要验收平台；默认后端 `https://api.memora.wang` |
+| Landing Page | `landing-page/` 中的独立 Astro Git 工作区；官网、产品介绍、下载入口 | `https://memora.wang`；独立仓库 `Memora-Landing-Page`，分支 `master` |
+| Backend API | 生产机 `/opt/memora-backend` 中的独立 TypeScript/Fastify Git 仓库 | `https://api.memora.wang`，API 文档 `/docs` |
+| PostgreSQL | 后端 Prisma schema 与 migrations；账号、设备、同步事件、Agent runs、订阅/反馈等 | 后端 Compose 的 PostgreSQL 服务 |
+| Hosted Agent | 后端 `src/agent/`、`config/agent.toml`、`skills/` 和 `/ai/runs` | 登录后经 SSE/持久化 run 支持断线和进程重启恢复 |
+| Admin | 后端 `src/routes/admin*.ts` 提供页面和受保护 API | `/admin`；凭据只保存在安全的运维边界中 |
+| 发布与下载 | 本仓库 `.github/workflows/release.yml`、`deploy/`、`tools/` | GitHub Release、国内 APK 下载源、Landing 自动部署 |
+
+几个容易混淆的源码边界：
+
+- `landing-page/` 在主仓库中表现为 gitlink，但当前没有 `.gitmodules`；它有自己的 Git 状态、远端和发布流程，不要直接假设 `git submodule` 命令可用。
+- 后端源码不作为本仓库的受跟踪目录。`scratchpad/pi-backend-edit/` 可能是本机独立工作副本，可能包含其他会话的未完成修改；它不是生产真相，使用前必须分别检查其 Git 状态并与 `/opt/memora-backend` 对比。
+- 客户端接口、服务端部署和真实登录/设备验收是三层不同证据。`/health` 返回 200 只能证明 API 可达，不能证明 Agent、Admin、APK 下载或双设备同步已经验收。
+
+### 修改与迭代方式
+
+开始任何任务前先阅读 [AGENTS.md](AGENTS.md)，并在涉及组件中先执行只读检查：主仓库、`landing-page/`、后端工作副本各自有独立 Git 状态，不能互相覆盖。
+
+Flutter 客户端通常按“定位真实 service/provider/model 路径 → 增加或更新测试 → 定向测试 → `flutter analyze` → 必要时 debug 构建/实机验收”迭代。Landing 在其目录运行：
+
+```powershell
+cd landing-page
+npm install
+npm run dev
+npm run build
+```
+
+生产后端的 SSH 路由只保存在被 Git 忽略的 `.codex/access.local.md`。需要连接时先读取该文件，再使用 Windows OpenSSH、公钥、批处理探测和严格 Host Key 校验；仓库文档不保存真实主机、密码、私钥或 token：
+
+```powershell
+ssh -i <identity-from-access.local.md> -o BatchMode=yes -o StrictHostKeyChecking=yes <target-from-access.local.md>
+```
+
+连接后从 `/opt/memora-backend` 的 `git status`、当前提交、`package.json`、`scripts/deploy.sh`、Prisma migrations 和 Compose 状态开始检查。后端变更先在隔离工作副本中完成定向测试、`npm run build` 与相关 lint/test；数据库修改必须通过新 migration 和备份/回滚方案完成。只有在明确要求部署时才运行当前服务器的部署流程，并在部署后分别验证公网健康、功能 API 和真实账号/设备路径。
+
+当前配置好的 Codex 工作区可用本机 `build-pipeline` 技能执行 App 生产发布：
+
+```powershell
+dart run tools/release_pipeline.dart "type(scope): description"
+```
+
+该包装脚本与技能是本机忽略文件；干净 clone 应以受跟踪的 `tools/release.dart`、`tools/verify_release.dart`、`.github/workflows/release.yml` 和发布文档为准。完整发布必须经过 CI 全量测试与签名 APK、GitHub Release、国内下载 manifest/CORS/Range/hash 校验，并在 Landing 变更时完成浏览器检查。
+
 文章、记忆、标签、文件夹、处理状态和向量索引默认保存在本机。可选账号同步会把选定实体通过 HTTPS 发送到记忆海服务端，当前同步负载并非端到端加密；BYOK 模式直接请求用户配置的兼容服务，Hosted Agent 模式经记忆海后端执行。Embedding 只使用用户配置的服务，未配置时降级为本地关键词检索。
 
 ## 核心特点
@@ -211,11 +260,13 @@ flutter run -d <android-device-id>
 flutter run -d edge
 ```
 
-构建 Android APK：
+本地调试构建 Android APK：
 
 ```bash
-flutter build apk --release
+flutter build apk --debug
 ```
+
+只有明确需要本地 release 产物时才手动执行 `flutter build apk --release`，并遵守版本号规则；正式生产发布使用上面的发布流水线，由 CI 构建和签名。
 
 检查代码：
 
@@ -237,7 +288,7 @@ flutter test
 
 ## 隐私边界
 
-- 记忆海 不运营内容服务器或 AI 中转服务器。
+- 记忆海不把抓取的文章正文作为公共内容服务器托管；但可选账号同步、Hosted AI/Agent、Admin 与 APK 下载由记忆海后端提供。
 - 本地文章数据不会因为使用应用而自动上传到 记忆海。
 - 生成记忆时，提取后的正文会发送到用户选择的聊天模型服务。
 - 用户配置 embedding 服务后，建立语义索引时会向该服务发送标题、记忆和标签；未配置时不发送并降级为本地关键词检索。
@@ -246,9 +297,14 @@ flutter test
 
 ## 文档
 
+- [Agent 项目与迭代说明](AGENTS.md)
 - [产品概览](docs/OVERVIEW.md)
 - [产品需求文档](docs/PRD.md)
 - [实施路线图](docs/ROADMAP.md)
+- [认证、同步与后端交接契约](docs/SERVER_AUTH_SYNC_AGENT_PROMPT.md)
+- [Hosted Agent 客户端工具契约](docs/MEMORA_PI_CLIENT_TOOLS.md)
+- [APK 国内下载源契约](docs/APK_DISTRIBUTION_SERVER.md)
+- [发布自动化环境说明](docs/RELEASE_AUTOMATION_SETUP.md)
 
 ---
 
@@ -277,6 +333,28 @@ Capture a link
   → ask questions across the whole library
   → inspect cited cards and return to the original source
 ```
+
+## Project Topology (Developers / Agents)
+
+Memora is a multi-component product. This repository primarily owns the Flutter client, while a complete change may also involve the landing site, production backend, PostgreSQL, Hosted Agent, Admin, and delivery infrastructure.
+
+| Component | Source and responsibility | Runtime / entry point |
+|---|---|---|
+| Flutter App | This repository's `lib/`, `test/`, and platform directories; local library, capture/processing, retrieval/RAG, auth and sync client | Android is the primary acceptance platform; backend defaults to `https://api.memora.wang` |
+| Landing Page | Independent Astro Git worktree under `landing-page/`; website and download UI | `https://memora.wang`; separate `Memora-Landing-Page` repository on `master` |
+| Backend API | Independent TypeScript/Fastify Git repository at production `/opt/memora-backend` | `https://api.memora.wang`; API docs at `/docs` |
+| PostgreSQL | Backend Prisma schema and migrations; accounts, devices, sync events, Agent runs, subscriptions and feedback | PostgreSQL service in the backend Compose stack |
+| Hosted Agent | Backend `src/agent/`, `config/agent.toml`, `skills/`, and durable `/ai/runs` | Authenticated execution with persisted runs and SSE recovery |
+| Admin | Backend `src/routes/admin*.ts` page and protected APIs | `/admin`; credentials remain inside the secure operations boundary |
+| Delivery | `.github/workflows/release.yml`, `deploy/`, and tracked release tools | GitHub Release, China APK source, and landing deployment |
+
+Important source boundaries:
+
+- `landing-page/` is recorded as a gitlink, but this repository currently has no `.gitmodules`. It has independent Git state and delivery; do not assume ordinary submodule commands will work.
+- Backend source is not a tracked directory in this repository. `scratchpad/pi-backend-edit/` may be a local, independently dirty working copy and is not production truth. Inspect its own Git state and compare it with `/opt/memora-backend` before use.
+- Client code/tests, deployed service reachability, and real authenticated/device or two-device acceptance are separate evidence levels. A 200 response from `/health` does not validate Agent, Admin, APK delivery, or sync behavior.
+
+Read [AGENTS.md](AGENTS.md) before changing the project. It documents the component-specific workflow, safe SSH entry through the ignored machine-local `.codex/access.local.md`, database migration rules, validation boundaries, and the configured release pipeline. Never place hosts, passwords, private keys, tokens, `.env` values, or credential-bearing commands in tracked documentation.
 
 Articles, summaries, organization data, processing state, and vector indexes are stored locally by default. Optional account sync sends selected entities to Memora's backend over HTTPS; its payload is not currently end-to-end encrypted. BYOK calls go directly to the configured provider, while Hosted Agent calls run through Memora's backend. Embeddings require a user-configured provider and otherwise fall back to local keyword retrieval.
 
@@ -454,11 +532,13 @@ flutter run -d <android-device-id>
 flutter run -d edge
 ```
 
-Build an Android APK:
+Build a local Android debug APK:
 
 ```bash
-flutter build apk --release
+flutter build apk --debug
 ```
+
+Run `flutter build apk --release` manually only when a local release artifact is explicitly needed and the version contract has been observed. Production releases use the configured pipeline and CI-owned test, signing, publishing, server activation, and landing checks described in [AGENTS.md](AGENTS.md).
 
 Run project checks:
 
@@ -480,7 +560,7 @@ The endpoint must follow an OpenAI-compatible request and response structure. Pa
 
 ## Privacy Boundary
 
-- Memora does not operate a content server or AI relay.
+- Memora does not host extracted article bodies as a public content server; optional account sync, Hosted AI/Agent, Admin, and APK delivery are operated by the Memora backend.
 - Local article data is not automatically uploaded to Memora.
 - Extracted article text is sent to the selected chat model when generating summaries.
 - When an embedding provider is configured, titles, summaries, and tags are sent to it while building semantic indexes; otherwise nothing is sent and retrieval falls back to local keywords.
@@ -489,6 +569,11 @@ The endpoint must follow an OpenAI-compatible request and response structure. Pa
 
 ## Documentation
 
+- [Agent project and iteration guide](AGENTS.md)
 - [Product overview](docs/OVERVIEW.md)
 - [Product requirements](docs/PRD.md)
 - [Implementation roadmap](docs/ROADMAP.md)
+- [Auth, sync, and backend handoff contract](docs/SERVER_AUTH_SYNC_AGENT_PROMPT.md)
+- [Hosted Agent client-tool contract](docs/MEMORA_PI_CLIENT_TOOLS.md)
+- [China APK distribution contract](docs/APK_DISTRIBUTION_SERVER.md)
+- [Release automation setup](docs/RELEASE_AUTOMATION_SETUP.md)

@@ -16,6 +16,8 @@ class ChatMessage {
   final ChatMessageStatus status;
   final List<String> webUrls;
   final List<ChatAttachment> attachments;
+  final String thinking;
+  final List<String> toolEvents;
   int? feedback;
 
   ChatMessage({
@@ -31,6 +33,8 @@ class ChatMessage {
     this.status = ChatMessageStatus.completed,
     this.webUrls = const [],
     this.attachments = const [],
+    this.thinking = '',
+    this.toolEvents = const [],
   });
 
   bool get isPending => status == ChatMessageStatus.sending;
@@ -53,6 +57,8 @@ class ChatMessage {
       status: record.status,
       webUrls: record.webUrls,
       attachments: record.attachments,
+      thinking: record.thinking,
+      toolEvents: record.toolEvents,
     )..feedback = record.feedback;
   }
 }

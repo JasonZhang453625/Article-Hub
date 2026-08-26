@@ -348,6 +348,9 @@ class LocaleStrings {
   final String chatToolCompleted;
   final String chatToolFailed;
   final String chatToolSources;
+  final String chatWorkingThinking;
+  final String chatWorkingBoiling;
+  final String chatWorkingRetrieving;
   final String chatJumpToBottom;
   final String webSearchSection;
   final String webSearchOn;
@@ -702,6 +705,9 @@ class LocaleStrings {
     required this.chatToolCompleted,
     required this.chatToolFailed,
     required this.chatToolSources,
+    required this.chatWorkingThinking,
+    required this.chatWorkingBoiling,
+    required this.chatWorkingRetrieving,
     required this.chatJumpToBottom,
     required this.webSearchSection,
     required this.webSearchOn,
@@ -1114,6 +1120,9 @@ class LocaleStrings {
     chatToolCompleted: 'Tool completed',
     chatToolFailed: 'Tool failed',
     chatToolSources: 'sources',
+    chatWorkingThinking: 'Thinking…',
+    chatWorkingBoiling: 'Boiling the answer…',
+    chatWorkingRetrieving: 'Gathering evidence…',
     chatJumpToBottom: 'Jump to latest',
     webSearchSection: 'Web Search',
     webSearchOn: 'Web search on — answers may include live sources',
@@ -1471,6 +1480,9 @@ class LocaleStrings {
     chatToolCompleted: '工具调用完成',
     chatToolFailed: '工具调用失败',
     chatToolSources: '个来源',
+    chatWorkingThinking: '思考中…',
+    chatWorkingBoiling: '正在组织回答…',
+    chatWorkingRetrieving: '正在收集证据…',
     chatJumpToBottom: '回到最新消息',
     webSearchSection: '联网搜索',
     webSearchOn: '已开启联网搜索 — 回答可能引用实时来源',

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math' as math;
 
@@ -725,7 +726,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     final streamedAnswer = StringBuffer();
     final toolProgress = <String, String>{};
-    var answerStarted = false;
+    final activeToolEvents = <String, Map<String, dynamic>>{};
     var lastPartialPersist = DateTime.fromMillisecondsSinceEpoch(0);
     var partialPersistChain = Future<void>.value();
     String? liveServerRunId;
@@ -754,9 +755,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       );
     }
 
+    List<String> serializedToolEvents() => [
+          for (final entry in activeToolEvents.values)
+            jsonEncode(entry),
+        ];
+
     void publishDelta(String delta) {
       if (!mounted || runId != _answerRunId || delta.isEmpty) return;
-      answerStarted = true;
       streamedAnswer.write(delta);
       final partial = activePending.copyWith(
         content: streamedAnswer.toString(),
@@ -786,7 +791,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
 
     void publishAgentEvent(HostedAgentEvent event) {
-      if (!mounted || runId != _answerRunId || answerStarted) return;
+      if (!mounted || runId != _answerRunId) return;
+      // Reasoning text is deliberately never surfaced in the client; the
+      // working indicator in the bubble animates while the Agent is busy.
+      if (event.type == 'thinking.delta') return;
       final tool = (event.data['tool'] ?? '').toString().trim();
       if (tool.isEmpty) return;
       final callId = (event.data['callId'] ?? '').toString().trim();
@@ -799,6 +807,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     ? '🔎 ${s.chatToolSearching}'
                     : '🔎 ${s.chatToolSearching}: $query'
               : '🛠️ ${s.chatToolCalling}: $tool';
+          activeToolEvents[key] = <String, dynamic>{
+            'tool': tool,
+            'state': 'started',
+            if (query.isNotEmpty) 'query': query,
+          };
           break;
         case 'tool.call.completed':
           final sourceCount = event.data['sourceCount'];
@@ -806,19 +819,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ? ' (${sourceCount.toInt()} ${s.chatToolSources})'
               : '';
           toolProgress[key] = '✓ ${s.chatToolCompleted}: $tool$sources';
+          activeToolEvents[key] = <String, dynamic>{
+            'tool': tool,
+            'state': 'completed',
+            if (sourceCount is num && sourceCount > 0)
+              'sourceCount': sourceCount.toInt(),
+          };
           break;
         case 'tool.call.failed':
           toolProgress[key] = '⚠️ ${s.chatToolFailed}: $tool';
+          activeToolEvents[key] = <String, dynamic>{
+            'tool': tool,
+            'state': 'failed',
+          };
           break;
         default:
           return;
       }
-      sessions.replaceMessageInMemory(
-        activePending.copyWith(
-          content: toolProgress.values.join('\n'),
-          status: ChatMessageStatus.sending,
-        ),
+      final partial = activePending.copyWith(
+        content: streamedAnswer.toString(),
+        toolEvents: serializedToolEvents(),
+        status: ChatMessageStatus.sending,
       );
+      sessions.replaceMessageInMemory(partial);
+      partialPersistChain = partialPersistChain.then((_) async {
+        if (runControl.cancelRequested || runId != _answerRunId) return;
+        try {
+          await sessions.updateMessage(partial);
+        } catch (_) {
+          // Best-effort tool-state persist; the terminal write is authoritative.
+        }
+      });
     }
 
     if (runControl.cancelRequested || runId != _answerRunId) {
@@ -1005,6 +1036,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               logId: result.logId,
               status: ChatMessageStatus.completed,
               privateEvidenceUsed: privateEvidenceUsed,
+              toolEvents: serializedToolEvents(),
             ),
           );
           break;
@@ -1199,15 +1231,66 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }) async {
     final sessions = ref.read(chatSessionsProvider.notifier);
     final buffer = StringBuffer(message.content);
+    final toolEvents = <String, Map<String, dynamic>>{};
+    for (final raw in message.toolEvents) {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) continue;
+      final key = (decoded['callId'] as String?) ??
+          decoded['tool']?.toString() ??
+          raw.hashCode.toString();
+      toolEvents[key] = decoded;
+    }
 
     bool isStillCurrent() {
       return sessions.isPendingServerRun(messageId: message.id, runId: runId);
     }
 
+    void onResumeEvent(HostedAgentEvent event) {
+      if (event.type == 'thinking.delta') return;
+      final tool = (event.data['tool'] ?? '').toString().trim();
+      if (tool.isEmpty) return;
+      final callId = (event.data['callId'] ?? '').toString().trim();
+      final key = callId.isEmpty
+          ? '$tool-${toolEvents.length}'
+          : callId;
+      switch (event.type) {
+        case 'tool.call.started':
+          toolEvents[key] = <String, dynamic>{
+            'tool': tool,
+            'state': 'started',
+            if (callId.isNotEmpty) 'callId': callId,
+            if ((event.data['query'] ?? '').toString().trim().isNotEmpty)
+              'query': (event.data['query'] ?? '').toString().trim(),
+          };
+          break;
+        case 'tool.call.completed':
+          final sourceCount = event.data['sourceCount'];
+          toolEvents[key] = <String, dynamic>{
+            'tool': tool,
+            'state': 'completed',
+            if (callId.isNotEmpty) 'callId': callId,
+            if (sourceCount is num && sourceCount > 0)
+              'sourceCount': sourceCount.toInt(),
+          };
+          break;
+        case 'tool.call.failed':
+          toolEvents[key] = <String, dynamic>{
+            'tool': tool,
+            'state': 'failed',
+            if (callId.isNotEmpty) 'callId': callId,
+          };
+          break;
+      }
+    }
+
+    List<String> serializedToolEvents() =>
+        [for (final entry in toolEvents.values) jsonEncode(entry)];
+
     try {
       await for (final delta in hostedAgent.resumeStream(
         runId,
         afterEventSeq: message.aiRunEventSeq ?? 0,
+        onEvent: onResumeEvent,
       )) {
         if (!isStillCurrent()) return;
         if (delta.isEmpty) continue;
@@ -1216,6 +1299,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         await sessions.updateMessage(
           message.copyWith(
             content: buffer.toString(),
+            toolEvents: serializedToolEvents(),
             status: ChatMessageStatus.sending,
             aiRunEventSeq: hostedAgent.lastEventSeq,
             webUrls: hostedAgent.lastWebUrls,
@@ -1235,6 +1319,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         await sessions.updateMessage(
           message.copyWith(
             content: answer.isEmpty ? friendly : '$answer\n\n$friendly',
+            toolEvents: serializedToolEvents(),
             status: ChatMessageStatus.failed,
             errorCode: hostedAgent.lastRunStatus == 'cancelled'
                 ? 'hosted_run_cancelled'
@@ -1252,6 +1337,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         await sessions.updateMessage(
           message.copyWith(
             content: error,
+            toolEvents: serializedToolEvents(),
             status: ChatMessageStatus.failed,
             errorCode: 'hosted_run_failed',
             aiRunEventSeq: hostedAgent.lastEventSeq,
@@ -1303,6 +1389,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await sessions.updateMessage(
         message.copyWith(
           content: answer,
+          toolEvents: serializedToolEvents(),
           status: ChatMessageStatus.completed,
           articleIds: citedArticleIds,
           webUrls: citedWebUrls,

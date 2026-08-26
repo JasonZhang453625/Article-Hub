@@ -273,7 +273,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'keep navigating');
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pump();
-    expect(find.byType(ChatTypingIndicator), findsOneWidget);
+    expect(find.textContaining('Thinking'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('chat-tools-button')));
     await tester.pump();
@@ -294,7 +294,7 @@ void main() {
   });
 
   testWidgets(
-    'shows tool calls without reasoning then replaces them with the final answer',
+    'shows tool calls without reasoning and keeps them beside the final answer',
     (tester) async {
       final releaseTool = Completer<void>();
       final conversation = RagConversationService(
@@ -371,6 +371,7 @@ void main() {
 
       expect(find.textContaining('Final sourced answer'), findsOneWidget);
       expect(find.textContaining('Searching the web'), findsNothing);
+      expect(find.textContaining('Tool completed'), findsOneWidget);
       expect(find.textContaining('中国人口 最新数据'), findsNothing);
     },
   );

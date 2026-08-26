@@ -85,6 +85,15 @@ class ChatMessageRecord {
   /// replaying attachment text into ordinary history.
   final bool privateEvidenceUsed;
 
+  /// Accumulated reasoning text streamed from the Hosted Agent as
+  /// `thinking.delta` events. Rendered in a collapsed "thinking" view, not
+  /// into the main answer body.
+  final String thinking;
+
+  /// Tool-call progress events streamed from the Hosted Agent, each stored as
+  /// a JSON object string. They stay visible alongside the final answer.
+  final List<String> toolEvents;
+
   bool get hasUnresolvedAiRunCreate =>
       aiRunId == null &&
       aiRunOwnerUserId?.trim().isNotEmpty == true &&
@@ -127,6 +136,8 @@ class ChatMessageRecord {
     this.attachmentContext,
     this.attachmentContextIncludesImages = false,
     this.privateEvidenceUsed = false,
+    this.thinking = '',
+    this.toolEvents = const [],
   });
 
   ChatMessageRecord copyWith({
@@ -154,6 +165,8 @@ class ChatMessageRecord {
     String? attachmentContext,
     bool? attachmentContextIncludesImages,
     bool? privateEvidenceUsed,
+    String? thinking,
+    List<String>? toolEvents,
   }) {
     return ChatMessageRecord(
       id: id,
@@ -188,6 +201,8 @@ class ChatMessageRecord {
           attachmentContextIncludesImages ??
           this.attachmentContextIncludesImages,
       privateEvidenceUsed: privateEvidenceUsed ?? this.privateEvidenceUsed,
+      thinking: thinking ?? this.thinking,
+      toolEvents: toolEvents ?? this.toolEvents,
     );
   }
 
@@ -219,6 +234,8 @@ class ChatMessageRecord {
       aiRunKnowledgeMode: null,
       attachmentIdsForCleanup: attachmentIdsForCleanup,
       privateEvidenceUsed: false,
+      thinking: '',
+      toolEvents: const [],
     );
   }
 }
@@ -262,13 +279,15 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       aiRunClientToolsVersion: (fields[25] as num?)?.toInt(),
       aiRunKnowledgeMode: fields[26] as String?,
       privateEvidenceUsed: _privateEvidenceFromStoredFields(fields),
+      thinking: fields[28] as String? ?? '',
+      toolEvents: _stringList(fields[29]),
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessageRecord obj) {
     writer
-      ..writeByte(28)
+      ..writeByte(30)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -329,7 +348,11 @@ class ChatMessageRecordAdapter extends TypeAdapter<ChatMessageRecord> {
       ..writeByte(26)
       ..write(obj.aiRunKnowledgeMode)
       ..writeByte(27)
-      ..write(obj.privateEvidenceUsed);
+      ..write(obj.privateEvidenceUsed)
+      ..writeByte(28)
+      ..write(obj.thinking)
+      ..writeByte(29)
+      ..write(obj.toolEvents);
   }
 }
 
