@@ -207,8 +207,8 @@ void main() {
       await tester.tap(find.byIcon(Icons.send_rounded));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // The answer is in flight: typing indicator visible, send disabled.
-      expect(find.byType(ChatTypingIndicator), findsOneWidget);
+      // The answer is in flight: working indicator visible, send disabled.
+      expect(find.textContaining('Thinking'), findsOneWidget);
       expect(find.byIcon(Icons.send_rounded), findsNothing);
 
       // App goes to the background while the answer is generating.
@@ -225,7 +225,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       // Returning to the app must not discard the in-flight request.
-      expect(find.byType(ChatTypingIndicator), findsOneWidget);
+      expect(find.textContaining('Thinking'), findsOneWidget);
       expect(find.byIcon(Icons.send_rounded), findsNothing);
 
       gate.complete('Completed while the app was covered');
@@ -271,7 +271,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'background me');
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.byType(ChatTypingIndicator), findsOneWidget);
+    expect(find.textContaining('Thinking'), findsOneWidget);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
@@ -288,7 +288,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('Late zombie answer'), findsOneWidget);
-    expect(find.byType(ChatTypingIndicator), findsNothing);
+    expect(find.textContaining('Thinking'), findsNothing);
   });
 
   testWidgets('a live durable run is not resumed by rebuild or lifecycle', (
