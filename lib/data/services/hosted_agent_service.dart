@@ -1153,13 +1153,43 @@ class HostedAgentService {
     lastRunStatus = 'queued';
     await onRunCreated?.call(runId);
 
+    final streamedAnswer = StringBuffer();
     try {
       await for (final delta in _watchRunWithReconnect(
         runId,
         session: session!,
         onEvent: onEvent,
       )) {
-        if (delta.isNotEmpty) yield delta;
+        if (delta.isEmpty) continue;
+        if (!lastChunkIsFullAnswer) {
+          streamedAnswer.write(delta);
+          yield delta;
+          continue;
+        }
+
+        // `run.result.answer` is an authoritative full-frame copy. Current
+        // workers send it after the same OpenAI-style completion deltas, so
+        // forwarding it unchanged would make every append-only consumer render
+        // the answer twice. Emit only a suffix that was not already streamed;
+        // a result-only run still yields its complete answer.
+        final streamed = streamedAnswer.toString();
+        if (streamed.isEmpty) {
+          streamedAnswer.write(delta);
+          yield delta;
+        } else if (delta.startsWith(streamed)) {
+          final suffix = delta.substring(streamed.length);
+          streamedAnswer
+            ..clear()
+            ..write(delta);
+          if (suffix.isNotEmpty) yield suffix;
+        } else {
+          // A divergent result violates the append-only stream contract. Keep
+          // surfacing the authoritative frame instead of silently losing it.
+          streamedAnswer
+            ..clear()
+            ..write(delta);
+          yield delta;
+        }
       }
     } on TimeoutException {
       lastError = 'Hosted Agent timed out after ${timeout.inSeconds} seconds';

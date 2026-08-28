@@ -171,6 +171,71 @@ void main() {
     },
   );
 
+  test(
+    'does not append the authoritative run result after identical deltas',
+    () async {
+      final client = MockClient.streaming((request, _) async {
+        if (request.method == 'POST') {
+          return http.StreamedResponse(
+            Stream<List<int>>.value(
+              utf8.encode(
+                jsonEncode({
+                  'id': 'run-deduplicated',
+                  'status': 'queued',
+                  'lastEventSeq': 0,
+                }),
+              ),
+            ),
+            202,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              'id: 1\n'
+              'event: completion\n'
+              'data: {"choices":[{"delta":{"content":"Same "}}]}\n\n'
+              'id: 2\n'
+              'event: completion\n'
+              'data: {"choices":[{"delta":{"content":"answer."}}]}\n\n'
+              'id: 3\n'
+              'event: agent\n'
+              'data: {"type":"run.result","runId":"run-deduplicated",'
+              '"answer":"Same answer.","sources":[]}\n\n',
+            ),
+          ),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final service = HostedAgentService(
+        getSession: () => _session(_jwt('active')),
+        refreshSession: () async => null,
+        model: 'mimo-v2.5',
+      );
+
+      final chunks = await http.runWithClient(
+        () => service
+            .chatStreamV4(
+              question: 'question',
+              knowledgeMode: HostedChatKnowledgeMode.hybrid,
+              length: HostedChatLength.concise,
+              language: HostedChatLanguage.followUser,
+              webSearch: false,
+              localKnowledge: false,
+              idempotencyKey: 'deduplicate-result-attempt',
+            )
+            .toList(),
+        () => client,
+      );
+
+      expect(chunks.join(), 'Same answer.');
+      expect(chunks, ['Same ', 'answer.']);
+      expect(service.lastRunStatus, 'completed');
+    },
+  );
+
   test('chat@2 sends pair-equal sticky provenance and disables Web', () async {
     late Map<String, dynamic> payload;
     final client = MockClient.streaming((request, bodyStream) async {
