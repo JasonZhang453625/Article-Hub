@@ -7,19 +7,25 @@ class AppSettings {
   static const int typeId = 2;
 
   static const String defaultHostedTextModel = 'deepseek-v4-pro';
-  static const String defaultHostedVisionModel = 'sensenova-6.7-flash-lite';
+  static const String defaultHostedVisionModel = 'sensenova-6.8-flash-lite';
   static const List<String> hostedTextModels = [
     'deepseek-v4-pro',
     'deepseek-v4-flash',
   ];
   static const List<String> hostedVisionModels = [
+    'sensenova-6.8-flash-lite',
     'mimo-v2.5',
-    'sensenova-6.7-flash-lite',
   ];
 
   static const Set<String> _retiredHostedTextModels = {
     'mimo-v2.5',
     'mimo-v2.5-pro',
+  };
+
+  /// SenseNova only guarantees temporary compatibility routing for the 6.7
+  /// model id, so migrate persisted settings and backup imports to 6.8.
+  static const Set<String> _legacyHostedVisionModels = {
+    'sensenova-6.7-flash-lite',
   };
 
   /// Migrates the expired hosted MiMo text subscription to DeepSeek while
@@ -28,6 +34,14 @@ class AppSettings {
     final normalized = value?.trim() ?? '';
     if (normalized.isEmpty || _retiredHostedTextModels.contains(normalized)) {
       return defaultHostedTextModel;
+    }
+    return normalized;
+  }
+
+  static String normalizeHostedVisionModel(String? value) {
+    final normalized = value?.trim() ?? '';
+    if (normalized.isEmpty || _legacyHostedVisionModels.contains(normalized)) {
+      return defaultHostedVisionModel;
     }
     return normalized;
   }
@@ -471,9 +485,11 @@ class AppSettings {
                   ? json['hostedAiModel'] as String
                   : null),
       ),
-      hostedVisionModel: json['hostedVisionModel'] is String
-          ? json['hostedVisionModel'] as String
-          : defaultHostedVisionModel,
+      hostedVisionModel: normalizeHostedVisionModel(
+        json['hostedVisionModel'] is String
+            ? json['hostedVisionModel'] as String
+            : null,
+      ),
       embeddingBaseUrl: json['embeddingBaseUrl'] is String
           ? json['embeddingBaseUrl'] as String
           : '',
@@ -565,8 +581,9 @@ class AppSettingsAdapter extends TypeAdapter<AppSettings> {
       hostedChatModel: AppSettings.normalizeHostedTextModel(
         (fields[31] as String?) ?? (fields[24] as String?),
       ),
-      hostedVisionModel:
-          (fields[32] as String?) ?? AppSettings.defaultHostedVisionModel,
+      hostedVisionModel: AppSettings.normalizeHostedVisionModel(
+        fields[32] as String?,
+      ),
       cloudSyncEnabled: (fields[33] as bool?) ?? false,
     );
   }

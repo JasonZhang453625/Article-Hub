@@ -180,7 +180,7 @@ void main() {
         expect(multipartBody, contains('name="metadata"'));
         expect(multipartBody, contains('name="images"'));
         expect(multipartBody, contains('"provider":"sensenova"'));
-        expect(multipartBody, contains('"model":"sensenova-6.7-flash-lite"'));
+        expect(multipartBody, contains('"model":"sensenova-6.8-flash-lite"'));
         service.dispose();
       },
     );
@@ -387,8 +387,8 @@ Future<ArticleAttachment> _attachmentFor(Uint8List bytes) async {
 
 Map<String, dynamic> _resultJson(
   ArticleAttachment attachment, {
-  String provider = 'sensenova',
-  String model = 'sensenova-6.7-flash-lite',
+  String provider = senseNovaProvider,
+  String model = senseNovaModel,
 }) {
   return ImageUnderstandingDocument(
     requestId: 'request-1',

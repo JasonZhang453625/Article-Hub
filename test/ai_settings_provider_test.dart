@@ -42,7 +42,7 @@ void main() {
       aiProviderMode: 1,
       hostedAiModel: 'deepseek-v4-flash',
       hostedChatModel: 'deepseek-v4-pro',
-      hostedVisionModel: 'sensenova-6.7-flash-lite',
+      hostedVisionModel: 'sensenova-6.8-flash-lite',
     );
 
     await box.put('settings', settings);
@@ -78,6 +78,26 @@ void main() {
       final restored = reopened.get('settings')!;
       expect(restored.hostedAiModel, AppSettings.defaultHostedTextModel);
       expect(restored.hostedChatModel, AppSettings.defaultHostedTextModel);
+    },
+  );
+
+  test(
+    'legacy SenseNova 6.7 selection migrates to 6.8 through the Hive adapter',
+    () async {
+      final box = await Hive.openBox<AppSettings>('legacy-sensenova-vision');
+      await box.put(
+        'settings',
+        AppSettings(hostedVisionModel: 'sensenova-6.7-flash-lite'),
+      );
+      await box.close();
+
+      final reopened = await Hive.openBox<AppSettings>(
+        'legacy-sensenova-vision',
+      );
+      expect(
+        reopened.get('settings')!.hostedVisionModel,
+        AppSettings.defaultHostedVisionModel,
+      );
     },
   );
 
@@ -132,7 +152,7 @@ void main() {
             'deepseek-v4-flash',
             'deepseek-v4-pro',
           ],
-          visionModels: ['mimo-v2.5', 'sensenova-6.7-flash-lite'],
+          visionModels: ['sensenova-6.8-flash-lite', 'mimo-v2.5'],
         ),
       );
       addTearDown(HostedAiCapabilitiesCache.instance.clear);
@@ -176,6 +196,18 @@ void main() {
         'deepseek-v4-pro',
       );
       expect(box.get('settings')!.hostedAiModel, 'deepseek-v4-pro');
+
+      await container
+          .read(settingsProvider.notifier)
+          .setHostedAiModels(visionModel: 'sensenova-6.7-flash-lite');
+      expect(
+        container.read(settingsProvider).value!.hostedVisionModel,
+        AppSettings.defaultHostedVisionModel,
+      );
+      expect(
+        box.get('settings')!.hostedVisionModel,
+        AppSettings.defaultHostedVisionModel,
+      );
     },
   );
 }

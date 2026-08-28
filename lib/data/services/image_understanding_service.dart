@@ -14,8 +14,9 @@ import 'local_image_importer.dart';
 
 const String imageUnderstandingPromptVersion = 'image-understanding-v1';
 const String senseNovaProvider = 'sensenova';
-const String senseNovaModel = 'sensenova-6.7-flash-lite';
+const String senseNovaModel = 'sensenova-6.8-flash-lite';
 const String mimoImageProvider = 'mimo';
+const String mimoImageModel = 'mimo-v2.5';
 const String openAiCompatibleImageProvider = 'openai-compatible';
 
 String imageProviderForModel(String model) {

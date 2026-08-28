@@ -18,7 +18,7 @@ void main() {
         aiProviderMode: 1,
         hostedAiModel: 'deepseek-v4-flash',
         hostedChatModel: 'deepseek-v4-pro',
-        hostedVisionModel: 'sensenova-6.7-flash-lite',
+        hostedVisionModel: 'sensenova-6.8-flash-lite',
         embeddingBaseUrl: 'https://embedding.example/v1',
         embeddingApiKey: 'sk-embedding-secret',
         embeddingModel: 'model-b',
@@ -45,7 +45,7 @@ void main() {
       expect(settings.toSyncJson()['hostedChatModel'], 'deepseek-v4-pro');
       expect(
         settings.toSyncJson()['hostedVisionModel'],
-        'sensenova-6.7-flash-lite',
+        'sensenova-6.8-flash-lite',
       );
     },
   );

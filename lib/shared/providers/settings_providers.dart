@@ -213,12 +213,13 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
   }
 
   String _hostedVisionModel(String value) {
-    return AppSettings.hostedVisionModels.contains(value) ||
+    final normalized = AppSettings.normalizeHostedVisionModel(value);
+    return AppSettings.hostedVisionModels.contains(normalized) ||
             HostedAiCapabilitiesCache.instance.value?.visionModels.contains(
-                  value,
+                  normalized,
                 ) ==
                 true
-        ? value
+        ? normalized
         : AppSettings.defaultHostedVisionModel;
   }
 
