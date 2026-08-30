@@ -986,6 +986,72 @@ void main() {
     expect(payload.containsKey('reasoning_effort'), isFalse);
   });
 
+  test('forwards distinct DeepSeek low and high thinking levels', () async {
+    final efforts = <String>[];
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        final payload = jsonDecode(await bodyStream.bytesToString());
+        efforts.add(
+          ((payload as Map<String, dynamic>)['thinking']
+                  as Map<String, dynamic>)['reasoning_effort']
+              as String,
+        );
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode(
+              jsonEncode({
+                'id': 'run-${efforts.length}',
+                'status': 'queued',
+                'lastEventSeq': 1,
+              }),
+            ),
+          ),
+          202,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 2\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run",'
+            '"answer":"ok","sources":[]}\n\n',
+          ),
+        ),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('active')),
+      refreshSession: () async => null,
+      model: 'deepseek-v4-pro',
+    );
+
+    await http.runWithClient(() async {
+      for (final level in [AiThinkingLevel.low, AiThinkingLevel.medium]) {
+        service.thinkingLevel = level;
+        await service
+            .chatStreamV4(
+              question: 'question',
+              history: const [],
+              knowledgeMode: HostedChatKnowledgeMode.hybrid,
+              length: HostedChatLength.concise,
+              language: HostedChatLanguage.followUser,
+              webSearch: false,
+              localKnowledge: false,
+              attachments: const [],
+              images: const [],
+              idempotencyKey: 'thinking-${level.name}',
+            )
+            .toList();
+      }
+    }, () => client);
+
+    expect(efforts, ['low', 'high']);
+  });
+
   test('replays a truncated SSE event without skipping its id', () async {
     var eventRequests = 0;
     final afterValues = <String?>[];

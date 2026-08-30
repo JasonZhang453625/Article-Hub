@@ -70,6 +70,45 @@ void main() {
     expect(messages.last.feedback, 1);
   });
 
+  test(
+    'same-timestamp turn keeps the user question before its answer',
+    () async {
+      final createdAt = DateTime.utc(2026, 8, 30, 1, 24);
+      final thread = ChatThread(
+        id: 'same-timestamp-thread',
+        title: 'Same timestamp',
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      await repository.putThread(thread);
+      await repository.putMessage(
+        ChatMessageRecord(
+          // UUID ordering must not decide conversational ordering.
+          id: 'z-user',
+          threadId: thread.id,
+          role: ChatMessageRole.user,
+          content: 'test',
+          createdAt: createdAt,
+        ),
+      );
+      await repository.putMessage(
+        ChatMessageRecord(
+          id: 'a-assistant',
+          threadId: thread.id,
+          role: ChatMessageRole.assistant,
+          content: 'answer',
+          createdAt: createdAt,
+          query: 'test',
+        ),
+      );
+
+      expect(repository.getMessages(thread.id).map((message) => message.id), [
+        'z-user',
+        'a-assistant',
+      ]);
+    },
+  );
+
   test('deleting a thread also removes only its messages', () async {
     final now = DateTime.utc(2026, 7, 30);
     for (final id in ['thread-1', 'thread-2']) {

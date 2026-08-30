@@ -206,7 +206,16 @@ class HiveChatRepository implements ChatRepository, ClientToolChatRepository {
         .toList();
     messages.sort((a, b) {
       final byCreatedAt = a.createdAt.compareTo(b.createdAt);
-      return byCreatedAt != 0 ? byCreatedAt : a.id.compareTo(b.id);
+      if (byCreatedAt != 0) return byCreatedAt;
+
+      // A user message and its immediately-created assistant placeholder can
+      // share the same timestamp on devices whose clock only advances by the
+      // millisecond. UUIDs are random, so using the id as the first tie-break
+      // can move the question below its answer after the conversation reloads.
+      final byRole = _messageRoleOrder(
+        a.role,
+      ).compareTo(_messageRoleOrder(b.role));
+      return byRole != 0 ? byRole : a.id.compareTo(b.id);
     });
     return messages;
   }
@@ -1349,6 +1358,12 @@ class HiveChatRepository implements ChatRepository, ClientToolChatRepository {
     return box;
   }
 }
+
+int _messageRoleOrder(ChatMessageRole role) => switch (role) {
+  ChatMessageRole.system => 0,
+  ChatMessageRole.user => 1,
+  ChatMessageRole.assistant => 2,
+};
 
 int compareChatThreads(ChatThread a, ChatThread b) {
   if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;

@@ -1111,7 +1111,7 @@ class LocaleStrings {
     chatThinkingStrength: 'Thinking strength',
     chatThinkingNone: 'None',
     chatThinkingLow: 'Low',
-    chatThinkingMedium: 'Medium',
+    chatThinkingMedium: 'High',
     chatThinkingMax: 'Max',
     chatThinkingDeepSeekOnly:
         'Thinking strength is currently available for DeepSeek only.',
@@ -1472,7 +1472,7 @@ class LocaleStrings {
     chatThinkingStrength: '思考强度',
     chatThinkingNone: '无',
     chatThinkingLow: '低',
-    chatThinkingMedium: '中',
+    chatThinkingMedium: '高',
     chatThinkingMax: 'Max',
     chatThinkingDeepSeekOnly: '思考强度目前仅支持 DeepSeek 模型。',
     chatToolCalling: '正在调用工具',

@@ -108,7 +108,7 @@ void main() {
 
     expect(find.text('None'), findsOneWidget);
     expect(find.text('Low'), findsOneWidget);
-    expect(find.text('Medium'), findsOneWidget);
+    expect(find.text('High'), findsOneWidget);
     expect(find.text('Max'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('chat-thinking-level-3')));

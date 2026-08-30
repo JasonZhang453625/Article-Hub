@@ -45,6 +45,7 @@ void main() {
     bool failTerminalAssistantWrites = false,
     bool webSearchEnabled = false,
     Brightness brightness = Brightness.light,
+    int languageIndex = 2,
   }) async {
     final chatRepository = _InMemoryChatRepository(
       threads,
@@ -56,7 +57,7 @@ void main() {
         overrides: [
           // Never completes: keeps settings loading without touching Hive.
           hiveInitProvider.overrideWith((ref) => Completer<void>().future),
-          languageIndexProvider.overrideWith((ref) => 2),
+          languageIndexProvider.overrideWith((ref) => languageIndex),
           chatWebSearchEnabledProvider.overrideWith((ref) => webSearchEnabled),
           settingsProvider.overrideWith(
             (ref) => _TestSettingsNotifier(ref, settings),
@@ -292,6 +293,82 @@ void main() {
     await streamController.close();
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+    'working status highlights characters, reveals dots, and rotates',
+    (tester) async {
+      final streamController = StreamController<String>();
+      final conversation = RagConversationService(
+        retrieve: (query, articles) async => const RetrievalResult(
+          articles: [],
+          method: RetrievalMethod.none,
+          duration: Duration.zero,
+        ),
+        complete:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) async => fail('stream completion should be used'),
+        completeStream:
+            ({
+              required String systemPrompt,
+              required String userMessage,
+              List<Map<String, String>> history = const [],
+              double temperature = 0.3,
+              int maxTokens = 800,
+            }) => streamController.stream,
+        saveLog: (_) async {},
+        promptService: _TestChatPromptService(),
+      );
+      await pumpChat(
+        tester,
+        articles: [],
+        languageIndex: 1,
+        settings: AppSettings(
+          chatAiBaseUrl: 'https://example.com/v1',
+          chatAiApiKey: 'test-key',
+          chatKnowledgeSourceIndex: 1,
+        ),
+        conversation: conversation,
+      );
+
+      await tester.enterText(find.byType(TextField), '测试动画');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pump();
+
+      TextSpan statusSpan() {
+        final text = tester.widget<Text>(
+          find.byKey(const ValueKey('chat-working-status-text')),
+        );
+        return text.textSpan! as TextSpan;
+      }
+
+      var spans = statusSpan().children!.cast<TextSpan>();
+      expect(statusSpan().toPlainText(), '思考中...');
+      expect(spans[0].style!.fontWeight, FontWeight.w600);
+      expect(spans[0].style!.color, isNot(spans[1].style!.color));
+      expect(spans[3].style!.color, Colors.transparent);
+
+      await tester.pump(const Duration(milliseconds: 260));
+      spans = statusSpan().children!.cast<TextSpan>();
+      expect(spans[1].style!.fontWeight, FontWeight.w600);
+      expect(spans[0].style!.fontWeight, FontWeight.w400);
+
+      await tester.pump(const Duration(milliseconds: 520));
+      spans = statusSpan().children!.cast<TextSpan>();
+      expect(spans[3].style!.color, isNot(Colors.transparent));
+      expect(spans[4].style!.color, Colors.transparent);
+
+      await tester.pump(const Duration(milliseconds: 780));
+      expect(statusSpan().toPlainText(), '分析中...');
+
+      await streamController.close();
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets(
     'shows tool calls without reasoning and keeps them beside the final answer',

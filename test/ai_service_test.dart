@@ -343,14 +343,14 @@ void main() {
     },
   );
 
-  test('DeepSeek chat maps four UI levels to three provider states', () async {
+  test('DeepSeek chat maps four UI levels to four provider states', () async {
     final expected = <AiThinkingLevel, Map<String, dynamic>>{
       AiThinkingLevel.none: {
         'thinking': {'type': 'disabled'},
       },
       AiThinkingLevel.low: {
         'thinking': {'type': 'enabled'},
-        'reasoning_effort': 'high',
+        'reasoning_effort': 'low',
       },
       AiThinkingLevel.medium: {
         'thinking': {'type': 'enabled'},

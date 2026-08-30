@@ -1,9 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:markdown/markdown.dart' as md;
-import 'dart:convert';
 
 import '../../data/models/passage.dart';
 import '../../data/models/chat_attachment.dart';
@@ -585,17 +587,99 @@ class _WorkingIndicator extends StatefulWidget {
 }
 
 class _WorkingIndicatorState extends State<_WorkingIndicator> {
+  static const _stepDuration = Duration(milliseconds: 260);
+  static const _chineseThinkingLabels = <String>[
+    '思考中',
+    '分析中',
+    '梳理中',
+    '推理中',
+    '探索中',
+    '构思中',
+    '核对中',
+    '组织中',
+  ];
+  static const _englishThinkingLabels = <String>[
+    'Thinking',
+    'Analyzing',
+    'Reasoning',
+    'Exploring',
+    'Planning',
+    'Reviewing',
+  ];
+
+  Timer? _timer;
+  int _labelIndex = 0;
+  int _step = 0;
+
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    var label = widget.thinkingLabel;
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(_stepDuration, (_) => _advanceAnimation());
+  }
+
+  @override
+  void didUpdateWidget(covariant _WorkingIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.toolEvents != widget.toolEvents ||
+        oldWidget.thinkingLabel != widget.thinkingLabel) {
+      _labelIndex = 0;
+      _step = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _advanceAnimation() {
+    if (!mounted) return;
+    final labels = _labels;
+    final label = labels[_labelIndex % labels.length];
+    final characterCount = label.runes.length;
+    final stepCount = characterCount + 3;
+    setState(() {
+      _step++;
+      if (_step >= stepCount) {
+        _step = 0;
+        _labelIndex = (_labelIndex + 1) % labels.length;
+      }
+    });
+  }
+
+  List<String> get _labels {
     if (widget.toolEvents.isNotEmpty) {
       final hasCompletedTool = widget.toolEvents.any(
         (raw) => raw.contains('"state":"completed"'),
       );
-      label = hasCompletedTool ? widget.boilingLabel : widget.retrievingLabel;
+      return [
+        _withoutTrailingDots(
+          hasCompletedTool ? widget.boilingLabel : widget.retrievingLabel,
+        ),
+      ];
     }
+
+    final isChinese = RegExp(r'[\u3400-\u9fff]').hasMatch(widget.thinkingLabel);
+    return isChinese ? _chineseThinkingLabels : _englishThinkingLabels;
+  }
+
+  String _withoutTrailingDots(String value) =>
+      value.trim().replaceFirst(RegExp(r'[\s.\u2026]+$'), '');
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final labels = _labels;
+    final label = labels[_labelIndex % labels.length];
+    final characters = label.runes
+        .map((rune) => String.fromCharCode(rune))
+        .toList(growable: false);
+    final dotCount = (_step - characters.length + 1).clamp(0, 3);
+    final mutedColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.48);
+    final activeColor = colorScheme.onSurface;
+    final textStyle = theme.textTheme.bodySmall;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -603,18 +687,37 @@ class _WorkingIndicatorState extends State<_WorkingIndicator> {
           const SizedBox(
             width: 16,
             height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-            ),
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: 10),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            child: Text(
-              label,
-              key: ValueKey(label),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+          Semantics(
+            label: label,
+            excludeSemantics: true,
+            child: Text.rich(
+              key: const ValueKey('chat-working-status-text'),
+              TextSpan(
+                children: [
+                  for (var index = 0; index < characters.length; index++)
+                    TextSpan(
+                      text: characters[index],
+                      style: textStyle?.copyWith(
+                        color: _step == index ? activeColor : mutedColor,
+                        fontWeight: _step == index
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  for (var index = 0; index < 3; index++)
+                    TextSpan(
+                      text: '.',
+                      style: textStyle?.copyWith(
+                        color: index < dotCount
+                            ? activeColor
+                            : Colors.transparent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
