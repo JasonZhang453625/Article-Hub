@@ -1950,6 +1950,55 @@ void main() {
     expect(requests, 2);
     expect(refreshes, 1);
   });
+
+  test('delete uses the authenticated idempotent run deletion route', () async {
+    final session = _session(_jwt('delete'));
+    var requests = 0;
+    final client = MockClient.streaming((request, _) async {
+      requests++;
+      expect(request.method, 'DELETE');
+      expect(request.url.path, '/ai/runs/run-delete-1');
+      expect(request.headers['authorization'], 'Bearer ${session.accessToken}');
+      return http.StreamedResponse(Stream<List<int>>.empty(), 204);
+    });
+    final control = HostedAgentControlService(
+      getSession: () => session,
+      refreshSession: () async => null,
+    );
+
+    await http.runWithClient(
+      () => control.deleteRun('run-delete-1', expectedOwnerUserId: 'user-1'),
+      () => client,
+    );
+
+    expect(requests, 1);
+  });
+
+  test('delete refuses another account before any network request', () async {
+    var requests = 0;
+    final client = MockClient.streaming((_, _) async {
+      requests++;
+      return http.StreamedResponse(Stream<List<int>>.empty(), 500);
+    });
+    final control = HostedAgentControlService(
+      getSession: () => _session(_jwt('delete-owner')),
+      refreshSession: () async => null,
+    );
+
+    await expectLater(
+      http.runWithClient(
+        () =>
+            control.deleteRun('run-other-owner', expectedOwnerUserId: 'user-2'),
+        () => client,
+      ),
+      throwsA(
+        isA<HostedAgentCancelException>()
+            .having((error) => error.statusCode, 'statusCode', 401)
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+    expect(requests, 0);
+  });
 }
 
 AuthSession _session(String accessToken) => AuthSession(

@@ -264,7 +264,7 @@ void main() {
   );
 
   test(
-    'deleteThread cancels durable runs before acknowledging tombstone',
+    'deleteThread deletes durable runs before acknowledging tombstone',
     () async {
       final repository = _MemoryChatRepository();
       final now = DateTime.utc(2026, 8, 10);
@@ -289,19 +289,19 @@ void main() {
           aiRunOwnerUserId: 'user-1',
         ),
       );
-      final cancelled = <String>[];
+      final deleted = <String>[];
       final container = ProviderContainer(
         overrides: [
           chatRepositoryProvider.overrideWith((ref) async => repository),
           currentSessionProvider.overrideWithValue(
             _authSession(userId: 'user-1', deviceId: 'device-1'),
           ),
-          hostedAgentRunCancellerProvider.overrideWithValue((
+          hostedAgentRunDeleterProvider.overrideWithValue((
             runId, {
             expectedOwnerUserId,
           }) async {
             expect(expectedOwnerUserId, 'user-1');
-            cancelled.add(runId);
+            deleted.add(runId);
           }),
         ],
       );
@@ -313,14 +313,14 @@ void main() {
 
       await sessions.deleteThread('delete-run-thread');
 
-      expect(cancelled, ['run-delete-provider']);
+      expect(deleted, ['run-delete-provider']);
       expect(repository.pendingThreadDeletions, isEmpty);
       expect(repository.getThread('delete-run-thread'), isNull);
     },
   );
 
   test(
-    'failed deletion cancellation survives and retries from tombstone',
+    'failed run deletion survives and retries from tombstone',
     () async {
       final repository = _MemoryChatRepository();
       final now = DateTime.utc(2026, 8, 10, 1);
@@ -353,7 +353,7 @@ void main() {
           currentSessionProvider.overrideWithValue(
             _authSession(userId: 'user-1', deviceId: 'device-1'),
           ),
-          hostedAgentRunCancellerProvider.overrideWithValue((
+          hostedAgentRunDeleterProvider.overrideWithValue((
             runId, {
             expectedOwnerUserId,
           }) async {
@@ -434,6 +434,7 @@ void main() {
         return _authSession(userId: 'user-b', deviceId: 'device-b');
       });
       final cancelled = <(String, String?)>[];
+      final deleted = <(String, String?)>[];
       final container = ProviderContainer(
         overrides: [
           chatRepositoryProvider.overrideWith((ref) async => repository),
@@ -443,6 +444,12 @@ void main() {
             expectedOwnerUserId,
           }) async {
             cancelled.add((runId, expectedOwnerUserId));
+          }),
+          hostedAgentRunDeleterProvider.overrideWithValue((
+            runId, {
+            expectedOwnerUserId,
+          }) async {
+            deleted.add((runId, expectedOwnerUserId));
           }),
         ],
       );
@@ -454,6 +461,7 @@ void main() {
       await sessions.retryPendingRunCancellations();
 
       expect(cancelled, isEmpty);
+      expect(deleted, isEmpty);
       expect(
         repository.getMessage('owner-stop-message')?.errorCode,
         'hosted_cancel_requested',
@@ -469,7 +477,7 @@ void main() {
       await sessions.retryPendingRunCancellations();
 
       expect(cancelled, contains(('run-owner-stop', 'user-a')));
-      expect(cancelled, contains(('run-owner-delete', 'user-a')));
+      expect(deleted, contains(('run-owner-delete', 'user-a')));
       expect(
         repository.getMessage('owner-stop-message')?.errorCode,
         'hosted_run_cancelled',

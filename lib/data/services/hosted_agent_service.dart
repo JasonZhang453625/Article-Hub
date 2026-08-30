@@ -499,6 +499,129 @@ class HostedAgentControlService {
     }
   }
 
+  /// Permanently deletes an owned durable run through the idempotent
+  /// `DELETE /ai/runs/:runId` endpoint. The backend fences active execution
+  /// before cascading its events and device-tool rows.
+  Future<void> deleteRun(String runId, {String? expectedOwnerUserId}) async {
+    final normalizedRunId = runId.trim();
+    if (normalizedRunId.isEmpty) {
+      throw const HostedAgentCancelException(
+        message: 'Hosted Agent returned no run id.',
+        retryable: false,
+      );
+    }
+
+    AuthSession? session;
+    try {
+      session = _getSession();
+      if (session == null || !session.hasValidAccessToken) {
+        session = await _refreshSession();
+      }
+    } catch (error) {
+      throw HostedAgentCancelException(
+        message: 'Hosted Agent authentication failed: $error',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+    if (session == null) {
+      throw const HostedAgentCancelException(
+        message: 'Sign in to delete hosted AI data.',
+        statusCode: 401,
+        retryable: true,
+      );
+    }
+    if (expectedOwnerUserId == null ||
+        expectedOwnerUserId.trim().isEmpty ||
+        session.user.id != expectedOwnerUserId) {
+      throw const HostedAgentCancelException(
+        message: 'The hosted AI account does not own this run.',
+        statusCode: 401,
+        retryable: false,
+      );
+    }
+
+    var activeSession = session;
+    var refreshedAfterUnauthorized = false;
+    Object? lastFailure;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await _deleteRun(activeSession, normalizedRunId);
+        return;
+      } on _RunHttpException catch (error) {
+        if (error.statusCode == 401 && !refreshedAfterUnauthorized) {
+          refreshedAfterUnauthorized = true;
+          AuthSession? refreshed;
+          try {
+            refreshed = await _refreshSession();
+          } catch (refreshError) {
+            throw HostedAgentCancelException(
+              message: 'Hosted Agent authentication failed: $refreshError',
+              statusCode: 401,
+              retryable: true,
+            );
+          }
+          if (refreshed != null) {
+            if (refreshed.user.id != expectedOwnerUserId) {
+              throw const HostedAgentCancelException(
+                message: 'The hosted AI account does not own this run.',
+                statusCode: 401,
+                retryable: false,
+              );
+            }
+            activeSession = refreshed;
+            continue;
+          }
+        }
+        throw HostedAgentCancelException(
+          message:
+              'HTTP ${error.statusCode}: '
+              '${HostedAgentService._responseError(error.body)}',
+          statusCode: error.statusCode,
+          retryable:
+              error.statusCode == 401 ||
+              error.statusCode == 408 ||
+              error.statusCode == 425 ||
+              error.statusCode == 429 ||
+              error.statusCode >= 500,
+        );
+      } on TimeoutException catch (error) {
+        lastFailure = error;
+      } on http.ClientException catch (error) {
+        lastFailure = error;
+      }
+      if (attempt < 1) {
+        await Future<void>.delayed(Duration(milliseconds: 200 * (attempt + 1)));
+      }
+    }
+    throw HostedAgentCancelException(
+      message: lastFailure is TimeoutException
+          ? 'Hosted AI data deletion timed out after ${timeout.inSeconds} seconds'
+          : 'Hosted AI data deletion request failed: $lastFailure',
+      retryable: true,
+    );
+  }
+
+  Future<void> _deleteRun(AuthSession session, String runId) async {
+    final client = http.Client();
+    try {
+      final encodedRunId = Uri.encodeComponent(runId);
+      final request =
+          http.Request('DELETE', BackendConfig.uri('/ai/runs/$encodedRunId'))
+            ..headers.addAll({
+              'Authorization': 'Bearer ${session.accessToken}',
+              'Accept': 'application/json',
+            });
+      final response = await client.send(request).timeout(timeout);
+      final text = await response.stream.bytesToString().timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _RunHttpException(response.statusCode, text);
+      }
+    } finally {
+      client.close();
+    }
+  }
+
   Future<HostedAgentRunLookup> _getRunByIdempotencyKey(
     AuthSession session,
     String idempotencyKey,

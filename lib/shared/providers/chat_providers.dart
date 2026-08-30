@@ -22,6 +22,8 @@ final chatRepositoryProvider = FutureProvider<ChatRepository>((ref) async {
 
 typedef HostedAgentRunCanceller =
     Future<void> Function(String runId, {String? expectedOwnerUserId});
+typedef HostedAgentRunDeleter =
+    Future<void> Function(String runId, {String? expectedOwnerUserId});
 typedef HostedAgentRunLookupResolver =
     Future<HostedAgentRunLookup> Function(
       String idempotencyKey, {
@@ -38,6 +40,14 @@ final hostedAgentRunCancellerProvider = Provider<HostedAgentRunCanceller>((
     refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
   );
   return control.cancelRun;
+});
+
+final hostedAgentRunDeleterProvider = Provider<HostedAgentRunDeleter>((ref) {
+  final control = HostedAgentControlService(
+    getSession: () => ref.read(currentSessionProvider),
+    refreshSession: () => ref.read(authControllerProvider.notifier).refresh(),
+  );
+  return control.deleteRun;
 });
 
 final hostedAgentRunLookupProvider = Provider<HostedAgentRunLookupResolver>((
@@ -181,7 +191,7 @@ class ChatSessionsNotifier extends StateNotifier<AsyncValue<ChatSessionState>> {
         continue;
       }
       try {
-        await _ref.read(hostedAgentRunCancellerProvider)(
+        await _ref.read(hostedAgentRunDeleterProvider)(
           runId,
           expectedOwnerUserId: expectedOwner,
         );

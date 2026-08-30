@@ -66,6 +66,7 @@ void main() {
     bool dynamicHostedAgent = false,
     _InMemoryChatRepository? chatRepository,
     HostedAgentRunCanceller? runCanceller,
+    HostedAgentRunDeleter? runDeleter,
   }) async {
     final repository =
         chatRepository ?? _InMemoryChatRepository(threads, messages);
@@ -97,10 +98,12 @@ void main() {
             (ref) async => _InMemoryArticleRepository(articles),
           ),
           chatRepositoryProvider.overrideWith((ref) async => repository),
-          if (runCanceller != null)
+          if (runCanceller != null || runDeleter != null)
             currentSessionProvider.overrideWithValue(_testAuthSession),
           if (runCanceller != null)
             hostedAgentRunCancellerProvider.overrideWithValue(runCanceller),
+          if (runDeleter != null)
+            hostedAgentRunDeleterProvider.overrideWithValue(runDeleter),
         ],
         child: const MaterialApp(home: ChatScreen()),
       ),
@@ -1096,7 +1099,7 @@ void main() {
     expect(find.byKey(const ValueKey('chat-stop-icon')), findsNothing);
   });
 
-  testWidgets('run created after thread deletion is cancelled from tombstone', (
+  testWidgets('run created after thread deletion is deleted from tombstone', (
     tester,
   ) async {
     final now = DateTime.utc(2026, 8, 10, 2);
@@ -1107,16 +1110,16 @@ void main() {
       updatedAt: now,
     );
     final hostedAgent = _PreCreateGatedHostedAgentService();
-    final cancelled = <String>[];
+    final deleted = <String>[];
     final repository = await pumpChat(
       tester,
       articles: [],
       threads: [thread],
       conversation: durableConversation(hostedAgent),
       hostedAgent: hostedAgent,
-      runCanceller: (runId, {expectedOwnerUserId}) async {
+      runDeleter: (runId, {expectedOwnerUserId}) async {
         expect(expectedOwnerUserId, 'user-1');
-        cancelled.add(runId);
+        deleted.add(runId);
       },
     );
 
@@ -1134,12 +1137,12 @@ void main() {
 
     hostedAgent.allowRunCreation();
     await pumpUntil(tester, () => hostedAgent.runCreated.isCompleted);
-    await pumpUntil(tester, () => cancelled.isNotEmpty);
+    await pumpUntil(tester, () => deleted.isNotEmpty);
     hostedAgent.completeLiveAnswer();
     await tester.pump();
     await tester.pump();
 
-    expect(cancelled, ['live-run']);
+    expect(deleted, ['live-run']);
     expect(repository.getThread(thread.id), isNull);
     expect(repository.getMessages(thread.id), isEmpty);
     expect(repository.getPendingThreadDeletions(), isEmpty);
