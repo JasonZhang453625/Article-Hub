@@ -131,6 +131,7 @@ void main() {
     () async {
       List<Map<String, dynamic>>? receivedHistory;
       List<AiTextAttachmentInput>? receivedAttachments;
+      List<String>? receivedSkills;
       bool? receivedWebSearch;
       final service = RagConversationService(
         retrieve: (_, _) async => fail('hosted chat must not enter retrieval'),
@@ -151,6 +152,7 @@ void main() {
               required HostedChatLanguage language,
               required bool webSearch,
               required bool localKnowledge,
+              List<String>? enabledSkills,
               required List<AiTextAttachmentInput> attachments,
               required List<AiImageInput> images,
               void Function(HostedAgentEvent event)? onEvent,
@@ -159,6 +161,7 @@ void main() {
             }) async* {
               receivedHistory = history;
               receivedAttachments = attachments;
+              receivedSkills = enabledSkills;
               receivedWebSearch = webSearch;
               expect(question, 'Summarize privately.');
               expect(idempotencyKey, 'hosted-private-attempt');
@@ -196,6 +199,7 @@ void main() {
           detailedAnswer: false,
           languageHint: '',
           webSearch: true,
+          enabledSkills: ['summarize'],
           textAttachments: [attachment],
         ),
         idempotencyKey: 'hosted-private-attempt',
@@ -206,6 +210,7 @@ void main() {
       expect(result.privateEvidenceUsed, isTrue);
       expect(receivedWebSearch, isFalse);
       expect(receivedAttachments, [attachment]);
+      expect(receivedSkills, ['summarize']);
       expect(receivedHistory, [
         {
           'role': 'user',
@@ -245,6 +250,7 @@ void main() {
               required HostedChatLanguage language,
               required bool webSearch,
               required bool localKnowledge,
+              List<String>? enabledSkills,
               required List<AiTextAttachmentInput> attachments,
               required List<AiImageInput> images,
               void Function(HostedAgentEvent event)? onEvent,

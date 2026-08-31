@@ -325,7 +325,15 @@ class LocaleStrings {
   final String chatTools;
   final String chatToolsImage;
   final String chatToolsFile;
-  final String chatToolsSkillComingSoon;
+  final String chatToolsSkill;
+  final String chatSkillsTitle;
+  final String chatSkillsSubtitle;
+  final String chatSkillsEmpty;
+  final String chatSkillsUnavailable;
+  final String chatSkillsSelectAll;
+  final String chatSkillsClear;
+  final String chatSkillsRevision;
+  final String chatSkillsSelectedCount;
   final String chatToolsWebSearch;
   final String chatAttachmentDefaultPrompt;
   final String chatAttachmentRemove;
@@ -682,7 +690,15 @@ class LocaleStrings {
     required this.chatTools,
     required this.chatToolsImage,
     required this.chatToolsFile,
-    required this.chatToolsSkillComingSoon,
+    required this.chatToolsSkill,
+    required this.chatSkillsTitle,
+    required this.chatSkillsSubtitle,
+    required this.chatSkillsEmpty,
+    required this.chatSkillsUnavailable,
+    required this.chatSkillsSelectAll,
+    required this.chatSkillsClear,
+    required this.chatSkillsRevision,
+    required this.chatSkillsSelectedCount,
     required this.chatToolsWebSearch,
     required this.chatAttachmentDefaultPrompt,
     required this.chatAttachmentRemove,
@@ -827,7 +843,7 @@ class LocaleStrings {
     queued: 'Queued',
     fetchingMetadata: 'Fetching metadata',
     extractingContent: 'Extracting content',
-    generatingSummary: 'Generating memory',
+    generatingSummary: 'Generating summary…',
     generatingTags: 'Generating tags',
     suggestingFolder: 'Suggesting folder',
     indexing: 'Indexing',
@@ -1093,7 +1109,16 @@ class LocaleStrings {
     chatTools: 'Tools',
     chatToolsImage: 'Image',
     chatToolsFile: 'File',
-    chatToolsSkillComingSoon: 'The Skill entry is reserved and coming soon.',
+    chatToolsSkill: 'Skills',
+    chatSkillsTitle: 'Agent Skills',
+    chatSkillsSubtitle:
+        'Choose Skills provided by the active backend Agent revision.',
+    chatSkillsEmpty: 'The backend currently provides no selectable Skills.',
+    chatSkillsUnavailable: 'Skills are available only in Hosted Agent mode.',
+    chatSkillsSelectAll: 'Select all',
+    chatSkillsClear: 'Clear',
+    chatSkillsRevision: 'Agent revision {revision}',
+    chatSkillsSelectedCount: '{selected} of {total} selected',
     chatToolsWebSearch: 'Web Search',
     chatAttachmentDefaultPrompt: 'Please analyze these attachments.',
     chatAttachmentRemove: 'Remove attachment',
@@ -1222,7 +1247,7 @@ class LocaleStrings {
     queued: '已排队',
     fetchingMetadata: '获取元数据',
     extractingContent: '提取内容',
-    generatingSummary: '生成摘要',
+    generatingSummary: '正在生成摘要…',
     generatingTags: '生成标签',
     suggestingFolder: '推荐文件夹',
     indexing: '索引中',
@@ -1457,7 +1482,15 @@ class LocaleStrings {
     chatTools: '工具',
     chatToolsImage: '图片',
     chatToolsFile: '文件',
-    chatToolsSkillComingSoon: 'Skill 入口已预留，功能即将上线。',
+    chatToolsSkill: '技能',
+    chatSkillsTitle: 'Agent 技能',
+    chatSkillsSubtitle: '选择当前后端 Agent Revision 提供的 Skill。',
+    chatSkillsEmpty: '后端当前没有可供选择的 Skill。',
+    chatSkillsUnavailable: 'Skill 仅在 Hosted Agent 模式下可用。',
+    chatSkillsSelectAll: '全选',
+    chatSkillsClear: '清空',
+    chatSkillsRevision: 'Agent Revision {revision}',
+    chatSkillsSelectedCount: '已选择 {selected}/{total}',
     chatToolsWebSearch: '联网搜索',
     chatAttachmentDefaultPrompt: '请分析这些附件。',
     chatAttachmentRemove: '移除附件',

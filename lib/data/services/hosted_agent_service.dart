@@ -23,6 +23,7 @@ const int maxHostedChatAttachmentIdCharacters = 128;
 const int maxHostedChatAttachmentNameCharacters = 256;
 const int maxHostedChatAttachmentTextCharacters = 100000;
 const int maxHostedChatAttachmentTotalCharacters = 200000;
+const int maxHostedAgentSelectedSkills = 100;
 const String legacyPrivateAttachmentMarker =
     'Attached material from that turn:';
 const Set<String> hostedAgentImageMimeTypes = {
@@ -66,6 +67,65 @@ HostedChatLanguage hostedChatLanguageForIndex(int languageIndex) {
     2 => HostedChatLanguage.en,
     _ => HostedChatLanguage.followUser,
   };
+}
+
+class HostedAgentSkill {
+  final String name;
+  final String description;
+
+  const HostedAgentSkill({required this.name, required this.description});
+
+  factory HostedAgentSkill.fromJson(Map<String, dynamic> json) {
+    final name = json['name'];
+    final description = json['description'];
+    if (name is! String ||
+        !RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$').hasMatch(name) ||
+        description is! String) {
+      throw const FormatException('Hosted Agent returned an invalid Skill.');
+    }
+    return HostedAgentSkill(name: name, description: description.trim());
+  }
+}
+
+class HostedAgentSkillCatalog {
+  final int resourceRevision;
+  final List<HostedAgentSkill> skills;
+
+  const HostedAgentSkillCatalog({
+    required this.resourceRevision,
+    required this.skills,
+  });
+
+  factory HostedAgentSkillCatalog.fromJson(Map<String, dynamic> json) {
+    final schemaVersion = json['schemaVersion'];
+    final resourceRevision = json['resourceRevision'];
+    final rawSkills = json['skills'];
+    if (schemaVersion != 1 ||
+        resourceRevision is! int ||
+        resourceRevision < 0 ||
+        rawSkills is! List ||
+        rawSkills.any((item) => item is! Map) ||
+        rawSkills.length > maxHostedAgentSelectedSkills) {
+      throw const FormatException(
+        'Hosted Agent returned an invalid Skill catalog.',
+      );
+    }
+    final skills = rawSkills
+        .map(
+          (item) =>
+              HostedAgentSkill.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList(growable: false);
+    if (skills.map((skill) => skill.name).toSet().length != skills.length) {
+      throw const FormatException(
+        'Hosted Agent returned duplicate Skill names.',
+      );
+    }
+    return HostedAgentSkillCatalog(
+      resourceRevision: resourceRevision,
+      skills: skills,
+    );
+  }
 }
 
 class HostedAgentSource {
@@ -767,6 +827,70 @@ class HostedAgentService {
     _activeCreateClient?.close();
   }
 
+  Future<HostedAgentSkillCatalog> fetchSkillCatalog() async {
+    final initialSession = await _freshSession();
+    if (initialSession == null) {
+      throw HostedAgentInputException(
+        code: 'hosted_auth_unavailable',
+        message: lastError ?? 'Sign in to use hosted AI.',
+      );
+    }
+    var session = initialSession;
+    var refreshed = false;
+    while (true) {
+      try {
+        return await _fetchSkillCatalog(session);
+      } on _RunHttpException catch (error) {
+        if (error.statusCode == 401 && !refreshed) {
+          refreshed = true;
+          final next = await _refreshSession();
+          if (next != null && _bindOrValidateSession(next)) {
+            session = next;
+            continue;
+          }
+        }
+        throw HostedAgentInputException(
+          code: 'skill_catalog_unavailable',
+          message: 'HTTP ${error.statusCode}: ${_responseError(error.body)}',
+        );
+      } on TimeoutException {
+        throw const HostedAgentInputException(
+          code: 'skill_catalog_unavailable',
+          message: 'Loading Skills timed out.',
+        );
+      } on http.ClientException catch (error) {
+        throw HostedAgentInputException(
+          code: 'skill_catalog_unavailable',
+          message: 'Loading Skills failed: $error',
+        );
+      }
+    }
+  }
+
+  List<String>? _validatedSelectedSkills(List<String>? skills) {
+    if (skills == null) return null;
+    if (skills.length > maxHostedAgentSelectedSkills) {
+      throw const HostedAgentInputException(
+        code: 'invalid_skill_selection',
+        message: 'Too many Skills were selected.',
+      );
+    }
+    final normalized = skills
+        .map((name) => name.trim())
+        .toList(growable: false);
+    if (normalized.any(
+          (name) =>
+              !RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$').hasMatch(name),
+        ) ||
+        normalized.toSet().length != normalized.length) {
+      throw const HostedAgentInputException(
+        code: 'invalid_skill_selection',
+        message: 'The selected Skill names are invalid.',
+      );
+    }
+    return normalized;
+  }
+
   Future<AuthSession?> _freshSession() async {
     var session = _getSession();
     if (session == null) {
@@ -1130,6 +1254,7 @@ class HostedAgentService {
     required HostedChatLanguage language,
     required bool webSearch,
     required bool localKnowledge,
+    List<String>? enabledSkills,
     List<AiTextAttachmentInput> attachments = const [],
     List<AiImageInput> images = const [],
     void Function(HostedAgentEvent event)? onEvent,
@@ -1144,6 +1269,7 @@ class HostedAgentService {
       language: language,
       webSearch: webSearch,
       localKnowledge: localKnowledge,
+      enabledSkills: enabledSkills,
       attachments: attachments,
       images: images,
       onEvent: onEvent,
@@ -1160,6 +1286,7 @@ class HostedAgentService {
     required HostedChatLanguage language,
     required bool webSearch,
     required bool localKnowledge,
+    required List<String>? enabledSkills,
     required List<AiTextAttachmentInput> attachments,
     required List<AiImageInput> images,
     void Function(HostedAgentEvent event)? onEvent,
@@ -1185,6 +1312,7 @@ class HostedAgentService {
         normalizedAttachments.isNotEmpty ||
         images.isNotEmpty;
     final effectiveWebSearch = hasPrivateEvidence ? false : webSearch;
+    final normalizedSkills = _validatedSelectedSkills(enabledSkills);
     final thinking = _chatThinkingPayload();
     final requestBody = <String, dynamic>{
       'protocol_version': 4,
@@ -1210,6 +1338,7 @@ class HostedAgentService {
             )
             .toList(growable: false),
     };
+    if (normalizedSkills != null) requestBody['skills'] = normalizedSkills;
     if (thinking != null) requestBody['thinking'] = thinking;
 
     Map<String, dynamic>? created;
@@ -1562,6 +1691,39 @@ class HostedAgentService {
         throw const FormatException('Hosted Agent returned invalid run JSON.');
       }
       return decoded;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<HostedAgentSkillCatalog> _fetchSkillCatalog(
+    AuthSession session,
+  ) async {
+    if (!_isCurrentSessionIdentity(session)) {
+      throw const HostedAgentInputException(
+        code: 'hosted_identity_changed',
+        message: 'The hosted AI account or device changed.',
+      );
+    }
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', BackendConfig.uri('/ai/agent/skills'))
+        ..headers.addAll({
+          'Authorization': 'Bearer ${session.accessToken}',
+          'Accept': 'application/json',
+        });
+      final response = await client.send(request).timeout(timeout);
+      final text = await response.stream.bytesToString().timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _RunHttpException(response.statusCode, text);
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException(
+          'Hosted Agent returned invalid Skill catalog JSON.',
+        );
+      }
+      return HostedAgentSkillCatalog.fromJson(decoded);
     } finally {
       client.close();
     }

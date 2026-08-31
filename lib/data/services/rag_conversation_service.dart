@@ -103,6 +103,7 @@ typedef RagHostedChatRunStream =
       required HostedChatLanguage language,
       required bool webSearch,
       required bool localKnowledge,
+      List<String>? enabledSkills,
       required List<AiTextAttachmentInput> attachments,
       required List<AiImageInput> images,
       void Function(HostedAgentEvent event)? onEvent,
@@ -151,6 +152,9 @@ class RagConversationRequest {
   final List<AiImageInput> imageInputs;
   final HostedChatLanguage chatLanguage;
 
+  /// Null keeps the backend Admin default; an empty list disables all Skills.
+  final List<String>? enabledSkills;
+
   /// Private provenance that must keep Web disabled even when the originating
   /// turn is intentionally absent from the selected prompt history, such as
   /// retrying that turn or trimming every completed pair for token budget.
@@ -172,6 +176,7 @@ class RagConversationRequest {
     this.textAttachments = const [],
     this.imageInputs = const [],
     this.chatLanguage = HostedChatLanguage.followUser,
+    this.enabledSkills,
     this.privateEvidenceContext = false,
   });
 }
@@ -642,6 +647,7 @@ class RagConversationService {
             ? HostedChatLength.detailed
             : HostedChatLength.concise,
         hostedLanguage: request.chatLanguage,
+        enabledSkills: request.enabledSkills,
         textAttachments: const [],
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
@@ -832,6 +838,7 @@ class RagConversationService {
             ? HostedChatLength.detailed
             : HostedChatLength.concise,
         hostedLanguage: request.chatLanguage,
+        enabledSkills: request.enabledSkills,
         textAttachments: const [],
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
@@ -1021,6 +1028,7 @@ class RagConversationService {
             ? HostedChatLength.detailed
             : HostedChatLength.concise,
         hostedLanguage: request.chatLanguage,
+        enabledSkills: request.enabledSkills,
         textAttachments: request.textAttachments,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
@@ -1122,6 +1130,7 @@ class RagConversationService {
     required HostedChatKnowledgeMode hostedKnowledgeMode,
     required HostedChatLength hostedLength,
     required HostedChatLanguage hostedLanguage,
+    required List<String>? enabledSkills,
     required List<AiTextAttachmentInput> textAttachments,
     void Function(String delta)? onDelta,
     void Function(HostedAgentEvent event)? onAgentEvent,
@@ -1150,6 +1159,7 @@ class RagConversationService {
         language: hostedLanguage,
         webSearch: webSearch && !hasPrivateEvidence,
         localKnowledge: localKnowledge,
+        enabledSkills: enabledSkills,
         attachments: textAttachments,
         images: images,
         onEvent: onAgentEvent,

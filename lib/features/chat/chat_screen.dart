@@ -38,6 +38,7 @@ import 'chat_empty_state.dart';
 import 'chat_history_drawer.dart';
 import 'chat_input_bar.dart';
 import 'chat_settings_sheet.dart';
+import 'chat_skills_sheet.dart';
 import 'chat_tools_sheet.dart';
 
 enum _ChatToolAction { image, file, skill }
@@ -173,6 +174,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final _scrollController = ScrollController();
   bool _loading = false;
   bool _keyboardWasOpen = false;
+  String? _historyTransitionThreadId;
   final List<ChatAttachmentDraft> _attachmentDrafts = [];
 
   /// Whether the jump-to-bottom button should be visible: true when the
@@ -623,6 +625,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     final hostedAgentForCreate = ref.read(hostedAgentServiceProvider);
     final usesHostedAgent = hostedAgentForCreate != null;
+    final selectedSkillNames = ref.read(chatSelectedSkillNamesProvider);
+    final enabledSkills = selectedSkillNames == null
+        ? null
+        : (selectedSkillNames.toList()..sort());
     final agentClientTools = usesHostedAgent
         ? ref.read(hostedAgentClientToolsCapabilitiesProvider)
         : null;
@@ -756,9 +762,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
 
     List<String> serializedToolEvents() => [
-          for (final entry in activeToolEvents.values)
-            jsonEncode(entry),
-        ];
+      for (final entry in activeToolEvents.values) jsonEncode(entry),
+    ];
 
     void publishDelta(String delta) {
       if (!mounted || runId != _answerRunId || delta.isEmpty) return;
@@ -950,6 +955,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 currentUser: userMessage,
                 history: history,
               ),
+          enabledSkills: enabledSkills,
         ),
         onDelta: publishDelta,
         onAgentEvent: publishAgentEvent,
@@ -1235,7 +1241,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     for (final raw in message.toolEvents) {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) continue;
-      final key = (decoded['callId'] as String?) ??
+      final key =
+          (decoded['callId'] as String?) ??
           decoded['tool']?.toString() ??
           raw.hashCode.toString();
       toolEvents[key] = decoded;
@@ -1250,9 +1257,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final tool = (event.data['tool'] ?? '').toString().trim();
       if (tool.isEmpty) return;
       final callId = (event.data['callId'] ?? '').toString().trim();
-      final key = callId.isEmpty
-          ? '$tool-${toolEvents.length}'
-          : callId;
+      final key = callId.isEmpty ? '$tool-${toolEvents.length}' : callId;
       switch (event.type) {
         case 'tool.call.started':
           toolEvents[key] = <String, dynamic>{
@@ -1283,8 +1288,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
     }
 
-    List<String> serializedToolEvents() =>
-        [for (final entry in toolEvents.values) jsonEncode(entry)];
+    List<String> serializedToolEvents() => [
+      for (final entry in toolEvents.values) jsonEncode(entry),
+    ];
 
     try {
       await for (final delta in hostedAgent.resumeStream(
@@ -1677,6 +1683,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         builder: (context, sheetRef, _) {
           final settings = sheetRef.watch(settingsProvider).valueOrNull;
           final hosted = sheetRef.watch(hostedAiEnabledProvider);
+          final hostedAgent = sheetRef.watch(hostedAgentServiceProvider);
+          final selectedSkills = sheetRef.watch(chatSelectedSkillNamesProvider);
           final model = hosted
               ? (settings?.hostedChatModel ?? '')
               : (settings?.chatAiModel ?? '');
@@ -1697,8 +1705,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 sheetRef.read(chatThinkingLevelProvider.notifier).state = level,
             onAddImage: () => Navigator.of(context).pop(_ChatToolAction.image),
             onAddFile: () => Navigator.of(context).pop(_ChatToolAction.file),
-            onOpenSkills: () =>
-                Navigator.of(context).pop(_ChatToolAction.skill),
+            onOpenSkills: hostedAgent == null
+                ? null
+                : () => Navigator.of(context).pop(_ChatToolAction.skill),
+            selectedSkillCount: selectedSkills?.length,
           );
         },
       ),
@@ -1714,10 +1724,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         await _pickFileAttachments();
         break;
       case _ChatToolAction.skill:
-        showAppSnackBar(
-          context,
-          message: ref.read(stringsProvider).chatToolsSkillComingSoon,
-        );
+        await _showChatSkills();
         break;
       case null:
         break;
@@ -1725,6 +1732,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (mounted && restoreInputFocus) {
       _inputFocusNode.requestFocus();
     }
+  }
+
+  Future<void> _showChatSkills() async {
+    final hostedAgent = ref.read(hostedAgentServiceProvider);
+    if (hostedAgent == null) {
+      showAppSnackBar(
+        context,
+        message: ref.read(stringsProvider).chatSkillsUnavailable,
+      );
+      return;
+    }
+    final selected = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ChatSkillsSheet(
+        s: ref.read(stringsProvider),
+        loadCatalog: hostedAgent.fetchSkillCatalog,
+        initialSelection: ref.read(chatSelectedSkillNamesProvider),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    ref.read(chatSelectedSkillNamesProvider.notifier).state = selected;
   }
 
   void _showChatSettings() {
@@ -1879,6 +1909,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Future<void> _selectThread(String threadId) async {
+    if (!mounted) return;
+    // Set the target without rebuilding the current conversation. The
+    // provider update below mounts the selected thread with an entry tween;
+    // ordinary startup hydration and streaming updates remain static.
+    _historyTransitionThreadId = threadId;
     await ref.read(chatSessionsProvider.notifier).selectThread(threadId);
   }
 
@@ -2009,16 +2044,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               ? Center(child: Text(s.failedToLoad))
                               : messages.isEmpty
                               ? ChatEmptyState(hasKnowledge: hasKnowledge, s: s)
-                              : NotificationListener<ScrollNotification>(
-                                  onNotification: (notification) {
-                                    if (notification.metrics.axis ==
-                                        Axis.vertical) {
-                                      _onListScroll();
-                                    }
-                                    return false;
-                                  },
-                                  child: ListView.builder(
-                                    key: const ValueKey('chat-message-list'),
+                              : TweenAnimationBuilder<double>(
+                                  key: ValueKey(
+                                    'chat-conversation-transition-${chatState!.activeThreadId}',
+                                  ),
+                                  tween: Tween(
+                                    begin:
+                                        chatState.activeThreadId ==
+                                            _historyTransitionThreadId
+                                        ? 0
+                                        : 1,
+                                    end: 1,
+                                  ),
+                                  duration: const Duration(milliseconds: 320),
+                                  curve: Curves.easeOutCubic,
+                                  builder: (context, value, child) => Opacity(
+                                    key: ValueKey(
+                                      'chat-conversation-opacity-${chatState.activeThreadId}',
+                                    ),
+                                    opacity: value,
+                                    child: Transform.translate(
+                                      offset: Offset(0, 12 * (1 - value)),
+                                      child: child,
+                                    ),
+                                  ),
+                                  child:
+                                      NotificationListener<ScrollNotification>(
+                                        onNotification: (notification) {
+                                          if (notification.metrics.axis ==
+                                              Axis.vertical) {
+                                            _onListScroll();
+                                          }
+                                          return false;
+                                        },
+                                        child: ListView.builder(
+                                          key: const ValueKey(
+                                            'chat-message-list',
+                                          ),
                                     controller: _scrollController,
                                     // Keep a bounded amount of already-built
                                     // rich message UI around the viewport. This
@@ -2063,7 +2125,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                         },
                                       );
                                     },
-                                  ),
+                                        ),
+                                      ),
                                 ),
                         ),
                         // Jump-to-bottom button: centered above the input bar,

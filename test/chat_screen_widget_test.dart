@@ -1091,6 +1091,72 @@ void main() {
     expect(find.byKey(const ValueKey('chat-thread-recent')), findsOneWidget);
   });
 
+  testWidgets('history selection animates after the drawer has closed', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 8, 30);
+    final recent = ChatThread(
+      id: 'animated-recent',
+      title: 'Animated recent',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final older = ChatThread(
+      id: 'animated-older',
+      title: 'Animated older',
+      createdAt: now.subtract(const Duration(days: 1)),
+      updatedAt: now.subtract(const Duration(days: 1)),
+    );
+    await pumpChat(
+      tester,
+      articles: [],
+      threads: [recent, older],
+      messages: [
+        ChatMessageRecord(
+          id: 'animated-recent-message',
+          threadId: recent.id,
+          role: ChatMessageRole.user,
+          content: 'Current conversation',
+          createdAt: now,
+        ),
+        ChatMessageRecord(
+          id: 'animated-older-message',
+          threadId: older.id,
+          role: ChatMessageRole.assistant,
+          content: 'Selected conversation',
+          createdAt: now.subtract(const Duration(days: 1)),
+        ),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('chat-sidebar-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('chat-thread-animated-older')),
+    );
+    await tester.pump();
+
+    // The conversation does not change underneath the closing drawer.
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Current conversation'), findsOneWidget);
+    expect(find.text('Selected conversation'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(find.text('Selected conversation'), findsOneWidget);
+    final opacityFinder = find.byKey(
+      const ValueKey('chat-conversation-opacity-animated-older'),
+    );
+    expect(tester.widget<Opacity>(opacityFinder).opacity, 0);
+
+    await tester.pump(const Duration(milliseconds: 160));
+    final midOpacity = tester.widget<Opacity>(opacityFinder).opacity;
+    expect(midOpacity, greaterThan(0));
+    expect(midOpacity, lessThan(1));
+
+    await tester.pumpAndSettle();
+    expect(tester.widget<Opacity>(opacityFinder).opacity, 1);
+  });
+
   testWidgets('long press renames and pins a saved chat', (tester) async {
     final now = DateTime.utc(2026, 8, 9);
     final recent = ChatThread(

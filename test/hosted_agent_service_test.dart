@@ -174,8 +174,10 @@ void main() {
   test(
     'does not append the authoritative run result after identical deltas',
     () async {
-      final client = MockClient.streaming((request, _) async {
+      Map<String, dynamic>? payload;
+      final client = MockClient.streaming((request, bodyStream) async {
         if (request.method == 'POST') {
+          payload = jsonDecode(await bodyStream.bytesToString());
           return http.StreamedResponse(
             Stream<List<int>>.value(
               utf8.encode(
@@ -224,6 +226,7 @@ void main() {
               language: HostedChatLanguage.followUser,
               webSearch: false,
               localKnowledge: false,
+              enabledSkills: const ['research'],
               idempotencyKey: 'deduplicate-result-attempt',
             )
             .toList(),
@@ -232,9 +235,43 @@ void main() {
 
       expect(chunks.join(), 'Same answer.');
       expect(chunks, ['Same ', 'answer.']);
+      expect(payload?['skills'], ['research']);
       expect(service.lastRunStatus, 'completed');
     },
   );
+
+  test('loads the active backend Skill catalog without Skill bodies', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/ai/agent/skills');
+      expect(request.headers['Authorization'], startsWith('Bearer '));
+      return http.Response(
+        jsonEncode({
+          'schemaVersion': 1,
+          'resourceRevision': 12,
+          'skills': [
+            {'name': 'research', 'description': 'Research workflow'},
+          ],
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('skill-catalog')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+    );
+
+    final catalog = await http.runWithClient(
+      service.fetchSkillCatalog,
+      () => client,
+    );
+
+    expect(catalog.resourceRevision, 12);
+    expect(catalog.skills.single.name, 'research');
+    expect(catalog.skills.single.description, 'Research workflow');
+  });
 
   test('chat@2 sends pair-equal sticky provenance and disables Web', () async {
     late Map<String, dynamic> payload;

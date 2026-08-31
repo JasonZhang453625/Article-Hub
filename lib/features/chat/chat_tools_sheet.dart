@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../data/models/ai_thinking_level.dart';
 import '../../shared/utils/locale_strings.dart';
 
-/// Bottom sheet listing chat tools (web search, future skills, …).
+/// Bottom sheet listing chat tools and the backend-provided Skill entry.
 ///
 /// Presented from the "+" button on the left of the input bar, using the same
 /// visual language as [ChatSettingsSheet]: rounded top corners, drag handle,
@@ -25,6 +25,7 @@ class ChatToolsSheet extends StatelessWidget {
   final VoidCallback? onAddImage;
   final VoidCallback? onAddFile;
   final VoidCallback? onOpenSkills;
+  final int? selectedSkillCount;
 
   const ChatToolsSheet({
     super.key,
@@ -38,6 +39,7 @@ class ChatToolsSheet extends StatelessWidget {
     this.onAddImage,
     this.onAddFile,
     this.onOpenSkills,
+    this.selectedSkillCount,
   });
 
   @override
@@ -92,7 +94,9 @@ class ChatToolsSheet extends StatelessWidget {
                   _ChatToolActionButton(
                     key: const ValueKey('chat-tools-skill-button'),
                     icon: Icons.auto_awesome_outlined,
-                    label: 'Skill',
+                    label: selectedSkillCount == null
+                        ? s.chatToolsSkill
+                        : '${s.chatToolsSkill} ($selectedSkillCount)',
                     onTap: onOpenSkills,
                   ),
                 ],

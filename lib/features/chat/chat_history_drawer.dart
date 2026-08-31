@@ -4,6 +4,11 @@ import '../../data/models/chat_thread.dart';
 import '../../shared/utils/locale_strings.dart';
 
 class ChatHistoryDrawer extends StatelessWidget {
+  // Flutter's Material drawer settles in 246 ms. Let that route finish
+  // painting before replacing the conversation behind it, otherwise the
+  // message-entry animation runs while it is still covered by the drawer.
+  static const _dismissAnimationDuration = Duration(milliseconds: 260);
+
   final List<ChatThread> threads;
   final String? activeThreadId;
   final LocaleStrings s;
@@ -249,8 +254,9 @@ class ChatHistoryDrawer extends StatelessWidget {
   }
 
   Future<void> _selectThread(BuildContext context, String threadId) async {
+    Navigator.pop(context);
+    await Future<void>.delayed(_dismissAnimationDuration);
     await onSelectThread(threadId);
-    if (context.mounted) Navigator.pop(context);
   }
 
   Future<void> _confirmDelete(BuildContext context, ChatThread thread) async {

@@ -39,7 +39,7 @@ void main() {
     }
     expect(find.text('Image'), findsOneWidget);
     expect(find.text('File'), findsOneWidget);
-    expect(find.text('Skill'), findsOneWidget);
+    expect(find.text('Skills'), findsOneWidget);
   });
 
   testWidgets('web tool switch updates optimistically on the next frame', (

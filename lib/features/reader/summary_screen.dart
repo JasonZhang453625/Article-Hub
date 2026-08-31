@@ -103,11 +103,10 @@ class SummaryContent extends ConsumerWidget {
     );
     final a = latest ?? article;
     final generatedAt = a.memory?.generation?.generatedAt;
-    final regeneratingTags = ref.watch(
-      summaryRegenerationProvider.select(
-        (ids) => ids.contains(article.id),
-      ),
-    )
+    final regeneratingTags =
+        ref.watch(
+          summaryRegenerationProvider.select((ids) => ids.contains(article.id)),
+        )
         ? ref.watch(
             summaryRegenerationTagsProvider.select(
               (tags) => tags[article.id] ?? const <String>[],
@@ -148,11 +147,7 @@ class SummaryContent extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              _TagsWrap(
-                tags: regeneratingTags,
-                theme: theme,
-                isDark: isDark,
-              ),
+              _TagsWrap(tags: regeneratingTags, theme: theme, isDark: isDark),
               const SizedBox(height: 16),
             ],
             Wrap(
@@ -368,8 +363,13 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
     final summary = widget.article.displayMemoryMarkdown;
     final aiConfigured = ref.watch(summaryAiGatewayProvider) != null;
     final s = ref.watch(stringsProvider);
+    // Regeneration is handed off to the durable processing queue. The
+    // controller's in-memory flag ends once that enqueue succeeds, before the
+    // worker necessarily advances to ProcessingStage.summary, so pending and
+    // all active processing states must continue to render as generating.
     final pipelineGenerating =
-        widget.article.processingStage == ProcessingStage.summary;
+        widget.article.processingStatus == ProcessingStatus.pending ||
+        widget.article.processingStatus == ProcessingStatus.processing;
     final regenerating = _isRegenerating() || pipelineGenerating;
 
     if (summary.isEmpty) {
@@ -423,7 +423,9 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.auto_awesome_rounded, size: 18),
-                  label: Text(regenerating ? s.generating : s.generateSummary),
+                  label: Text(
+                    regenerating ? s.generatingSummary : s.generateSummary,
+                  ),
                 ),
               ),
             ],
@@ -510,10 +512,7 @@ class _SummarySectionState extends ConsumerState<_SummarySection> {
             selectable: true,
             styleSheet: MarkdownStyleSheet(
               pPadding: const EdgeInsets.only(bottom: 4),
-              p: theme.textTheme.bodyLarge?.copyWith(
-                fontSize: 17,
-                height: 1.4,
-              ),
+              p: theme.textTheme.bodyLarge?.copyWith(fontSize: 17, height: 1.4),
               strong: theme.textTheme.bodyLarge?.copyWith(
                 fontSize: 17,
                 height: 1.4,

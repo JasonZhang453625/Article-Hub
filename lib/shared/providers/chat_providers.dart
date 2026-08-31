@@ -80,6 +80,16 @@ final chatThinkingLevelProvider = StateProvider<AiThinkingLevel>(
   (ref) => AiThinkingLevel.none,
 );
 
+/// Session-level explicit selection from the backend's active official Pi
+/// Skill catalog. Null preserves the Admin default for older clients and until
+/// the user opens the picker; an empty set intentionally disables all Skills.
+final chatSelectedSkillNamesProvider = StateProvider<Set<String>?>((ref) {
+  // Skill selections belong to the authenticated backend catalog, so an
+  // account switch must not carry names into the next user's requests.
+  ref.watch(currentSessionProvider)?.user.id;
+  return null;
+});
+
 class ChatSessionState {
   final List<ChatThread> threads;
   final String? activeThreadId;
