@@ -16,6 +16,8 @@ const Set<String> chatImageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'};
 
 const Set<String> chatFileExtensions = {
   'pdf',
+  'docx',
+  'xlsx',
   'txt',
   'md',
   'markdown',
@@ -231,6 +233,10 @@ String _mimeType(String fileName, ChatAttachmentKind kind) {
   }
   return switch (extension) {
     'pdf' => 'application/pdf',
+    'docx' =>
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xlsx' =>
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'md' || 'markdown' => 'text/markdown',
     'csv' => 'text/csv',
     'json' => 'application/json',

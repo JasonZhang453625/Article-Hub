@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/ai_image_input.dart';
+import '../../data/models/ai_file_attachment_input.dart';
 import '../../data/models/ai_text_attachment_input.dart';
 import '../../data/models/settings.dart';
 import '../../data/services/ai_service.dart';
@@ -615,6 +616,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
             required bool localKnowledge,
             List<String>? enabledSkills,
             required List<AiTextAttachmentInput> attachments,
+            required List<AiFileAttachmentInput> files,
             required List<AiImageInput> images,
             void Function(HostedAgentEvent event)? onEvent,
             FutureOr<void> Function(String runId)? onRunCreated,
@@ -630,6 +632,7 @@ final ragConversationServiceProvider = Provider<RagConversationService?>((ref) {
               localKnowledge: localKnowledge,
               enabledSkills: enabledSkills,
               attachments: attachments,
+              files: files,
               images: images,
               onEvent: onEvent,
               onRunCreated: onRunCreated,

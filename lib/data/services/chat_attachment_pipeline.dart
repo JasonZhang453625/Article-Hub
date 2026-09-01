@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 import '../models/ai_image_input.dart';
+import '../models/ai_file_attachment_input.dart';
 import '../models/ai_text_attachment_input.dart';
 import '../models/chat_attachment.dart';
 import 'attachment_store.dart';
@@ -17,12 +18,14 @@ class PreparedChatAttachments {
   final String textContext;
   final List<AiTextAttachmentInput> textInputs;
   final List<AiImageInput> imageInputs;
+  final List<AiFileAttachmentInput> fileInputs;
   final bool includesImageUnderstanding;
 
   const PreparedChatAttachments({
     this.textContext = '',
     this.textInputs = const [],
     this.imageInputs = const [],
+    this.fileInputs = const [],
     this.includesImageUnderstanding = false,
   });
 }
@@ -73,6 +76,7 @@ class ChatAttachmentPipeline {
   Future<PreparedChatAttachments> prepare({
     required List<ChatAttachment> attachments,
     required bool useNativeImageInput,
+    bool useNativeOfficeInput = false,
     int maxNativeImages = maxChatAttachments,
     int maxNativeImageBytes = maxChatAttachmentBytes,
     int maxNativeImageTotalBytes = maxChatAttachmentTotalBytes,
@@ -84,6 +88,11 @@ class ChatAttachmentPipeline {
 
     final images = attachments.where((item) => item.isImage).toList();
     final files = attachments.where((item) => !item.isImage).toList();
+    final officeFiles = files.where(_isOfficeFile).toList();
+    final textFiles = files.where((item) => !_isOfficeFile(item)).toList();
+    if (officeFiles.isNotEmpty && !useNativeOfficeInput) {
+      throw const ChatAttachmentException('chat_model_no_office_input');
+    }
     if (images.isNotEmpty && !useNativeImageInput) {
       throw const ChatAttachmentException('chat_model_no_image_input');
     }
@@ -107,10 +116,10 @@ class ChatAttachmentPipeline {
     final textInputs = <AiTextAttachmentInput>[];
     if (cached.isEmpty) {
       var remainingText = maxChatAttachmentContextCharacters;
-      for (var index = 0; index < files.length; index++) {
-        final file = files[index];
+      for (var index = 0; index < textFiles.length; index++) {
+        final file = textFiles[index];
         final rawText = await _extractFileText(file);
-        final remainingFiles = files.length - index;
+        final remainingFiles = textFiles.length - index;
         final allowance = remainingText ~/ remainingFiles;
         final text = _boundedAttachmentText(rawText, allowance);
         remainingText -= text.length;
@@ -123,12 +132,12 @@ class ChatAttachmentPipeline {
         );
         sections.add('### File: ${file.originalFileName}\n$text');
       }
-    } else if (files.isNotEmpty) {
+    } else if (textFiles.isNotEmpty) {
       textInputs.add(
         AiTextAttachmentInput(
           id: 'cached-current-turn-text',
-          name: files.length == 1
-              ? files.single.originalFileName
+          name: textFiles.length == 1
+              ? textFiles.single.originalFileName
               : 'Attached files',
           text: cached,
         ),
@@ -155,12 +164,34 @@ class ChatAttachmentPipeline {
       }
     }
 
+    final fileInputs = <AiFileAttachmentInput>[];
+    for (final file in officeFiles) {
+      final bytes = await _verifiedBytes(file);
+      fileInputs.add(
+        AiFileAttachmentInput(
+          id: file.id,
+          name: file.originalFileName,
+          mimeType: file.mimeType,
+          bytes: bytes,
+          sha256: file.sha256,
+        ),
+      );
+    }
+
     return PreparedChatAttachments(
       textContext: _boundedContext(sections.join('\n\n')),
       textInputs: List.unmodifiable(textInputs),
       imageInputs: List.unmodifiable(imageInputs),
+      fileInputs: List.unmodifiable(fileInputs),
       includesImageUnderstanding: false,
     );
+  }
+
+  static bool _isOfficeFile(ChatAttachment attachment) {
+    return attachment.mimeType ==
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        attachment.mimeType ==
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   }
 
   Future<String> _extractFileText(ChatAttachment attachment) async {

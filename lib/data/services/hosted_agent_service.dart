@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../config/backend_config.dart';
 import '../models/ai_image_input.dart';
+import '../models/ai_file_attachment_input.dart';
 import '../models/ai_text_attachment_input.dart';
 import '../models/ai_thinking_level.dart';
 import 'ai_service.dart';
@@ -23,6 +24,9 @@ const int maxHostedChatAttachmentIdCharacters = 128;
 const int maxHostedChatAttachmentNameCharacters = 256;
 const int maxHostedChatAttachmentTextCharacters = 100000;
 const int maxHostedChatAttachmentTotalCharacters = 200000;
+const int maxHostedAgentFiles = 4;
+const int maxHostedAgentFileBytes = 5 * 1024 * 1024;
+const int maxHostedAgentFileTotalBytes = 12 * 1024 * 1024;
 const int maxHostedAgentSelectedSkills = 100;
 const String legacyPrivateAttachmentMarker =
     'Attached material from that turn:';
@@ -1148,6 +1152,72 @@ class HostedAgentService {
     return List.unmodifiable(normalized);
   }
 
+  List<Map<String, dynamic>> _validatedFiles(
+    List<AiFileAttachmentInput> files,
+  ) {
+    if (files.length > maxHostedAgentFiles) {
+      throw const HostedAgentInputException(
+        code: 'too_many_attachments',
+        message: 'Hosted Agent has too many office attachments.',
+      );
+    }
+    const allowedMimeTypes = {
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+    final ids = <String>{};
+    var totalBytes = 0;
+    return List.unmodifiable(
+      files.map((file) {
+        final id = file.id.trim();
+        final name = file.name.trim();
+        final mimeType = file.mimeType.trim().toLowerCase();
+        final extension = switch (mimeType) {
+          'application/pdf' => '.pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document' =>
+            '.docx',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' =>
+            '.xlsx',
+          _ => '',
+        };
+        if (id.isEmpty ||
+            id.length > maxAttachmentIdChars ||
+            !ids.add(id) ||
+            name.isEmpty ||
+            name.length > maxAttachmentNameChars ||
+            name.contains('/') ||
+            name.contains(r'\') ||
+            extension.isEmpty ||
+            !name.toLowerCase().endsWith(extension) ||
+            !allowedMimeTypes.contains(mimeType) ||
+            file.bytes.isEmpty ||
+            file.bytes.length > maxHostedAgentFileBytes ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(file.sha256)) {
+          throw const HostedAgentInputException(
+            code: 'invalid_attachment',
+            message: 'Hosted Agent office attachment is invalid.',
+          );
+        }
+        totalBytes += file.bytes.length;
+        if (totalBytes > maxHostedAgentFileTotalBytes) {
+          throw const HostedAgentInputException(
+            code: 'attachments_too_large',
+            message: 'Hosted Agent office attachments are too large.',
+          );
+        }
+        return {
+          'id': id,
+          'name': name,
+          'mimeType': mimeType,
+          'data': base64.encode(file.bytes),
+          'byteLength': file.bytes.length,
+          'sha256': file.sha256,
+        };
+      }),
+    );
+  }
+
   String _validatedIdempotencyKey(String value) {
     final normalized = value.trim();
     if (normalized.isEmpty || normalized.length > 128) {
@@ -1256,6 +1326,7 @@ class HostedAgentService {
     required bool localKnowledge,
     List<String>? enabledSkills,
     List<AiTextAttachmentInput> attachments = const [],
+    List<AiFileAttachmentInput> files = const [],
     List<AiImageInput> images = const [],
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
@@ -1271,6 +1342,7 @@ class HostedAgentService {
       localKnowledge: localKnowledge,
       enabledSkills: enabledSkills,
       attachments: attachments,
+      files: files,
       images: images,
       onEvent: onEvent,
       onRunCreated: onRunCreated,
@@ -1288,6 +1360,7 @@ class HostedAgentService {
     required bool localKnowledge,
     required List<String>? enabledSkills,
     required List<AiTextAttachmentInput> attachments,
+    required List<AiFileAttachmentInput> files,
     required List<AiImageInput> images,
     void Function(HostedAgentEvent event)? onEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
@@ -1305,11 +1378,13 @@ class HostedAgentService {
     final normalizedQuestion = _validatedQuestion(question);
     final normalizedHistory = _validatedHistory(history);
     final normalizedAttachments = _validatedAttachments(attachments);
+    final normalizedFiles = _validatedFiles(files);
     final normalizedKey = _validatedIdempotencyKey(idempotencyKey);
     _validateImages(images);
     final hasPrivateEvidence =
         normalizedHistory.privateEvidence ||
         normalizedAttachments.isNotEmpty ||
+        normalizedFiles.isNotEmpty ||
         images.isNotEmpty;
     final effectiveWebSearch = hasPrivateEvidence ? false : webSearch;
     final normalizedSkills = _validatedSelectedSkills(enabledSkills);
@@ -1327,6 +1402,7 @@ class HostedAgentService {
       'local_knowledge': localKnowledge,
       if (normalizedAttachments.isNotEmpty)
         'attachments': normalizedAttachments,
+      if (normalizedFiles.isNotEmpty) 'files': normalizedFiles,
       if (images.isNotEmpty)
         'images': images
             .map(

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memora/data/models/ai_image_input.dart';
+import 'package:memora/data/models/ai_file_attachment_input.dart';
 import 'package:memora/data/models/ai_text_attachment_input.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
 import 'package:memora/data/services/prompt_service.dart';
@@ -154,6 +155,7 @@ void main() {
               required bool localKnowledge,
               List<String>? enabledSkills,
               required List<AiTextAttachmentInput> attachments,
+              required List<AiFileAttachmentInput> files,
               required List<AiImageInput> images,
               void Function(HostedAgentEvent event)? onEvent,
               FutureOr<void> Function(String runId)? onRunCreated,
@@ -252,6 +254,7 @@ void main() {
               required bool localKnowledge,
               List<String>? enabledSkills,
               required List<AiTextAttachmentInput> attachments,
+              required List<AiFileAttachmentInput> files,
               required List<AiImageInput> images,
               void Function(HostedAgentEvent event)? onEvent,
               FutureOr<void> Function(String runId)? onRunCreated,

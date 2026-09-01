@@ -645,6 +645,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               useNativeImageInput: ref.read(
                 chatModelSupportsImageInputProvider,
               ),
+              useNativeOfficeInput: usesHostedAgent,
               maxNativeImages: agentImageCapabilities != null
                   ? math.min(
                       agentImageCapabilities.maxImages,
@@ -949,6 +950,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           attachmentContext: preparedAttachments.textContext,
           textAttachments: preparedAttachments.textInputs,
           imageInputs: preparedAttachments.imageInputs,
+          fileInputs: preparedAttachments.fileInputs,
           privateEvidenceContext:
               threadPrivateEvidenceContext ||
               chatRequestHasPrivateEvidence(
@@ -2248,6 +2250,7 @@ String _localizedAttachmentError(
       hostedImages ? s.chatAgentImageTooLarge : s.chatAttachmentTooLarge,
     'unsupported_type' => s.chatAttachmentUnsupported,
     'chat_model_no_image_input' => s.chatAttachmentVisionRequired,
+    'chat_model_no_office_input' => s.chatAttachmentUnsupported,
     'pdf_no_text' => s.chatAttachmentPdfNoText,
     _ => s.chatAttachmentReadFailed,
   };

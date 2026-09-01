@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 export 'chat_context_window.dart' show ChatContextWindow, RagConversationTurn;
 
 import '../models/ai_image_input.dart';
+import '../models/ai_file_attachment_input.dart';
 import '../models/ai_text_attachment_input.dart';
 import '../models/passage.dart';
 import '../models/ai_thinking_level.dart';
@@ -105,6 +106,7 @@ typedef RagHostedChatRunStream =
       required bool localKnowledge,
       List<String>? enabledSkills,
       required List<AiTextAttachmentInput> attachments,
+      required List<AiFileAttachmentInput> files,
       required List<AiImageInput> images,
       void Function(HostedAgentEvent event)? onEvent,
       FutureOr<void> Function(String runId)? onRunCreated,
@@ -150,6 +152,7 @@ class RagConversationRequest {
   final String attachmentContext;
   final List<AiTextAttachmentInput> textAttachments;
   final List<AiImageInput> imageInputs;
+  final List<AiFileAttachmentInput> fileInputs;
   final HostedChatLanguage chatLanguage;
 
   /// Null keeps the backend Admin default; an empty list disables all Skills.
@@ -175,6 +178,7 @@ class RagConversationRequest {
     this.attachmentContext = '',
     this.textAttachments = const [],
     this.imageInputs = const [],
+    this.fileInputs = const [],
     this.chatLanguage = HostedChatLanguage.followUser,
     this.enabledSkills,
     this.privateEvidenceContext = false,
@@ -386,7 +390,8 @@ class RagConversationService {
     final hasAttachments =
         request.attachmentContext.trim().isNotEmpty ||
         request.textAttachments.isNotEmpty ||
-        request.imageInputs.isNotEmpty;
+        request.imageInputs.isNotEmpty ||
+        request.fileInputs.isNotEmpty;
     if (hasAttachments) {
       _configureThinking?.call(request.thinkingLevel);
       return _askWithAttachments(
@@ -649,6 +654,7 @@ class RagConversationService {
         hostedLanguage: request.chatLanguage,
         enabledSkills: request.enabledSkills,
         textAttachments: const [],
+        fileAttachments: const [],
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -840,6 +846,7 @@ class RagConversationService {
         hostedLanguage: request.chatLanguage,
         enabledSkills: request.enabledSkills,
         textAttachments: const [],
+        fileAttachments: const [],
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -1030,6 +1037,7 @@ class RagConversationService {
         hostedLanguage: request.chatLanguage,
         enabledSkills: request.enabledSkills,
         textAttachments: request.textAttachments,
+        fileAttachments: request.fileInputs,
         onDelta: onDelta,
         onAgentEvent: onAgentEvent,
         onRunCreated: onRunCreated,
@@ -1132,6 +1140,7 @@ class RagConversationService {
     required HostedChatLanguage hostedLanguage,
     required List<String>? enabledSkills,
     required List<AiTextAttachmentInput> textAttachments,
+    required List<AiFileAttachmentInput> fileAttachments,
     void Function(String delta)? onDelta,
     void Function(HostedAgentEvent event)? onAgentEvent,
     FutureOr<void> Function(String runId)? onRunCreated,
@@ -1148,6 +1157,7 @@ class RagConversationService {
       final hasPrivateEvidence =
           forcedPrivateEvidence ||
           textAttachments.isNotEmpty ||
+          fileAttachments.isNotEmpty ||
           images.isNotEmpty ||
           hostedHistory.any((message) => message['private_evidence'] == true);
       final buffer = StringBuffer();
@@ -1161,6 +1171,7 @@ class RagConversationService {
         localKnowledge: localKnowledge,
         enabledSkills: enabledSkills,
         attachments: textAttachments,
+        files: fileAttachments,
         images: images,
         onEvent: onAgentEvent,
         onRunCreated: onRunCreated,

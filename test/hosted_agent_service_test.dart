@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:memora/data/models/ai_thinking_level.dart';
 import 'package:memora/data/models/ai_image_input.dart';
+import 'package:memora/data/models/ai_file_attachment_input.dart';
 import 'package:memora/data/models/ai_text_attachment_input.dart';
 import 'package:memora/data/services/auth_service.dart';
 import 'package:memora/data/services/hosted_agent_service.dart';
@@ -597,6 +598,71 @@ void main() {
       'data': base64.encode(bytes),
       'mimeType': 'image/png',
     });
+  });
+
+  test('sends authenticated office originals and disables Web', () async {
+    Map<String, dynamic>? payload;
+    final client = MockClient.streaming((request, bodyStream) async {
+      if (request.method == 'POST') {
+        payload = jsonDecode(await bodyStream.bytesToString());
+        return http.StreamedResponse(
+          Stream<List<int>>.value(
+            utf8.encode('{"id":"run-office","status":"queued"}'),
+          ),
+          202,
+        );
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode(
+            'id: 1\n'
+            'event: agent\n'
+            'data: {"type":"run.result","runId":"run-office",'
+            '"answer":"office answer","sources":[],"privateEvidenceUsed":true}\n\n',
+          ),
+        ),
+        200,
+      );
+    });
+    final bytes = Uint8List.fromList([0x50, 0x4b, 0x03, 0x04, 1]);
+    final service = HostedAgentService(
+      getSession: () => _session(_jwt('office-file')),
+      refreshSession: () async => null,
+      model: 'mimo-v2.5',
+    );
+
+    final chunks = await http.runWithClient(
+      () => service
+          .chatStreamV4(
+            question: 'Read it',
+            knowledgeMode: HostedChatKnowledgeMode.hybrid,
+            length: HostedChatLength.concise,
+            language: HostedChatLanguage.followUser,
+            webSearch: true,
+            localKnowledge: false,
+            files: [
+              AiFileAttachmentInput(
+                id: 'office-1',
+                name: 'brief.docx',
+                mimeType:
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                bytes: bytes,
+                sha256:
+                    '21e1a80f893989219f9e2c7163027f89d6b5d0cc41387b1d3efb25fd9f9bfa13',
+              ),
+            ],
+            idempotencyKey: 'office-file-attempt',
+          )
+          .toList(),
+      () => client,
+    );
+
+    expect(chunks, ['office answer']);
+    expect(payload?['web_search'], isFalse);
+    final file = (payload?['files'] as List).single as Map<String, dynamic>;
+    expect(file['name'], 'brief.docx');
+    expect(file['byteLength'], bytes.length);
+    expect(base64.decode(file['data'] as String), bytes);
   });
 
   test('Stop closes an in-flight create upload without replaying it', () async {

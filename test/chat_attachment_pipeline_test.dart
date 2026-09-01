@@ -119,6 +119,49 @@ void main() {
   });
 
   test(
+    'sends DOCX and XLSX originals only through the hosted office path',
+    () async {
+      final pipeline = ChatAttachmentPipeline(store: store);
+      final docx = await attachment(
+        id: 'docx',
+        name: 'brief.docx',
+        mimeType:
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        kind: ChatAttachmentKind.file,
+        bytes: [0x50, 0x4b, 0x03, 0x04, 1, 2, 3],
+      );
+
+      await expectLater(
+        pipeline.prepare(attachments: [docx], useNativeImageInput: false),
+        throwsA(
+          isA<ChatAttachmentException>().having(
+            (error) => error.code,
+            'code',
+            'chat_model_no_office_input',
+          ),
+        ),
+      );
+
+      final prepared = await pipeline.prepare(
+        attachments: [docx],
+        useNativeImageInput: false,
+        useNativeOfficeInput: true,
+      );
+      expect(prepared.textInputs, isEmpty);
+      expect(prepared.fileInputs.single.name, 'brief.docx');
+      expect(prepared.fileInputs.single.bytes, [
+        0x50,
+        0x4b,
+        0x03,
+        0x04,
+        1,
+        2,
+        3,
+      ]);
+    },
+  );
+
+  test(
     'enforces the hosted Agent image envelope before reading bytes',
     () async {
       final pipeline = ChatAttachmentPipeline(store: store);
