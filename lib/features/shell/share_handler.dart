@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:collection';
+import 'dart:developer' as developer;
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -28,31 +30,62 @@ import 'share_save_sheet.dart';
 /// child unchanged.
 class ShareHandler extends ConsumerStatefulWidget {
   final Widget child;
+  final bool? receiveIntents;
 
-  const ShareHandler({super.key, required this.child});
+  const ShareHandler({super.key, required this.child, this.receiveIntents});
 
   @override
   ConsumerState<ShareHandler> createState() => _ShareHandlerState();
 }
 
-class _ShareHandlerState extends ConsumerState<ShareHandler> {
+class _ShareHandlerState extends ConsumerState<ShareHandler>
+    with WidgetsBindingObserver {
   StreamSubscription<List<SharedMediaFile>>? _shareSub;
+  final Queue<List<SharedMediaFile>> _pendingShares = Queue();
   bool _sheetOpen = false;
+  bool _uiReady = false;
+  bool _drainingShares = false;
+  AppLifecycleState? _lifecycleState;
+
+  bool get _receivesIntents =>
+      widget.receiveIntents ?? (!kIsWeb && !Platform.isWindows);
+
+  bool get _canPresentShare =>
+      mounted &&
+      _uiReady &&
+      (_lifecycleState == null || _lifecycleState == AppLifecycleState.resumed);
 
   @override
   void initState() {
     super.initState();
-    if (!kIsWeb && !Platform.isWindows) {
+    WidgetsBinding.instance.addObserver(this);
+    _lifecycleState = WidgetsBinding.instance.lifecycleState;
+    if (_receivesIntents) {
+      _listenForShareIntents();
       _handleInitialShare();
       _handleInitialBackupFile();
-      _listenForShareIntents();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _uiReady = true;
+        _drainSharedMediaQueue();
+      });
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _shareSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    if (state != AppLifecycleState.resumed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _drainSharedMediaQueue();
+    });
   }
 
   // ── Cold-start share (app launched via share intent) ──
@@ -60,9 +93,26 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
   Future<void> _handleInitialShare() async {
     try {
       final initial = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (initial.isEmpty || !mounted) return;
-      await _handleSharedMedia(initial);
-    } catch (_) {}
+      _enqueueSharedMedia(initial);
+    } catch (error, stackTrace) {
+      developer.log(
+        'failed to read initial share intent',
+        name: 'memora.share',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      try {
+        await ReceiveSharingIntent.instance.reset();
+      } catch (error, stackTrace) {
+        developer.log(
+          'failed to reset initial share intent',
+          name: 'memora.share',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
   }
 
   // ── Cold-start backup file (ACTION_VIEW .json) ──
@@ -80,10 +130,47 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
   // ── Warm share (app already running) ──
 
   void _listenForShareIntents() {
-    _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen((media) {
-      if (media.isEmpty || !mounted) return;
-      _handleSharedMedia(media);
-    }, onError: (_) {});
+    _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
+      (media) {
+        _enqueueSharedMedia(media);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        developer.log(
+          'share intent stream failed',
+          name: 'memora.share',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      },
+    );
+  }
+
+  void _enqueueSharedMedia(List<SharedMediaFile> media) {
+    if (media.isEmpty || !mounted) return;
+    _pendingShares.add(List.unmodifiable(media));
+    _drainSharedMediaQueue();
+  }
+
+  Future<void> _drainSharedMediaQueue() async {
+    if (_drainingShares || !_canPresentShare) return;
+    _drainingShares = true;
+    try {
+      while (_pendingShares.isNotEmpty && _canPresentShare) {
+        final media = _pendingShares.removeFirst();
+        try {
+          await _handleSharedMedia(media);
+        } catch (error, stackTrace) {
+          developer.log(
+            'shared media handling failed',
+            name: 'memora.share',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
+    } finally {
+      _drainingShares = false;
+    }
   }
 
   Future<void> _handleSharedMedia(List<SharedMediaFile> media) async {
@@ -130,7 +217,7 @@ class _ShareHandlerState extends ConsumerState<ShareHandler> {
     }
 
     final url = _extractUrlFromMedia(media);
-    if (url != null) _promptSave(url);
+    if (url != null) await _promptSave(url);
   }
 
   Future<void> _saveSharedImages(List<LocalImageCandidate> images) async {
