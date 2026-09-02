@@ -225,6 +225,12 @@ void main() {
         'maxTotalFileBytes',
       );
       expect(parse(partialFileLimits).agentChatRuns, isNull);
+
+      final unsafeFileLimits = _chatRunsV2();
+      (unsafeFileLimits['limits']
+              as Map<String, dynamic>)['maxTotalFileBytes'] =
+          1024;
+      expect(parse(unsafeFileLimits).agentChatRuns, isNull);
     });
 
     test('fails closed for stale or malformed task capability contracts', () {
