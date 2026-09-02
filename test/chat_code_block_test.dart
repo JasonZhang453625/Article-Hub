@@ -15,8 +15,8 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
           if (call.method == 'Clipboard.setData') {
-            copiedCode = (call.arguments as Map<Object?, Object?>)['text']
-                as String?;
+            copiedCode =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
           }
           return null;
         });
@@ -90,5 +90,67 @@ void main() {
         markdown.styleSheet?.horizontalRuleDecoration as BoxDecoration;
     expect(horizontalRule.border, isNull);
     expect(horizontalRule.color, isNull);
+  });
+
+  testWidgets('renders wide assistant tables in a horizontal scroll region', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [languageIndexProvider.overrideWithValue(1)],
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              child: ChatBubble(
+                message: ChatMessage(
+                  role: MessageRole.assistant,
+                  text: '''
+| Product | Detailed capability | Availability | Notes |
+| --- | --- | --- | --- |
+| Memora | Long-form knowledge retrieval and synthesis | Available now | Preserves citations and source context |
+''',
+                ),
+                articlesById: const {},
+                onFeedback: (_) {},
+                onCitationClick: (_) {},
+                onSuggestionTap: (_) {},
+                onRetry: (_) {},
+                onSave: (_) async {},
+                onBrowseKnowledge: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final markdownFinder = find.byType(MarkdownBody);
+    final markdown = tester.widget<MarkdownBody>(markdownFinder);
+    expect(markdown.styleSheet?.tableColumnWidth, isA<IntrinsicColumnWidth>());
+    expect(markdown.styleSheet?.tableScrollbarThumbVisibility, isTrue);
+
+    final horizontalScroller = find.descendant(
+      of: markdownFinder,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      ),
+    );
+    expect(horizontalScroller, findsOneWidget);
+    expect(
+      find.descendant(of: markdownFinder, matching: find.byType(Scrollbar)),
+      findsOneWidget,
+    );
+
+    final scroller = tester.widget<SingleChildScrollView>(horizontalScroller);
+    expect(scroller.controller, isNotNull);
+    expect(scroller.controller!.position.maxScrollExtent, greaterThan(0));
+
+    await tester.drag(horizontalScroller, const Offset(-180, 0));
+    await tester.pumpAndSettle();
+    expect(scroller.controller!.offset, greaterThan(0));
   });
 }

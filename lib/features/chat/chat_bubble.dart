@@ -183,6 +183,32 @@ class ChatBubble extends ConsumerWidget {
             blockSpacing: 18,
             pPadding: const EdgeInsets.only(bottom: 12),
             horizontalRuleDecoration: const BoxDecoration(),
+            // Intrinsic columns opt Markdown tables into flutter_markdown's
+            // dedicated horizontal viewport. Long AI-generated tables can
+            // then scroll sideways without widening the whole conversation.
+            tableColumnWidth: const IntrinsicColumnWidth(),
+            tableScrollbarThumbVisibility: true,
+            tablePadding: const EdgeInsets.only(top: 4, bottom: 10),
+            tableBorder: TableBorder.all(
+              color: theme.colorScheme.outlineVariant,
+            ),
+            tableCellsPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 10,
+            ),
+            tableCellsDecoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLow,
+            ),
+            tableHead: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+            tableBody: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontSize: 15,
+              height: 1.35,
+            ),
             p: theme.textTheme.bodyLarge?.copyWith(
               color: theme.colorScheme.onSurface,
               fontSize: 17,
@@ -787,7 +813,11 @@ class _ToolCallList extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+                child: Icon(
+                  icon,
+                  size: 16,
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
