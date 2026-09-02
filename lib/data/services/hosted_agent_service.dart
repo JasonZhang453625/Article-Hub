@@ -740,6 +740,9 @@ class HostedAgentService {
   final int maxAttachmentNameChars;
   final int maxAttachmentTextChars;
   final int maxTotalAttachmentTextChars;
+  final int maxFiles;
+  final int maxFileBytes;
+  final int maxTotalFileBytes;
   final Set<String> allowedImageMimeTypes;
   final bool imageInputEnabled;
   final void Function(HostedAgentClientToolWake wake)? _onClientToolWake;
@@ -780,6 +783,9 @@ class HostedAgentService {
     this.maxAttachmentNameChars = maxHostedChatAttachmentNameCharacters,
     this.maxAttachmentTextChars = maxHostedChatAttachmentTextCharacters,
     this.maxTotalAttachmentTextChars = maxHostedChatAttachmentTotalCharacters,
+    this.maxFiles = maxHostedAgentFiles,
+    this.maxFileBytes = maxHostedAgentFileBytes,
+    this.maxTotalFileBytes = maxHostedAgentFileTotalBytes,
     this.allowedImageMimeTypes = hostedAgentImageMimeTypes,
     this.imageInputEnabled = false,
     void Function(HostedAgentClientToolWake wake)? onClientToolWake,
@@ -1155,7 +1161,7 @@ class HostedAgentService {
   List<Map<String, dynamic>> _validatedFiles(
     List<AiFileAttachmentInput> files,
   ) {
-    if (files.length > maxHostedAgentFiles) {
+    if (files.length > maxFiles) {
       throw const HostedAgentInputException(
         code: 'too_many_attachments',
         message: 'Hosted Agent has too many office attachments.',
@@ -1192,7 +1198,7 @@ class HostedAgentService {
             !name.toLowerCase().endsWith(extension) ||
             !allowedMimeTypes.contains(mimeType) ||
             file.bytes.isEmpty ||
-            file.bytes.length > maxHostedAgentFileBytes ||
+            file.bytes.length > maxFileBytes ||
             !RegExp(r'^[0-9a-f]{64}$').hasMatch(file.sha256)) {
           throw const HostedAgentInputException(
             code: 'invalid_attachment',
@@ -1200,7 +1206,7 @@ class HostedAgentService {
           );
         }
         totalBytes += file.bytes.length;
-        if (totalBytes > maxHostedAgentFileTotalBytes) {
+        if (totalBytes > maxTotalFileBytes) {
           throw const HostedAgentInputException(
             code: 'attachments_too_large',
             message: 'Hosted Agent office attachments are too large.',

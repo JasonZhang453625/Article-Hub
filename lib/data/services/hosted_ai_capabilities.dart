@@ -116,6 +116,9 @@ class HostedChatRunCapabilities {
   final int maxAttachmentNameChars;
   final int maxAttachmentTextChars;
   final int maxTotalAttachmentTextChars;
+  final int maxFiles;
+  final int maxFileBytes;
+  final int maxTotalFileBytes;
   final int maxPromptChars;
   final int maxImages;
   final int maxImageBytes;
@@ -135,6 +138,9 @@ class HostedChatRunCapabilities {
     required this.maxAttachmentNameChars,
     required this.maxAttachmentTextChars,
     required this.maxTotalAttachmentTextChars,
+    required this.maxFiles,
+    required this.maxFileBytes,
+    required this.maxTotalFileBytes,
     required this.maxPromptChars,
     required this.maxImages,
     required this.maxImageBytes,
@@ -209,22 +215,7 @@ class HostedChatRunCapabilities {
         tokenLimits is! Map ||
         !_hasExactMapKeys(tokenLimits, const {'concise', 'detailed'}) ||
         limits is! Map ||
-        !_hasExactMapKeys(limits, const {
-          'maxBodyBytes',
-          'maxQuestionChars',
-          'maxHistoryMessages',
-          'maxHistoryMessageChars',
-          'maxHistoryChars',
-          'maxAttachments',
-          'maxAttachmentIdChars',
-          'maxAttachmentNameChars',
-          'maxAttachmentTextChars',
-          'maxTotalAttachmentTextChars',
-          'maxPromptChars',
-          'maxImages',
-          'maxImageBytes',
-          'maxTotalImageBytes',
-        }) ||
+        !_hasSupportedLimitKeys(limits) ||
         privacy is! Map ||
         !_hasExactMapKeys(privacy, const {
           'attachmentsWithWebSearch',
@@ -249,6 +240,10 @@ class HostedChatRunCapabilities {
       if (value == null) return null;
       parsedLimits[key] = value;
     }
+    final maxFiles = parsedLimits['maxFiles'] ?? 4;
+    final maxFileBytes = parsedLimits['maxFileBytes'] ?? 5 * 1024 * 1024;
+    final maxTotalFileBytes =
+        parsedLimits['maxTotalFileBytes'] ?? 12 * 1024 * 1024;
     if (concise == null ||
         detailed == null ||
         detailed < concise ||
@@ -258,6 +253,7 @@ class HostedChatRunCapabilities {
             parsedLimits['maxHistoryMessageChars']! ||
         parsedLimits['maxTotalAttachmentTextChars']! <
             parsedLimits['maxAttachmentTextChars']! ||
+        maxTotalFileBytes < maxFileBytes ||
         parsedLimits['maxTotalImageBytes']! < parsedLimits['maxImageBytes']!) {
       return null;
     }
@@ -276,6 +272,9 @@ class HostedChatRunCapabilities {
       maxAttachmentNameChars: parsedLimits['maxAttachmentNameChars']!,
       maxAttachmentTextChars: parsedLimits['maxAttachmentTextChars']!,
       maxTotalAttachmentTextChars: parsedLimits['maxTotalAttachmentTextChars']!,
+      maxFiles: maxFiles,
+      maxFileBytes: maxFileBytes,
+      maxTotalFileBytes: maxTotalFileBytes,
       maxPromptChars: parsedLimits['maxPromptChars']!,
       maxImages: parsedLimits['maxImages']!,
       maxImageBytes: parsedLimits['maxImageBytes']!,
@@ -341,6 +340,33 @@ class HostedChatRunCapabilities {
 
   static bool _hasExactMapKeys(Map value, Set<String> keys) =>
       value.length == keys.length && value.keys.toSet().containsAll(keys);
+
+  static bool _hasSupportedLimitKeys(Map value) {
+    const required = {
+      'maxBodyBytes',
+      'maxQuestionChars',
+      'maxHistoryMessages',
+      'maxHistoryMessageChars',
+      'maxHistoryChars',
+      'maxAttachments',
+      'maxAttachmentIdChars',
+      'maxAttachmentNameChars',
+      'maxAttachmentTextChars',
+      'maxTotalAttachmentTextChars',
+      'maxPromptChars',
+      'maxImages',
+      'maxImageBytes',
+      'maxTotalImageBytes',
+    };
+    const office = {'maxFiles', 'maxFileBytes', 'maxTotalFileBytes'};
+    final keys = value.keys.toSet();
+    if (!keys.containsAll(required) ||
+        keys.any((key) => !required.contains(key) && !office.contains(key))) {
+      return false;
+    }
+    final officeKeys = keys.intersection(office);
+    return officeKeys.isEmpty || officeKeys.length == office.length;
+  }
 }
 
 HostedChatRunCapabilities? hostedChatRunsForModel(

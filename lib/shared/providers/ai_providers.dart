@@ -295,6 +295,12 @@ final hostedAgentServiceProvider = Provider<HostedAgentService?>((ref) {
       chatRuns.maxTotalAttachmentTextChars,
       maxHostedChatAttachmentTotalCharacters,
     ),
+    maxFiles: _lowerLimit(chatRuns.maxFiles, maxHostedAgentFiles),
+    maxFileBytes: _lowerLimit(chatRuns.maxFileBytes, maxHostedAgentFileBytes),
+    maxTotalFileBytes: _lowerLimit(
+      chatRuns.maxTotalFileBytes,
+      maxHostedAgentFileTotalBytes,
+    ),
     allowedImageMimeTypes: imageCapabilities == null
         ? hostedAgentImageMimeTypes
         : imageCapabilities.mimeTypes.intersection(hostedAgentImageMimeTypes),

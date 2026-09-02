@@ -168,7 +168,7 @@ void main() {
       );
     });
 
-    test('parses only the exact memora.chat@2 provenance contract', () {
+    test('parses memora.chat@2 with server-owned Office file limits', () {
       HostedAiCapabilities parse(Map<String, dynamic> chatRuns) {
         return HostedAiCapabilities.fromJson({
           'agent': {
@@ -182,6 +182,9 @@ void main() {
       final exact = parse(_chatRunsV2());
       expect(exact.agentChatRuns, isNotNull);
       expect(exact.agentChatRuns?.models, ['mimo-v2.5']);
+      expect(exact.agentChatRuns?.maxFiles, 4);
+      expect(exact.agentChatRuns?.maxFileBytes, 5 * 1024 * 1024);
+      expect(exact.agentChatRuns?.maxTotalFileBytes, 12 * 1024 * 1024);
       expect(
         hostedChatRunsForModel(exact, 'MIMO-V2.5'),
         same(exact.agentChatRuns),
@@ -209,6 +212,19 @@ void main() {
 
       final missingResult = _chatRunsV2()..remove('resultFields');
       expect(parse(missingResult).agentChatRuns, isNull);
+
+      final legacyLimits = _chatRunsV2();
+      legacyLimits['limits'] as Map<String, dynamic>
+        ..remove('maxFiles')
+        ..remove('maxFileBytes')
+        ..remove('maxTotalFileBytes');
+      expect(parse(legacyLimits).agentChatRuns?.maxFiles, 4);
+
+      final partialFileLimits = _chatRunsV2();
+      (partialFileLimits['limits'] as Map<String, dynamic>).remove(
+        'maxTotalFileBytes',
+      );
+      expect(parse(partialFileLimits).agentChatRuns, isNull);
     });
 
     test('fails closed for stale or malformed task capability contracts', () {
@@ -564,6 +580,9 @@ Map<String, dynamic> _chatRunsV2() {
       'maxAttachmentNameChars': 256,
       'maxAttachmentTextChars': 100000,
       'maxTotalAttachmentTextChars': 200000,
+      'maxFiles': 4,
+      'maxFileBytes': 5242880,
+      'maxTotalFileBytes': 12582912,
       'maxPromptChars': 250000,
       'maxImages': 4,
       'maxImageBytes': 5242880,
