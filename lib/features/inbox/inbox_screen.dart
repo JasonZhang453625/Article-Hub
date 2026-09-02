@@ -201,15 +201,7 @@ class _InboxTile extends ConsumerWidget {
               tooltip: s.retry,
               onPressed: () async {
                 try {
-                  await ref
-                      .read(processingQueueProvider)
-                      .enqueue(
-                        article.copyWith(
-                          processingStatus: ProcessingStatus.pending,
-                          processingError: Article.clearValue,
-                          retryCount: article.retryCount + 1,
-                        ),
-                      );
+                  await ref.read(processingQueueProvider).retry(article);
                 } catch (e) {
                   if (!context.mounted) return;
                   showAppSnackBar(context, message: '${s.saveFailed}: $e');

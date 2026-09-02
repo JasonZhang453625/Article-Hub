@@ -92,6 +92,8 @@ final processingQueueProvider = Provider<ProcessingQueue>((ref) {
     getArticles: () => ref.read(articlesProvider).valueOrNull ?? const [],
     save: articles.update,
     process: (article) => ref.read(processingPipelineProvider).resume(article),
+    prepareRetry: (article) =>
+        ref.read(processingPipelineProvider).prepareRetry(article),
     canProcess: (article) {
       if (article.isLocalImage) {
         if (ref.read(imageUnderstandingServiceProvider) == null &&

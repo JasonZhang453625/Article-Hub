@@ -272,11 +272,11 @@ class ProcessingPipeline {
     return article.isFullText ? processFullText(article) : process(article);
   }
 
-  /// Retry a failed article: bump retry count and re-run.
+  /// Prepares a failed article for a fresh serialized queue attempt.
   ///
-  /// Local PDF articles re-extract content then re-enter [processFile].
-  /// URL articles re-run the full pipeline from scratch.
-  Future<Article?> retry(Article article) async {
+  /// A terminal Hosted task binding must rotate to a new generation before it
+  /// is enqueued. Otherwise every UI retry only observes the same failed run.
+  Future<Article> prepareRetry(Article article) async {
     var generation = article.hostedTaskGeneration;
     final ai = _aiGateway;
     if (ai is HostedAiService && generation != null) {
@@ -297,13 +297,20 @@ class ProcessingPipeline {
         // the generation so a retry cannot create a duplicate paid task.
       }
     }
-    final base = article.copyWith(
+    return article.copyWith(
       processingStatus: ProcessingStatus.pending,
       processingError: Article.clearValue,
       retryCount: article.retryCount + 1,
       hostedTaskGeneration: generation,
     );
-    return resume(base);
+  }
+
+  /// Retry a failed article immediately outside [ProcessingQueue].
+  ///
+  /// UI callers should prefer `ProcessingQueue.retry` so work remains
+  /// serialized with every other durable pipeline job.
+  Future<Article?> retry(Article article) async {
+    return resume(await prepareRetry(article));
   }
 
   Future<Article?> _resumeLocalAttachment(Article article) async {

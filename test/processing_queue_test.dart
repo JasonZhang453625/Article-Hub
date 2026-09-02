@@ -31,6 +31,7 @@ void main() {
       final queue = ProcessingQueue(
         getArticles: () => records.values.toList(),
         save: (value) async => records[value.id] = value,
+        prepareRetry: (value) async => value,
         canProcess: (_) => true,
         process: (value) async {
           if (!started.isCompleted) started.complete();
@@ -71,6 +72,7 @@ void main() {
           savedCount++;
           queue.resume();
         },
+        prepareRetry: (value) async => value,
         canProcess: (_) => true,
         process: (value) async {
           observedSaveCounts.add(savedCount);
@@ -103,6 +105,7 @@ void main() {
       final queue = ProcessingQueue(
         getArticles: () => records.values.toList(),
         save: (value) async => records[value.id] = value,
+        prepareRetry: (value) async => value,
         canProcess: (_) => true,
         process: (value) async {
           processed.add(value.id);
@@ -139,6 +142,7 @@ void main() {
       final queue = ProcessingQueue(
         getArticles: () => records.values.toList(),
         save: (value) async => records[value.id] = value,
+        prepareRetry: (value) async => value,
         canProcess: (_) => ready,
         process: (value) async {
           runs++;
@@ -171,6 +175,7 @@ void main() {
       final queue = ProcessingQueue(
         getArticles: () => records.values.toList(),
         save: (value) async => records[value.id] = value,
+        prepareRetry: (value) async => value,
         canProcess: (_) => true,
         process: (_) async => throw StateError('worker crashed'),
       );
@@ -182,4 +187,35 @@ void main() {
       expect(records['broken']!.processingError, contains('worker crashed'));
     },
   );
+
+  test('retry prepares a fresh attempt before the queue persists it', () async {
+    final failed = article('failed', status: ProcessingStatus.failed).copyWith(
+      processingError: 'summary: task_invalid_output',
+      retryCount: 4,
+      hostedTaskGeneration: 'failed-generation',
+    );
+    final records = <String, Article>{'failed': failed};
+    var prepareCalls = 0;
+    final queue = ProcessingQueue(
+      getArticles: () => records.values.toList(),
+      save: (value) async => records[value.id] = value,
+      prepareRetry: (value) async {
+        prepareCalls++;
+        return value.copyWith(
+          retryCount: value.retryCount + 1,
+          hostedTaskGeneration: 'fresh-generation',
+        );
+      },
+      canProcess: (_) => false,
+      process: (_) async => null,
+    );
+
+    await queue.retry(failed);
+
+    expect(prepareCalls, 1);
+    expect(records['failed']!.processingStatus, ProcessingStatus.pending);
+    expect(records['failed']!.processingError, isNull);
+    expect(records['failed']!.retryCount, 5);
+    expect(records['failed']!.hostedTaskGeneration, 'fresh-generation');
+  });
 }

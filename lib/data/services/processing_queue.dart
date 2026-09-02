@@ -5,6 +5,7 @@ import '../models/passage.dart';
 typedef ProcessingQueueSave = Future<void> Function(Article article);
 typedef ProcessingQueueProcess = Future<Article?> Function(Article article);
 typedef ProcessingQueueEligibility = bool Function(Article article);
+typedef ProcessingQueuePrepareRetry = Future<Article> Function(Article article);
 
 /// A single-worker queue backed by each article's persisted processing state.
 ///
@@ -16,6 +17,7 @@ class ProcessingQueue {
   final ProcessingQueueSave _save;
   final ProcessingQueueProcess _process;
   final ProcessingQueueEligibility _canProcess;
+  final ProcessingQueuePrepareRetry _prepareRetry;
 
   bool _draining = false;
   bool _enqueueing = false;
@@ -27,10 +29,12 @@ class ProcessingQueue {
     required ProcessingQueueSave save,
     required ProcessingQueueProcess process,
     required ProcessingQueueEligibility canProcess,
+    required ProcessingQueuePrepareRetry prepareRetry,
   }) : _getArticles = getArticles,
        _save = save,
        _process = process,
-       _canProcess = canProcess;
+       _canProcess = canProcess,
+       _prepareRetry = prepareRetry;
 
   /// Marks every job durable before starting the worker. This makes a batch
   /// safe to resume even if the process is terminated between two jobs.
@@ -53,6 +57,12 @@ class ProcessingQueue {
   }
 
   Future<void> enqueue(Article article) => enqueueAll([article]);
+
+  /// Rotates terminal Hosted task state before durably re-enqueueing a job.
+  Future<void> retry(Article article) async {
+    final prepared = await _prepareRetry(article);
+    await enqueue(prepared);
+  }
 
   /// Re-scans durable state. It is safe to call at startup, after a settings
   /// update, and whenever new articles are added.

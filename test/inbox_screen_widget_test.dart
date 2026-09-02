@@ -7,8 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memora/data/models/passage.dart';
 import 'package:memora/data/models/source_platform.dart';
 import 'package:memora/data/repositories/article_repository.dart';
+import 'package:memora/data/services/processing_queue.dart';
 import 'package:memora/features/inbox/inbox_screen.dart';
 import 'package:memora/shared/providers/passage_providers.dart';
+import 'package:memora/shared/providers/pipeline_provider.dart';
 import 'package:memora/shared/providers/settings_providers.dart';
 
 /// Phase 1.4 widget tests for [InboxScreen].
@@ -22,6 +24,7 @@ void main() {
   Future<void> pumpInbox(
     WidgetTester tester, {
     required List<Article> articles,
+    ProcessingQueue? queue,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -31,6 +34,7 @@ void main() {
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
           ),
+          if (queue != null) processingQueueProvider.overrideWithValue(queue),
         ],
         child: const MaterialApp(home: InboxScreen()),
       ),
@@ -142,6 +146,25 @@ void main() {
     expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
   });
 
+  testWidgets('failed article delegates retry preparation to the queue', (
+    tester,
+  ) async {
+    final queue = _RecordingProcessingQueue();
+    final failed = seed(
+      id: 'hosted-failure',
+      status: ProcessingStatus.failed,
+      error: 'summary: task_invalid_output',
+      retryCount: 5,
+    ).copyWith(hostedTaskGeneration: 'failed-generation');
+    await pumpInbox(tester, articles: [failed], queue: queue);
+
+    await tester.tap(find.byIcon(Icons.refresh_rounded));
+    await tester.pump();
+
+    expect(queue.retriedArticles, [failed]);
+    expect(queue.directlyEnqueuedArticles, isEmpty);
+  });
+
   testWidgets('mixed inbox renders Processing, Waiting and Failed sections', (
     tester,
   ) async {
@@ -158,6 +181,30 @@ void main() {
     expect(find.text('Failed'), findsOneWidget);
     expect(find.text('Article done'), findsNothing);
   });
+}
+
+class _RecordingProcessingQueue extends ProcessingQueue {
+  final List<Article> retriedArticles = [];
+  final List<Article> directlyEnqueuedArticles = [];
+
+  _RecordingProcessingQueue()
+    : super(
+        getArticles: () => const [],
+        save: (_) async {},
+        process: (_) async => null,
+        canProcess: (_) => false,
+        prepareRetry: (article) async => article,
+      );
+
+  @override
+  Future<void> enqueue(Article article) async {
+    directlyEnqueuedArticles.add(article);
+  }
+
+  @override
+  Future<void> retry(Article article) async {
+    retriedArticles.add(article);
+  }
 }
 
 /// In-memory [ArticleRepository] for widget tests — no Hive, no file I/O.
