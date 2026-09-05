@@ -17,6 +17,7 @@ import '../../data/services/agent_client_tool_store.dart';
 import '../../data/services/chat_attachment_pipeline.dart';
 import '../../data/services/chat_attachment_service.dart';
 import '../../data/services/hosted_agent_service.dart';
+import '../../data/services/hosted_ai_capabilities.dart';
 import '../../data/services/hosted_task_run_service.dart';
 import '../../data/services/rag_citation.dart';
 import '../../data/services/rag_conversation_service.dart';
@@ -194,6 +195,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   int _pendingServerRunResumeFailures = 0;
   Timer? _pendingServerRunResumeRetryTimer;
   final Set<String> _liveServerRunIds = <String>{};
+  Future<void>? _hostedCapabilitiesRefresh;
 
   @override
   void initState() {
@@ -354,6 +356,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // the network connection has been recreated. The server task itself is
       // independent of this lifecycle callback.
       _schedulePendingServerRunResume();
+      if (ref.read(hostedAiEnabledProvider) &&
+          ref.read(hostedAgentServiceProvider) == null) {
+        unawaited(_refreshHostedCapabilities(forceNetwork: true));
+      }
+    }
+  }
+
+  Future<void> _refreshHostedCapabilities({bool forceNetwork = false}) {
+    final active = _hostedCapabilitiesRefresh;
+    if (active != null) return active;
+
+    late final Future<void> refresh;
+    refresh = _runHostedCapabilitiesRefresh(forceNetwork: forceNetwork)
+        .whenComplete(() {
+          if (identical(_hostedCapabilitiesRefresh, refresh)) {
+            _hostedCapabilitiesRefresh = null;
+          }
+        });
+    _hostedCapabilitiesRefresh = refresh;
+    return refresh;
+  }
+
+  Future<void> _runHostedCapabilitiesRefresh({
+    required bool forceNetwork,
+  }) async {
+    if (!mounted || !ref.read(hostedAiEnabledProvider)) return;
+    if (forceNetwork) HostedAiCapabilitiesCache.instance.clear();
+    ref.invalidate(hostedAiCapabilitiesProvider);
+    try {
+      await ref.read(hostedAiCapabilitiesProvider.future);
+    } catch (_) {
+      // The provider schedules its own retry. Callers use the nullable Agent
+      // service as the fail-closed availability result.
     }
   }
 
@@ -588,6 +623,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     final activeSettings = settings;
 
+    if (ref.read(hostedAiEnabledProvider) &&
+        ref.read(hostedAgentServiceProvider) == null) {
+      await _refreshHostedCapabilities(forceNetwork: true);
+    }
     if (ref.read(hostedAiEnabledProvider) &&
         ref.read(hostedAgentServiceProvider) == null) {
       await finish(
@@ -1666,6 +1705,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     } else {
       FocusScope.of(context).unfocus();
     }
+    if (ref.read(hostedAiEnabledProvider) &&
+        ref.read(hostedAgentServiceProvider) == null) {
+      unawaited(_refreshHostedCapabilities(forceNetwork: true));
+    }
     final navigator = Navigator.of(context);
     final localizations = MaterialLocalizations.of(context);
     final route = ModalBottomSheetRoute<_ChatToolAction>(
@@ -1683,8 +1726,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       requestFocus: false,
       builder: (_) => Consumer(
         builder: (context, sheetRef, _) {
+          final s = sheetRef.watch(stringsProvider);
           final settings = sheetRef.watch(settingsProvider).valueOrNull;
           final hosted = sheetRef.watch(hostedAiEnabledProvider);
+          final hostedCapabilities = hosted
+              ? sheetRef.watch(hostedAiCapabilitiesProvider)
+              : null;
           final hostedAgent = sheetRef.watch(hostedAgentServiceProvider);
           final selectedSkills = sheetRef.watch(chatSelectedSkillNamesProvider);
           final model = hosted
@@ -1692,9 +1739,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               : (settings?.chatAiModel ?? '');
           final baseUrl = hosted ? '' : (settings?.chatAiBaseUrl ?? '');
           return ChatToolsSheet(
-            s: sheetRef.watch(stringsProvider),
+            s: s,
             webSearchEnabled: sheetRef.watch(chatWebSearchEnabledProvider),
             webSearchAvailable: sheetRef.watch(webSearchConfiguredProvider),
+            webSearchLoading:
+                hosted && (hostedCapabilities?.isLoading ?? false),
+            webSearchUnavailableMessage: hosted
+                ? ((hostedCapabilities?.isLoading ?? false)
+                      ? s.chatHostedToolsLoading
+                      : s.chatHostedToolsUnavailable)
+                : null,
             thinkingLevel: sheetRef.watch(chatThinkingLevelProvider),
             thinkingAvailable: supportsDeepSeekThinking(
               model: model,

@@ -330,6 +330,8 @@ class LocaleStrings {
   final String chatSkillsSubtitle;
   final String chatSkillsEmpty;
   final String chatSkillsUnavailable;
+  final String chatHostedToolsLoading;
+  final String chatHostedToolsUnavailable;
   final String chatSkillsSelectAll;
   final String chatSkillsClear;
   final String chatSkillsRevision;
@@ -695,6 +697,8 @@ class LocaleStrings {
     required this.chatSkillsSubtitle,
     required this.chatSkillsEmpty,
     required this.chatSkillsUnavailable,
+    required this.chatHostedToolsLoading,
+    required this.chatHostedToolsUnavailable,
     required this.chatSkillsSelectAll,
     required this.chatSkillsClear,
     required this.chatSkillsRevision,
@@ -1115,6 +1119,10 @@ class LocaleStrings {
         'Choose Skills provided by the active backend Agent revision.',
     chatSkillsEmpty: 'The backend currently provides no selectable Skills.',
     chatSkillsUnavailable: 'Skills are available only in Hosted Agent mode.',
+    chatHostedToolsLoading:
+        'Connecting to Memora Agent. Skills and web search will be available when ready.',
+    chatHostedToolsUnavailable:
+        'Memora Agent tools are temporarily unavailable. The app is retrying.',
     chatSkillsSelectAll: 'Select all',
     chatSkillsClear: 'Clear',
     chatSkillsRevision: 'Agent revision {revision}',
@@ -1487,6 +1495,8 @@ class LocaleStrings {
     chatSkillsSubtitle: '选择当前后端 Agent Revision 提供的 Skill。',
     chatSkillsEmpty: '后端当前没有可供选择的 Skill。',
     chatSkillsUnavailable: 'Skill 仅在 Hosted Agent 模式下可用。',
+    chatHostedToolsLoading: '正在连接记忆海 Agent，连接完成后即可使用 Skill 和联网搜索。',
+    chatHostedToolsUnavailable: '记忆海 Agent 工具暂时不可用，应用正在重试。',
     chatSkillsSelectAll: '全选',
     chatSkillsClear: '清空',
     chatSkillsRevision: 'Agent Revision {revision}',

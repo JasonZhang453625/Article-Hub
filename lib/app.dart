@@ -7,18 +7,16 @@ import 'config/theme.dart';
 import 'config/routes.dart';
 import 'shared/providers/locale_provider.dart';
 import 'shared/providers/settings_providers.dart';
-import 'shared/providers/pipeline_provider.dart';
 import 'shared/widgets/auto_sync_host.dart';
 import 'shared/widgets/app_update_host.dart';
 import 'shared/widgets/agent_client_tool_host.dart';
+import 'shared/widgets/processing_queue_host.dart';
 
 class App extends ConsumerWidget {
   const App({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Keep durable processing independent from whichever page is open.
-    ref.watch(processingQueueProvider);
     final themeMode = ref.watch(themeModeProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final fontWeightIdx = ref.watch(fontWeightIndexProvider);
@@ -75,7 +73,9 @@ class App extends ConsumerWidget {
               context,
             ).copyWith(textScaler: TextScaler.linear(textScaleFactor)),
             child: AgentClientToolHost(
-              child: AppUpdateHost(child: AutoSyncHost(child: child!)),
+              child: ProcessingQueueHost(
+                child: AppUpdateHost(child: AutoSyncHost(child: child!)),
+              ),
             ),
           ),
         );

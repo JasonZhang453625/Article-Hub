@@ -17,6 +17,12 @@ class ChatToolsSheet extends StatelessWidget {
   /// Whether the selected AI path exposes a web-search tool.
   final bool webSearchAvailable;
 
+  /// Whether Hosted Agent capabilities are currently being refreshed.
+  final bool webSearchLoading;
+
+  /// Mode-specific explanation shown when web search is unavailable.
+  final String? webSearchUnavailableMessage;
+
   final AiThinkingLevel thinkingLevel;
   final bool thinkingAvailable;
 
@@ -32,6 +38,8 @@ class ChatToolsSheet extends StatelessWidget {
     required this.s,
     required this.webSearchEnabled,
     required this.webSearchAvailable,
+    this.webSearchLoading = false,
+    this.webSearchUnavailableMessage,
     required this.thinkingLevel,
     required this.thinkingAvailable,
     required this.onToggleWebSearch,
@@ -109,19 +117,29 @@ class ChatToolsSheet extends StatelessWidget {
                 ),
                 child: SwitchListTile(
                   key: const ValueKey('chat-tools-web-search'),
-                  secondary: Icon(
-                    Icons.public_rounded,
-                    color: webSearchEnabled
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
-                  ),
+                  secondary: webSearchLoading
+                      ? const SizedBox.square(
+                          dimension: 22,
+                          child: CircularProgressIndicator.adaptive(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Icon(
+                          Icons.public_rounded,
+                          color: webSearchEnabled
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                        ),
                   title: Text(
                     s.chatToolsWebSearch,
                     style: theme.textTheme.bodyMedium,
                   ),
                   subtitle: webSearchAvailable
                       ? null
-                      : Text(s.webSearchNotConfigured),
+                      : Text(
+                          webSearchUnavailableMessage ??
+                              s.webSearchNotConfigured,
+                        ),
                   value: webSearchEnabled,
                   onChanged: webSearchAvailable ? onToggleWebSearch : null,
                 ),

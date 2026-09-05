@@ -146,4 +146,31 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chat-thinking-level-3')));
     expect(changed, isFalse);
   });
+
+  testWidgets('hosted capability loading never shows the BYOK Tavily hint', (
+    tester,
+  ) async {
+    final s = LocaleStrings.of(1);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatToolsSheet(
+            s: s,
+            webSearchEnabled: false,
+            webSearchAvailable: false,
+            webSearchLoading: true,
+            webSearchUnavailableMessage: s.chatHostedToolsLoading,
+            thinkingLevel: AiThinkingLevel.none,
+            thinkingAvailable: false,
+            onToggleWebSearch: (_) {},
+            onThinkingChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text(s.chatHostedToolsLoading), findsOneWidget);
+    expect(find.text(s.webSearchNotConfigured), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
 }
