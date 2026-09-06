@@ -1050,7 +1050,12 @@ class ProcessingPipeline {
   }
 
   Article _fail(Article article, String stage, Object error) {
-    final msg = '$stage: $error';
+    final detail = switch (error) {
+      HostedTaskRunException() => '${error.code}: ${error.message}',
+      ImageUnderstandingException() => '${error.code}: ${error.message}',
+      _ => '$error',
+    };
+    final msg = '$stage: $detail';
     developer.log('pipeline failed: $msg', name: 'memora.pipeline');
     // Drop any cached content for this article — we won't get to use it.
     _fetchedPageCache.remove(article.id);

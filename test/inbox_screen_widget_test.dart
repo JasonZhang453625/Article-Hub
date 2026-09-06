@@ -25,12 +25,13 @@ void main() {
     WidgetTester tester, {
     required List<Article> articles,
     ProcessingQueue? queue,
+    int languageIndex = 2,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           hiveInitProvider.overrideWith((ref) => Completer<void>().future),
-          languageIndexProvider.overrideWith((ref) => 2), // force English
+          languageIndexProvider.overrideWith((ref) => languageIndex),
           articleRepositoryProvider.overrideWith(
             (ref) async => _InMemoryArticleRepository(articles),
           ),
@@ -163,6 +164,30 @@ void main() {
 
     expect(queue.retriedArticles, [failed]);
     expect(queue.directlyEnqueuedArticles, isEmpty);
+  });
+
+  testWidgets('Chinese failures are localized and never truncated', (
+    tester,
+  ) async {
+    await pumpInbox(
+      tester,
+      languageIndex: 1,
+      articles: [
+        seed(
+          id: 'localized-failure',
+          status: ProcessingStatus.failed,
+          stage: ProcessingStage.summary,
+          error:
+              'summary: task_invalid_output: The hosted model did not submit a valid summary result.',
+        ),
+      ],
+    );
+
+    expect(find.text('生成摘要失败：模型未返回有效结果，请重试。'), findsOneWidget);
+    expect(find.textContaining('The hosted model'), findsNothing);
+    final errorText = tester.widget<Text>(find.text('生成摘要失败：模型未返回有效结果，请重试。'));
+    expect(errorText.maxLines, isNull);
+    expect(errorText.overflow, TextOverflow.visible);
   });
 
   testWidgets('mixed inbox renders Processing, Waiting and Failed sections', (

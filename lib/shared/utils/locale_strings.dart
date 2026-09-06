@@ -1,6 +1,8 @@
 import 'dart:ui';
 
 class LocaleStrings {
+  bool get isChinese => identical(this, _zh);
+
   final String appTitle;
   final String tabChat;
   final String tabKnowledge;
@@ -336,6 +338,9 @@ class LocaleStrings {
   final String chatSkillsClear;
   final String chatSkillsRevision;
   final String chatSkillsSelectedCount;
+  final String chatSkillsLoadFailed;
+  final String chatSkillsExpand;
+  final String chatSkillsCollapse;
   final String chatToolsWebSearch;
   final String chatAttachmentDefaultPrompt;
   final String chatAttachmentRemove;
@@ -703,6 +708,9 @@ class LocaleStrings {
     required this.chatSkillsClear,
     required this.chatSkillsRevision,
     required this.chatSkillsSelectedCount,
+    required this.chatSkillsLoadFailed,
+    required this.chatSkillsExpand,
+    required this.chatSkillsCollapse,
     required this.chatToolsWebSearch,
     required this.chatAttachmentDefaultPrompt,
     required this.chatAttachmentRemove,
@@ -1127,6 +1135,9 @@ class LocaleStrings {
     chatSkillsClear: 'Clear',
     chatSkillsRevision: 'Agent revision {revision}',
     chatSkillsSelectedCount: '{selected} of {total} selected',
+    chatSkillsLoadFailed: 'Could not load Skills. Please try again.',
+    chatSkillsExpand: 'Show full description',
+    chatSkillsCollapse: 'Collapse description',
     chatToolsWebSearch: 'Web Search',
     chatAttachmentDefaultPrompt: 'Please analyze these attachments.',
     chatAttachmentRemove: 'Remove attachment',
@@ -1491,16 +1502,19 @@ class LocaleStrings {
     chatToolsImage: '图片',
     chatToolsFile: '文件',
     chatToolsSkill: '技能',
-    chatSkillsTitle: 'Agent 技能',
-    chatSkillsSubtitle: '选择当前后端 Agent Revision 提供的 Skill。',
-    chatSkillsEmpty: '后端当前没有可供选择的 Skill。',
-    chatSkillsUnavailable: 'Skill 仅在 Hosted Agent 模式下可用。',
-    chatHostedToolsLoading: '正在连接记忆海 Agent，连接完成后即可使用 Skill 和联网搜索。',
+    chatSkillsTitle: '智能体技能',
+    chatSkillsSubtitle: '选择当前后端智能体版本提供的技能。',
+    chatSkillsEmpty: '当前后端没有可选技能。',
+    chatSkillsUnavailable: '技能仅在托管智能体模式下可用。',
+    chatHostedToolsLoading: '正在连接记忆海智能体，连接完成后即可使用技能和联网搜索。',
     chatHostedToolsUnavailable: '记忆海 Agent 工具暂时不可用，应用正在重试。',
     chatSkillsSelectAll: '全选',
     chatSkillsClear: '清空',
-    chatSkillsRevision: 'Agent Revision {revision}',
+    chatSkillsRevision: '智能体版本 {revision}',
     chatSkillsSelectedCount: '已选择 {selected}/{total}',
+    chatSkillsLoadFailed: '技能加载失败，请重试。',
+    chatSkillsExpand: '展开完整说明',
+    chatSkillsCollapse: '收起说明',
     chatToolsWebSearch: '联网搜索',
     chatAttachmentDefaultPrompt: '请分析这些附件。',
     chatAttachmentRemove: '移除附件',

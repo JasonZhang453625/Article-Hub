@@ -5,6 +5,7 @@ import '../../shared/providers/pipeline_provider.dart';
 import '../../shared/providers/locale_provider.dart';
 import '../../shared/providers/passage_providers.dart';
 import '../../shared/utils/locale_strings.dart';
+import '../../shared/utils/processing_error_messages.dart';
 import '../../shared/utils/snackbar_helpers.dart';
 
 class InboxScreen extends ConsumerStatefulWidget {
@@ -30,13 +31,13 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text('Error: $e'),
+                child: Text(s.failedToLoad),
               ),
               const SizedBox(height: 8),
               FilledButton.icon(
                 onPressed: () => ref.invalidate(articlesProvider),
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
+                label: Text(s.retry),
               ),
             ],
           ),
@@ -82,7 +83,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                 for (final article in failed)
                   _InboxTile(
                     article: article,
-                    subtitle: article.processingError ?? 'Unknown error',
+                    subtitle: localizedProcessingError(
+                      s,
+                      article.processingError,
+                      fallbackStage: article.processingStage,
+                    ),
                     showRetry: true,
                   ),
               ],
@@ -174,8 +179,8 @@ class _InboxTile extends ConsumerWidget {
       title: Text(article.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
         subtitle,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
+        maxLines: showRetry ? null : 2,
+        overflow: showRetry ? TextOverflow.visible : TextOverflow.ellipsis,
         style: TextStyle(
           color: article.processingStatus == ProcessingStatus.failed
               ? colorScheme.error

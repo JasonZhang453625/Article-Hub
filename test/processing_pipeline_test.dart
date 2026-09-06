@@ -628,6 +628,7 @@ void main() {
 
         expect(result?.processingStatus, ProcessingStatus.failed);
         expect(result?.processingError, startsWith('tags:'));
+        expect(result?.processingError, contains('task_observation_timeout'));
         expect(result?.hostedTaskGeneration, isNotNull);
         expect(tasks.calls.map((call) => call.profile), [
           HostedTaskProfile.memoryTags,

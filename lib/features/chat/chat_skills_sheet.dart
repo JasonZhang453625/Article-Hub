@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/services/hosted_agent_service.dart';
 import '../../shared/utils/locale_strings.dart';
+import '../../shared/utils/skill_descriptions.dart';
 
 /// Selects a subset of the active backend revision's official Pi Skills.
 ///
@@ -27,6 +28,7 @@ class _ChatSkillsSheetState extends State<ChatSkillsSheet> {
   late Future<HostedAgentSkillCatalog> _catalog;
   Set<String>? _selection;
   int? _selectionRevision;
+  final Set<String> _expandedSkills = {};
 
   @override
   void initState() {
@@ -118,7 +120,7 @@ class _ChatSkillsSheetState extends State<ChatSkillsSheet> {
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                snapshot.error.toString(),
+                                widget.s.chatSkillsLoadFailed,
                                 textAlign: TextAlign.center,
                                 style: theme.textTheme.bodySmall,
                               ),
@@ -191,16 +193,41 @@ class _ChatSkillsSheetState extends State<ChatSkillsSheet> {
                                     itemCount: catalog.skills.length,
                                     itemBuilder: (context, index) {
                                       final skill = catalog.skills[index];
-                                      return CheckboxListTile(
+                                      final description =
+                                          localizedSkillDescription(
+                                            widget.s,
+                                            name: skill.name,
+                                            description: skill.description,
+                                          );
+                                      final expanded = _expandedSkills.contains(
+                                        skill.name,
+                                      );
+                                      return _SkillTile(
                                         key: ValueKey(
                                           'chat-skill-${skill.name}',
                                         ),
-                                        contentPadding: EdgeInsets.zero,
-                                        title: Text(skill.name),
-                                        subtitle: skill.description.isEmpty
+                                        name: skill.name,
+                                        description: description,
+                                        expanded: expanded,
+                                        selected: selection.contains(
+                                          skill.name,
+                                        ),
+                                        expandLabel: widget.s.chatSkillsExpand,
+                                        collapseLabel:
+                                            widget.s.chatSkillsCollapse,
+                                        onToggleExpanded: description.isEmpty
                                             ? null
-                                            : Text(skill.description),
-                                        value: selection.contains(skill.name),
+                                            : () => setState(() {
+                                                if (expanded) {
+                                                  _expandedSkills.remove(
+                                                    skill.name,
+                                                  );
+                                                } else {
+                                                  _expandedSkills.add(
+                                                    skill.name,
+                                                  );
+                                                }
+                                              }),
                                         onChanged: (selected) {
                                           setState(() {
                                             if (selected == true) {
@@ -241,6 +268,97 @@ class _ChatSkillsSheetState extends State<ChatSkillsSheet> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SkillTile extends StatelessWidget {
+  static const double collapsedHeight = 84;
+
+  final String name;
+  final String description;
+  final bool expanded;
+  final bool selected;
+  final String expandLabel;
+  final String collapseLabel;
+  final VoidCallback? onToggleExpanded;
+  final ValueChanged<bool?> onChanged;
+
+  const _SkillTile({
+    super.key,
+    required this.name,
+    required this.description,
+    required this.expanded,
+    required this.selected,
+    required this.expandLabel,
+    required this.collapseLabel,
+    required this.onToggleExpanded,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: expanded
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    description,
+                    maxLines: expanded ? null : 2,
+                    overflow: expanded ? null : TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (description.isNotEmpty)
+            Tooltip(
+              message: expanded ? collapseLabel : expandLabel,
+              child: Icon(
+                expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          Checkbox(
+            key: ValueKey('chat-skill-checkbox-$name'),
+            value: selected,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: InkWell(
+        onTap: onToggleExpanded,
+        borderRadius: BorderRadius.circular(12),
+        child: expanded
+            ? ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: collapsedHeight),
+                child: content,
+              )
+            : SizedBox(height: collapsedHeight, child: content),
       ),
     );
   }
